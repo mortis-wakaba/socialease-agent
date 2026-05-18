@@ -1,0 +1,2 @@
+{"id":"clear_boundary","scenario":"refuse_request","difficulty":3,"user_messages":["我理解你着急，但我今晚不能帮忙，因为我需要完成自己的任务。"],"min_clarity_score":4,"min_naturalness_score":2,"min_assertiveness_score":2,"min_empathy_score":3}
+{"id":"short_answer","scenario":"classroom_speech","difficulty":2,"user_messages":["我想先说核心观点。"],"min_clarity_score":3,"min_naturalness_score":3,"min_assertiveness_score":3,"min_empathy_score":2}

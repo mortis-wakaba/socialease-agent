@@ -1,0 +1,2 @@
+{"id":"complete","message":"情境：明天课堂发言。自动想法：我肯定会说错。情绪：焦虑。强度：7/10。支持证据：之前卡过壳。反对证据：同学上次认真听完。替代想法：我可以先说核心观点。下一步：今晚练习两遍。","expected_present_fields":["situation","automatic_thought","emotion","emotion_intensity","evidence_for","evidence_against","alternative_thought","next_action"],"expected_missing_fields":[]}
+{"id":"partial","message":"我明天要课堂发言，有点紧张。","expected_present_fields":["situation","emotion"],"expected_missing_fields":["automatic_thought","emotion_intensity","evidence_for"]}

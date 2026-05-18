@@ -1,0 +1,6 @@
+{"id":"roleplay","message":"我想模拟向老师提问的对话","expected_intent":"roleplay_practice"}
+{"id":"worksheet","message":"帮我做一个 CBT 自动想法记录","expected_intent":"cbt_worksheet"}
+{"id":"exposure","message":"我想做一个由易到难的暴露练习计划","expected_intent":"exposure_planning"}
+{"id":"resource","message":"学校心理中心在哪里，怎么预约咨询","expected_intent":"campus_resource_query"}
+{"id":"progress","message":"帮我复盘最近练习记录和进度","expected_intent":"progress_review"}
+{"id":"crisis","message":"我想角色扮演","expected_intent":"crisis","safety_level":"crisis"}

@@ -1,0 +1,7 @@
+{"id":"classroom","query":"课堂发言 怎么准备 核心观点","kb_type":"social_skills","expected_unknown":false,"expected_titles":["Classroom Speech Practice Guide"]}
+{"id":"worksheet","query":"CBT 自动想法 情绪 强度 替代想法","kb_type":"social_skills","expected_unknown":false,"expected_titles":["CBT Style Reflection Guide"]}
+{"id":"crisis_policy","query":"crisis 自伤 自杀 响应 怎么处理","kb_type":"safety_policy","expected_unknown":false,"expected_titles":["Crisis Response Policy","Risk Levels Policy"]}
+{"id":"support_resource","query":"social anxiety CBT self-help public resource","kb_type":"support_resources","expected_unknown":false,"expected_titles":["NIMH Social Anxiety Overview","NHS Inform Social Anxiety Self-help Guide","NHS CBT Self-help Techniques"]}
+{"id":"cci_structure","query":"social anxiety workbook modules safety behaviours","kb_type":"social_skills","expected_unknown":false,"expected_titles":["CCI Stepping Out of Social Anxiety Modules"]}
+{"id":"digital_boundary","query":"digital tools are not substitutes for functioning health systems privacy","kb_type":"safety_policy","expected_unknown":false,"expected_titles":["WHO Digital Health Boundaries"]}
+{"id":"unknown","query":"量子编译器 火星土壤采样 轨道力学","kb_type":"social_skills","expected_unknown":true,"expected_titles":[]}
