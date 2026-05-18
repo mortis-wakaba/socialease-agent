@@ -1,0 +1,47 @@
+backend/app/evals/data/worksheet.jsonl
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 1-2
+backend/app/evals/data/intent.jsonl
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 1-6
+backend/app/evals/data/roleplay_feedback.jsonl
+  s_b59e6dc46421cc::t_013097cc7f2539 1
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 2
+backend/app/evals/data/safety.jsonl
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 1-5
+backend/app/evals/data/rag.jsonl
+  s_b59e6dc46421cc::t_4fe78586d13f2d 4
+  s_b59e6dc46421cc::t_18b5cb5dd2daf5 5-6
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 1-3,7
+backend/app/evals/models.py
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 1-75
+backend/app/evals/loader.py
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 1-52
+backend/app/evals/metrics.py
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 1-9
+backend/tests/test_evals.py
+  s_b59e6dc46421cc::t_dadeb73ca37bcd 1-42
+backend/app/evals/run.py
+  s_b59e6dc46421cc::t_83335bd5d952f2 26,32,40,45,140-154
+  s_b59e6dc46421cc::t_384a1a67ae8ce2 1-16,18-25,27-31,33-39,41-44,46-51,56-83,92-108,115-123,125-127,155-163
+  s_b59e6dc46421cc::t_8931e37327e1f0 52,55
+  s_b59e6dc46421cc::t_dadeb73ca37bcd 124
+  s_b59e6dc46421cc::t_9802f383db99c8 17
+  s_b59e6dc46421cc::t_014409ab58d5be 53-54,128-139
+  s_b59e6dc46421cc::t_4fe78586d13f2d 84-91
+  s_b59e6dc46421cc::t_920c697058ed43 109-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "ae1d0d05bc5947e96167bd9e8179d0d48ed84939",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
