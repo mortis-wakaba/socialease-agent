@@ -1,0 +1,70 @@
+backend/app/db/models.py
+  s_c14fd767921a80::t_27a1397fc7e906 1-41,43
+  s_d26b8133c0bef8::t_6066c096dbc64b 42
+backend/app/tracing/logger.py
+  s_c14fd767921a80::t_42196831fd3e02 1,3,8,10-11,15,19
+backend/app/memory/__init__.py
+  s_d26b8133c0bef8::t_6066c096dbc64b 1
+backend/app/db/repositories.py
+  s_d26b8133c0bef8::t_6066c096dbc64b 11,43-48,132,150-195
+  s_c14fd767921a80::t_27a1397fc7e906 1-10,12-42,49-131,196-227
+  s_d26b8133c0bef8::t_9480826df8958d 133-149
+backend/app/memory/exposure_store.py
+  s_c14fd767921a80::t_42196831fd3e02 1,6,16,18-19,44,48,57-67
+backend/app/db/session.py
+  s_c14fd767921a80::t_27a1397fc7e906 1-10
+backend/app/models_memory.py
+  s_d26b8133c0bef8::t_6066c096dbc64b 1-29
+backend/app/memory/worksheet_store.py
+  s_c14fd767921a80::t_42196831fd3e02 1,6,16,18-19,42,46
+backend/app/db/engine.py
+  s_c14fd767921a80::t_27a1397fc7e906 1-19
+backend/app/api/routes.py
+  s_d26b8133c0bef8::t_6066c096dbc64b 7,19
+  s_b59e6dc46421cc::t_725837bb39f506 9,21
+.gitignore
+  s_c14fd767921a80::t_293d27850ffdb3 253
+backend/app/db/__init__.py
+  s_c14fd767921a80::t_27a1397fc7e906 1
+backend/app/memory/profile_store.py
+  s_d26b8133c0bef8::t_6066c096dbc64b 1-18
+backend/app/memory/roleplay_store.py
+  s_c14fd767921a80::t_42196831fd3e02 1,6-9,20,22-23,51,55,66-78
+backend/app/api/profile.py
+  s_d26b8133c0bef8::t_6066c096dbc64b 1-17
+backend/tests/test_profile_api.py
+  s_b59e6dc46421cc::t_b006bbcecc7663 1-4,6-49,51-117
+  s_b59e6dc46421cc::t_05754fdb269994 5,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "8fe4a46aecb7b2fb5fdfe6786a7f8e8d148fad4d",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_c14fd767921a80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c0-e575-7c22-9107-2748204d7b0b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_d26b8133c0bef8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c7-24f4-7602-bc5b-bad6b6bc82de",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
