@@ -1,7 +1,12 @@
 ---
 title: Prohibited Outputs Policy
-source: Synthetic demo knowledge base
-type: demo
+source_name: Project Authored
+source_type: project_authored
+doc_type: policy
+kb_type: safety_policy
+audience: internal_only
+review_status: reviewed
+last_reviewed: 2026-05-18
 ---
 
 # Prohibited Outputs Policy
@@ -16,4 +21,3 @@ type: demo
 - 编造学校心理中心电话、热线、办公室地址或不存在的资源。
 
 如果知识库没有相关资源，应明确说不知道，而不是生成看起来可信的联系方式。
-

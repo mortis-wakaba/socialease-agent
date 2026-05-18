@@ -1,4 +1,4 @@
-"""API tests for the dual knowledge-base RAG MVP."""
+"""API tests for local knowledge-base retrieval."""
 
 import re
 
@@ -42,7 +42,8 @@ async def test_social_skills_knowledge_can_retrieve(
     assert payload["unknown"] is False
     assert payload["confidence"] > 0
     assert payload["citations"]
-    assert payload["citations"][0]["source"] == "Synthetic demo knowledge base"
+    assert payload["citations"][0]["source_name"] == "Project Authored"
+    assert payload["citations"][0]["source_type"] == "project_authored"
     assert "课堂" in payload["answer"] or "核心观点" in payload["answer"]
 
 
@@ -103,7 +104,8 @@ async def test_citations_are_not_empty_for_known_query(
     assert len(payload["citations"]) >= 1
     for citation in payload["citations"]:
         assert citation["title"]
-        assert citation["source"] == "Synthetic demo knowledge base"
+        assert citation["source_name"] == "Project Authored"
+        assert citation["source_type"] == "project_authored"
         assert citation["snippet"]
 
 
@@ -122,9 +124,67 @@ async def test_knowledge_response_does_not_create_fake_contacts(
     assert response.status_code == 200
     payload = response.json()
     text = f"{payload['answer']} {' '.join(c['snippet'] for c in payload['citations'])}"
-    assert "Synthetic demo knowledge base" not in payload["answer"]
+    assert "Project Authored" not in payload["answer"]
     assert "本 demo 知识库不包含任何真实热线" in text or payload["unknown"] is True
     assert re.search(r"\b\d{3,4}-\d{7,8}\b", text) is None
     assert re.search(r"\b1[3-9]\d{9}\b", text) is None
     assert "12345" not in text
 
+
+@pytest.mark.anyio
+async def test_support_resources_return_external_public_citations(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/api/knowledge/query",
+        json={
+            "query": "social anxiety CBT self-help public resource",
+            "kb_type": "support_resources",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unknown"] is False
+    assert payload["citations"]
+    assert all(citation["source_type"] == "external_public" for citation in payload["citations"])
+    assert any(citation["source_name"] in {"NIMH", "NHS Inform", "NHS"} for citation in payload["citations"])
+    assert all(citation["source_url"] for citation in payload["citations"])
+
+
+@pytest.mark.anyio
+async def test_product_rubrics_are_queryable_but_internal(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/api/knowledge/query",
+        json={
+            "query": "clarity naturalness assertiveness empathy rubric",
+            "kb_type": "product_rubrics",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unknown"] is False
+    assert payload["citations"][0]["source_type"] == "project_authored"
+    assert payload["citations"][0]["title"] == "Roleplay Feedback Rubric"
+
+
+@pytest.mark.anyio
+async def test_demo_campus_resources_are_labeled_demo(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/api/knowledge/query",
+        json={
+            "query": "booking method eligibility urgent help",
+            "kb_type": "campus_resources_demo",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unknown"] is False
+    assert payload["citations"][0]["source_type"] == "demo"
+    assert "Demo" in payload["citations"][0]["title"]

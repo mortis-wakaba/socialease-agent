@@ -36,8 +36,9 @@ class MarkdownChunker:
     def _make_chunk(document: KnowledgeDocument, text: str) -> KnowledgeChunk:
         return KnowledgeChunk(
             title=document.title,
-            source=document.source,
+            source_name=document.source_name,
+            source_type=document.source_type,
+            source_url=document.source_url,
             path=document.path,
             text=text,
         )
-

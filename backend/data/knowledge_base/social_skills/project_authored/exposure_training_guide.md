@@ -1,7 +1,12 @@
 ---
 title: Exposure Training Practice Guide
-source: Synthetic demo knowledge base
-type: demo
+source_name: Project Authored
+source_type: project_authored
+doc_type: guide
+kb_type: social_skills
+audience: user_facing
+review_status: reviewed
+last_reviewed: 2026-05-18
 ---
 
 # Exposure Training Practice Guide

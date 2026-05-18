@@ -13,7 +13,7 @@ class CitationFormatter:
         """Return answer, citations, unknown flag, and confidence."""
         if not results:
             return (
-                "我不知道。当前 demo 知识库没有找到足够相关的内容，因此不会编造资源、电话、热线或学校信息。",
+                "我不知道。当前知识库没有找到足够相关的内容，因此不会编造资源、电话、热线或学校信息。",
                 [],
                 True,
                 0.0,
@@ -22,15 +22,17 @@ class CitationFormatter:
         citations = [
             Citation(
                 title=chunk.title,
-                source=chunk.source,
+                source_name=chunk.source_name,
+                source_type=chunk.source_type,
+                source_url=chunk.source_url,
                 snippet=self._snippet(chunk.text),
             )
             for chunk, _score in results
         ]
         answer_lines = [
-            "根据当前 demo markdown 知识库，可以参考以下内容：",
+            "根据当前 markdown 知识库，可以参考以下内容：",
             *[f"- {citation.snippet}" for citation in citations],
-            "以上内容仅来自本地 demo 知识库；如果知识库没有具体资源，系统不会编造联系方式。",
+            "以上内容仅来自已收录文档；如果知识库没有具体资源，系统不会编造联系方式。",
         ]
         top_score = results[0][1]
         confidence = min(1.0, top_score / 10)
@@ -42,4 +44,3 @@ class CitationFormatter:
         if len(compact) <= max_chars:
             return compact
         return f"{compact[: max_chars - 3]}..."
-

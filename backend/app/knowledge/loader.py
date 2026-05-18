@@ -1,4 +1,4 @@
-"""Markdown loader for demo knowledge-base documents."""
+"""Markdown loader for local knowledge-base documents."""
 
 from pathlib import Path
 
@@ -19,19 +19,21 @@ class MarkdownKnowledgeLoader:
         if not kb_dir.exists():
             return []
 
-        return [
-            self._load_file(path)
-            for path in sorted(kb_dir.glob("*.md"))
-            if path.is_file()
-        ]
+        return [self._load_file(path, kb_type) for path in sorted(kb_dir.rglob("*.md")) if path.is_file()]
 
-    def _load_file(self, path: Path) -> KnowledgeDocument:
+    def _load_file(self, path: Path, kb_type: KnowledgeBaseType) -> KnowledgeDocument:
         raw = path.read_text(encoding="utf-8")
         metadata, content = self._parse_frontmatter(raw)
         return KnowledgeDocument(
             title=metadata.get("title", path.stem),
-            source=metadata.get("source", "Unknown source"),
-            doc_type=metadata.get("type", "unknown"),
+            source_name=metadata.get("source_name", metadata.get("source", "Unknown source")),
+            source_type=metadata.get("source_type", "unknown"),
+            source_url=metadata.get("source_url"),
+            doc_type=metadata.get("doc_type", metadata.get("type", "unknown")),
+            kb_type=KnowledgeBaseType(metadata.get("kb_type", kb_type.value)),
+            audience=metadata.get("audience", "user_facing"),
+            review_status=metadata.get("review_status", "draft"),
+            last_reviewed=metadata.get("last_reviewed"),
             path=str(path),
             content=content.strip(),
         )
@@ -52,4 +54,3 @@ class MarkdownKnowledgeLoader:
             key, value = line.split(":", 1)
             metadata[key.strip()] = value.strip()
         return metadata, parts[2]
-

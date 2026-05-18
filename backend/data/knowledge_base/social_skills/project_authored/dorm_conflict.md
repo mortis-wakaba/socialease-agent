@@ -1,7 +1,12 @@
 ---
 title: Dorm Conflict Communication Guide
-source: Synthetic demo knowledge base
-type: demo
+source_name: Project Authored
+source_type: project_authored
+doc_type: guide
+kb_type: social_skills
+audience: user_facing
+review_status: reviewed
+last_reviewed: 2026-05-18
 ---
 
 # Dorm Conflict Communication Guide
@@ -15,4 +20,3 @@ type: demo
 - 请求：“能不能在十二点后把声音放低一些？”
 
 如果担心冲突升级，可以先选择低强度方式，例如文字草稿、找中立同学演练，或在双方都比较平静的时间开口。练习目标是表达边界，而不是控制对方反应。
-

@@ -1,7 +1,12 @@
 ---
 title: CBT Style Reflection Guide
-source: Synthetic demo knowledge base
-type: demo
+source_name: Project Authored
+source_type: project_authored
+doc_type: guide
+kb_type: social_skills
+audience: user_facing
+review_status: reviewed
+last_reviewed: 2026-05-18
 ---
 
 # CBT Style Reflection Guide
@@ -18,4 +23,3 @@ CBT 风格反思在本项目中只是自助练习，不是治疗。它用于把�
 - 下一步：一个小而安全的行动。
 
 如果信息不足，可以先补充情绪强度和下一步行动，不需要一次写得完整。
-

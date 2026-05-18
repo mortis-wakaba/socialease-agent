@@ -1,7 +1,12 @@
 ---
 title: Classroom Speech Practice Guide
-source: Synthetic demo knowledge base
-type: demo
+source_name: Project Authored
+source_type: project_authored
+doc_type: guide
+kb_type: social_skills
+audience: user_facing
+review_status: reviewed
+last_reviewed: 2026-05-18
 ---
 
 # Classroom Speech Practice Guide
@@ -16,4 +21,3 @@ type: demo
 - 结束后记录焦虑强度变化，而不是只评价表现好坏。
 
 如果发言时卡住，可以使用过渡句：“我先说一个初步想法，可能还不完整。”这类句子能降低表达压力，也不会承诺必须一次说完美。
-

@@ -2,14 +2,19 @@
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class KnowledgeBaseType(str, Enum):
     """Supported knowledge-base collections."""
 
     SOCIAL_SKILLS = "social_skills"
+    SUPPORT_RESOURCES = "support_resources"
     SAFETY_POLICY = "safety_policy"
+    PRODUCT_RUBRICS = "product_rubrics"
+    CAMPUS_RESOURCES_DEMO = "campus_resources_demo"
 
 
 class KnowledgeQueryRequest(BaseModel):
@@ -23,8 +28,27 @@ class Citation(BaseModel):
     """Citation returned from a markdown knowledge chunk."""
 
     title: str
-    source: str
+    source_name: str
+    source_type: str
+    source_url: str | None = None
     snippet: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_source(cls, data: Any) -> Any:
+        """Accept persisted citations written before source fields were split."""
+        if isinstance(data, dict) and "source_name" not in data and "source" in data:
+            source = data["source"]
+            return {
+                **data,
+                "source_name": source,
+                "source_type": (
+                    "project_authored"
+                    if source == "Synthetic demo knowledge base"
+                    else "unknown"
+                ),
+            }
+        return data
 
 
 class KnowledgeQueryResponse(BaseModel):
@@ -40,8 +64,14 @@ class KnowledgeDocument(BaseModel):
     """Loaded markdown document with frontmatter metadata."""
 
     title: str
-    source: str
+    source_name: str
+    source_type: str
+    source_url: str | None = None
     doc_type: str
+    kb_type: KnowledgeBaseType
+    audience: str
+    review_status: str
+    last_reviewed: str | None = None
     path: str
     content: str
 
@@ -50,7 +80,8 @@ class KnowledgeChunk(BaseModel):
     """Chunk of a knowledge document used for keyword retrieval."""
 
     title: str
-    source: str
+    source_name: str
+    source_type: str
+    source_url: str | None = None
     path: str
     text: str
-

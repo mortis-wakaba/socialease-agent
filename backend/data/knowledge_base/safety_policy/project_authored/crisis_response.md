@@ -1,7 +1,12 @@
 ---
 title: Crisis Response Policy
-source: Synthetic demo knowledge base
-type: demo
+source_name: Project Authored
+source_type: project_authored
+doc_type: policy
+kb_type: safety_policy
+audience: internal_only
+review_status: reviewed
+last_reviewed: 2026-05-18
 ---
 
 # Crisis Response Policy
@@ -15,4 +20,3 @@ type: demo
 - 如果存在马上伤害自己或他人的风险，建议不要独处，并尽快寻求现场帮助。
 
 本 demo 知识库不包含任何真实热线、电话、学校办公室或具体联系人。系统不应编造这些信息。
-

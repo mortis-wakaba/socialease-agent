@@ -13,9 +13,8 @@ knowledge_service = KnowledgeService()
 async def query_knowledge(
     request: KnowledgeQueryRequest,
 ) -> KnowledgeQueryResponse:
-    """Query one demo knowledge base and return cited snippets."""
+    """Query one local knowledge base and return cited snippets."""
     return knowledge_service.query(
         query=request.query,
         kb_type=request.kb_type,
     )
-
