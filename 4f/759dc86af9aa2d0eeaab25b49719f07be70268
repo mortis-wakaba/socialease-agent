@@ -1,0 +1,90 @@
+backend/app/api/exposure.py
+  s_b59e6dc46421cc::t_fd1c7733bf468a 17,22,36
+backend/tests/test_roleplay_api.py
+  s_b59e6dc46421cc::t_f213bc0b7fb546 100,175
+  s_b59e6dc46421cc::t_4fe78586d13f2d 142-143
+backend/tests/test_safety_classifier.py
+  s_b59e6dc46421cc::t_f2778ca1bce66d 36
+  s_b59e6dc46421cc::t_8fd6d5dc7792e2 6,9,27-28,30,37-38,40
+backend/app/llm/base.py
+  s_b59e6dc46421cc::t_e08e63d6fa5ff7 1-17
+backend/tests/test_worksheet_api.py
+  s_b59e6dc46421cc::t_f213bc0b7fb546 52,96
+  s_b59e6dc46421cc::t_4fe78586d13f2d 154-155
+backend/app/llm/openai_compatible.py
+  s_b59e6dc46421cc::t_e08e63d6fa5ff7 1-70
+backend/tests/test_worksheet_agent.py
+  s_b59e6dc46421cc::t_f213bc0b7fb546 45,50-51,64,70,77,83-84,91,94-95
+  s_b59e6dc46421cc::t_1ad8488eaedb69 1-44,46-49,52-63,65-69,71-76,78-82,85-90,92-93
+backend/app/agents/roleplay.py
+  s_b59e6dc46421cc::t_9e6af2363c2205 3-7,18-21,90-91,96,102-130
+  s_b59e6dc46421cc::t_df98b7277c37a2 14,84-89,92-95,97-101
+backend/tests/test_llm.py
+  s_b59e6dc46421cc::t_e08e63d6fa5ff7 1-80
+backend/tests/test_intent_router.py
+  s_b59e6dc46421cc::t_6ee60fc90d49d2 15,33,40,47,52,62,66,73,77
+  s_b59e6dc46421cc::t_8931e37327e1f0 46,61,72
+backend/app/models_llm.py
+  s_b59e6dc46421cc::t_df98b7277c37a2 1-10
+backend/app/llm/prompts.py
+  s_b59e6dc46421cc::t_9e6af2363c2205 8-45
+  s_b59e6dc46421cc::t_f096b8fc6e1a66 46-68
+  s_b59e6dc46421cc::t_da894904cc9380 69-87
+  s_b59e6dc46421cc::t_8173cdb12497fb 88-109
+  s_b59e6dc46421cc::t_e08e63d6fa5ff7 1-7
+backend/tests/test_llm_intent_router.py
+  s_b59e6dc46421cc::t_6ee60fc90d49d2 1-84
+backend/tests/test_roleplay_agent.py
+  s_b59e6dc46421cc::t_1a7788a1dcc594 1-88,90-91,94-103,105,109-114,116-117
+  s_b59e6dc46421cc::t_f213bc0b7fb546 89,92-93,104,107-108,115,118-119
+  s_b59e6dc46421cc::t_eef87f1790bee2 106
+backend/.env.example
+  s_b59e6dc46421cc::t_e08e63d6fa5ff7 1-7
+backend/app/api/worksheet.py
+  s_b59e6dc46421cc::t_f096b8fc6e1a66 7,20
+  s_b59e6dc46421cc::t_df98b7277c37a2 44,73
+  s_b59e6dc46421cc::t_fd1c7733bf468a 17,21,28
+backend/app/workflow/router.py
+  s_b59e6dc46421cc::t_da894904cc9380 1,3,6-12,14,18,20,26-35,37-58,123
+backend/app/models_worksheet.py
+  s_b59e6dc46421cc::t_df98b7277c37a2 8,63
+backend/app/workflow/engine.py
+  s_b59e6dc46421cc::t_fd1c7733bf468a 18,35,45
+  s_b59e6dc46421cc::t_da894904cc9380 20-21,36,46,83-88
+backend/app/safety/classifier.py
+  s_b59e6dc46421cc::t_8173cdb12497fb 1,3,6-10,12,16,18,72,110-176
+backend/app/api/roleplay.py
+  s_b59e6dc46421cc::t_df98b7277c37a2 106,124
+  s_b59e6dc46421cc::t_9e6af2363c2205 7,24,107-109
+  s_b59e6dc46421cc::t_fd1c7733bf468a 21,25,75
+backend/app/agents/worksheet.py
+  s_b59e6dc46421cc::t_f096b8fc6e1a66 1,3,6-12,18-21,54-56,60-65,67,69-71,76,81,87-104,112
+  s_b59e6dc46421cc::t_df98b7277c37a2 14,57,59,66,68,72-75,77-80,82-86
+backend/tests/test_llm_safety_classifier.py
+  s_b59e6dc46421cc::t_8fd6d5dc7792e2 1-79
+backend/app/llm/factory.py
+  s_b59e6dc46421cc::t_e08e63d6fa5ff7 1-49
+backend/app/llm/__init__.py
+  s_b59e6dc46421cc::t_e08e63d6fa5ff7 1-12
+backend/app/models_roleplay.py
+  s_b59e6dc46421cc::t_df98b7277c37a2 9,97
+backend/app/models.py
+  s_b59e6dc46421cc::t_da894904cc9380 9,47
+  s_b59e6dc46421cc::t_8173cdb12497fb 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "4f759dc86af9aa2d0eeaab25b49719f07be70268",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
