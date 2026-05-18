@@ -152,11 +152,52 @@ export function CitationList({ citations }: { citations: Citation[] }) {
     <div className="space-y-2">
       {citations.map((citation, index) => (
         <div key={`${citation.title}-${index}`} className="rounded-md border border-line bg-panel p-3">
-          <div className="text-sm font-medium text-ink">{citation.title}</div>
-          <div className="text-xs text-slate-500">{citation.source}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-sm font-medium text-ink">{citation.title}</div>
+            <Badge tone={citationTone(citation.source_type)}>
+              {citationLabel(citation.source_type)}
+            </Badge>
+          </div>
+          <div className="mt-1 text-xs text-slate-500">{citation.source_name}</div>
           <p className="mt-2 text-sm leading-6 text-slate-700">{citation.snippet}</p>
+          {citation.source_url ? (
+            <a
+              href={citation.source_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-block text-xs font-medium text-brand hover:underline"
+            >
+              View source
+            </a>
+          ) : null}
         </div>
       ))}
     </div>
   );
+}
+
+function citationTone(sourceType: Citation["source_type"]) {
+  if (sourceType === "external_public") {
+    return "good" as const;
+  }
+  if (sourceType === "demo") {
+    return "warn" as const;
+  }
+  if (sourceType === "project_authored") {
+    return "info" as const;
+  }
+  return "neutral" as const;
+}
+
+function citationLabel(sourceType: Citation["source_type"]) {
+  if (sourceType === "external_public") {
+    return "External public";
+  }
+  if (sourceType === "demo") {
+    return "Demo";
+  }
+  if (sourceType === "project_authored") {
+    return "Project authored";
+  }
+  return sourceType;
 }

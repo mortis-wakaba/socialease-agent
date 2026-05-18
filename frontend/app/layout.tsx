@@ -12,6 +12,7 @@ const navItems = [
   { href: "/chat", label: "Chat" },
   { href: "/practice", label: "Practice" },
   { href: "/worksheet", label: "Worksheet" },
+  { href: "/support", label: "Support" },
   { href: "/progress", label: "Progress" },
   { href: "/trace", label: "Trace" }
 ];
