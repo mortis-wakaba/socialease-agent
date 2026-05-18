@@ -14,12 +14,12 @@ from app.models_exposure import (
     ExposurePlanResponse,
     UserExposureResponse,
 )
-from app.safety.classifier import SafetyClassifier
+from app.safety.classifier import create_safety_classifier
 
 router = APIRouter(tags=["exposure"])
 exposure_planner = ExposurePlanner()
 knowledge_service = KnowledgeService()
-safety_classifier = SafetyClassifier()
+safety_classifier = create_safety_classifier()
 
 
 @router.post("/exposure/plan", response_model=ExposurePlanResponse)
@@ -33,7 +33,7 @@ async def create_exposure_plan(
             *request.previous_attempts,
         ]
     )
-    safety_result = safety_classifier.classify(safety_text)
+    safety_result = await safety_classifier.classify(safety_text)
     if safety_result.risk_level == RiskLevel.CRISIS:
         return ExposurePlanResponse(
             plan=None,

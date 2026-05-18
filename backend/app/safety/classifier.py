@@ -1,24 +1,23 @@
-"""Safety classifier interfaces and the rule-based MVP implementation."""
+"""Safety classifiers with deterministic floor plus optional LLM enhancement."""
 
+import json
 from typing import Protocol
 
+from pydantic import ValidationError
+
+from app.llm.base import BaseLLMClient
+from app.llm.factory import create_llm_client
+from app.llm.prompts import build_safety_system_prompt, build_safety_user_prompt
 from app.models import RiskLevel, SafetyResult
+from app.models_llm import LLMUsage
 
 
 class BaseSafetyClassifier(Protocol):
-    """Interface for safety classifiers, including future LLM classifiers."""
+    """Interface for async safety classifiers."""
 
-    def classify(self, message: str) -> SafetyResult:
+    async def classify(self, message: str) -> SafetyResult:
         """Classify a user message into a conservative risk level."""
         ...
-
-
-class LlmSafetyClassifier:
-    """Placeholder adapter for a future LLM-based safety classifier."""
-
-    def classify(self, message: str) -> SafetyResult:
-        """Reserve the same interface for future model-backed classification."""
-        raise NotImplementedError("LLM safety classifier is not implemented yet.")
 
 
 class RuleBasedSafetyClassifier:
@@ -70,7 +69,7 @@ class RuleBasedSafetyClassifier:
         "overwhelmed",
     )
 
-    def classify(self, message: str) -> SafetyResult:
+    async def classify(self, message: str) -> SafetyResult:
         """Return the highest matched risk level and a short reason."""
         normalized = message.casefold()
 
@@ -106,6 +105,75 @@ class RuleBasedSafetyClassifier:
             if term in message:
                 return term
         return None
+
+
+class LlmSafetyClassifier:
+    """Semantic safety classifier using a configured LLM client."""
+
+    def __init__(self, llm_client: BaseLLMClient) -> None:
+        self.llm_client = llm_client
+
+    async def classify(self, message: str) -> SafetyResult:
+        """Return one validated semantic safety classification."""
+        response = await self.llm_client.generate_text(
+            system_prompt=build_safety_system_prompt(),
+            user_prompt=build_safety_user_prompt(message),
+            temperature=0.0,
+        )
+        payload = json.loads(response)
+        if not isinstance(payload, dict):
+            raise ValueError("Safety classifier response must be an object.")
+        return SafetyResult.model_validate(payload).model_copy(
+            update={"llm_usage": LLMUsage(used=True)}
+        )
+
+
+class HybridSafetyClassifier:
+    """Use deterministic rules as a floor and let LLM raise risk when needed."""
+
+    risk_rank: dict[RiskLevel, int] = {
+        RiskLevel.LOW: 0,
+        RiskLevel.MEDIUM: 1,
+        RiskLevel.HIGH: 2,
+        RiskLevel.CRISIS: 3,
+    }
+
+    def __init__(
+        self,
+        *,
+        rule_classifier: RuleBasedSafetyClassifier | None = None,
+        llm_classifier: LlmSafetyClassifier | None = None,
+    ) -> None:
+        self.rule_classifier = rule_classifier or RuleBasedSafetyClassifier()
+        self.llm_classifier = llm_classifier
+
+    async def classify(self, message: str) -> SafetyResult:
+        """Return the higher-risk result, never downgrading deterministic safety."""
+        rule_result = await self.rule_classifier.classify(message)
+        if rule_result.risk_level == RiskLevel.CRISIS:
+            return rule_result
+        if self.llm_classifier is None:
+            return rule_result
+        try:
+            llm_result = await self.llm_classifier.classify(message)
+        except (ValueError, json.JSONDecodeError, ValidationError):
+            return rule_result.model_copy(
+                update={"llm_usage": LLMUsage(fallback_used=True)}
+            )
+        except Exception:
+            return rule_result.model_copy(
+                update={"llm_usage": LLMUsage(fallback_used=True)}
+            )
+        if self.risk_rank[llm_result.risk_level] > self.risk_rank[rule_result.risk_level]:
+            return llm_result
+        return rule_result.model_copy(update={"llm_usage": llm_result.llm_usage})
+
+
+def create_safety_classifier() -> BaseSafetyClassifier:
+    """Build the default hybrid classifier for runtime use."""
+    llm_client = create_llm_client()
+    llm_classifier = LlmSafetyClassifier(llm_client) if llm_client is not None else None
+    return HybridSafetyClassifier(llm_classifier=llm_classifier)
 
 
 SafetyClassifier = RuleBasedSafetyClassifier

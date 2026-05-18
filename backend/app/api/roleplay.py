@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.agents.roleplay import RoleplayAgent
 from app.knowledge.service import KnowledgeService
+from app.llm.factory import create_llm_client
 from app.memory.roleplay_store import roleplay_session_store
 from app.models import RiskLevel
 from app.models_knowledge import KnowledgeBaseType
@@ -17,11 +18,11 @@ from app.models_roleplay import (
     RoleplayStartRequest,
     RoleplayStartResponse,
 )
-from app.safety.classifier import SafetyClassifier
+from app.safety.classifier import create_safety_classifier
 
 router = APIRouter(prefix="/roleplay", tags=["roleplay"])
-roleplay_agent = RoleplayAgent()
-safety_classifier = SafetyClassifier()
+roleplay_agent = RoleplayAgent(llm_client=create_llm_client())
+safety_classifier = create_safety_classifier()
 knowledge_service = KnowledgeService()
 
 
@@ -71,7 +72,7 @@ async def send_roleplay_message(
     if session is None:
         raise HTTPException(status_code=404, detail="Role-play session not found")
 
-    safety_result = safety_classifier.classify(request.message)
+    safety_result = await safety_classifier.classify(request.message)
     if safety_result.risk_level == RiskLevel.CRISIS:
         crisis_response = (
             "我很担心你现在的安全。角色扮演会先暂停，因为这类表达需要现实支持。"
@@ -102,7 +103,10 @@ async def send_roleplay_message(
     if session is None:
         raise HTTPException(status_code=404, detail="Role-play session not found")
 
-    agent_response = roleplay_agent.next_turn(session=session, user_message=request.message)
+    agent_response, llm_usage = await roleplay_agent.next_turn(
+        session=session,
+        user_message=request.message,
+    )
     session = roleplay_session_store.append_message(
         session_id=request.session_id,
         user_id=request.user_id,
@@ -117,6 +121,7 @@ async def send_roleplay_message(
         response=agent_response,
         safety_result=safety_result,
         blocked=False,
+        llm_usage=llm_usage,
     )
 
 

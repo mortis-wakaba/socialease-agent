@@ -1,12 +1,24 @@
-"""Rule-based CBT-style worksheet extraction agent."""
+"""CBT-style worksheet extraction agent with optional LLM support."""
 
+import json
 import re
 
+from pydantic import ValidationError
+
+from app.llm.base import BaseLLMClient
+from app.llm.prompts import (
+    build_worksheet_system_prompt,
+    build_worksheet_user_prompt,
+)
 from app.models_worksheet import WorksheetFields
+from app.models_llm import LLMUsage
 
 
 class WorksheetAgent:
-    """Extract CBT-style worksheet fields without making medical claims."""
+    """Extract worksheet fields with validated LLM or rule-based fallback."""
+
+    def __init__(self, llm_client: BaseLLMClient | None = None) -> None:
+        self.llm_client = llm_client
 
     field_labels: dict[str, tuple[str, ...]] = {
         "situation": ("情境", "场景", "situation"),
@@ -39,8 +51,57 @@ class WorksheetAgent:
         "next_action": "接下来一个小而安全的行动可以是什么？",
     }
 
-    def create_fields(self, message: str) -> tuple[WorksheetFields, list[str], list[str]]:
+    async def create_fields(
+        self,
+        message: str,
+    ) -> tuple[WorksheetFields, list[str], list[str], LLMUsage]:
         """Extract worksheet fields and return missing field guidance."""
+        fields, llm_usage = await self._extract_fields(message)
+        missing = [
+            field
+            for field in self.required_fields
+            if getattr(fields, field) in (None, "")
+        ]
+        questions = [self.followup_questions[field] for field in missing[:4]]
+        return fields, missing, questions, llm_usage
+
+    async def _extract_fields(self, message: str) -> tuple[WorksheetFields, LLMUsage]:
+        """Prefer validated LLM extraction and fallback on any provider issue."""
+        if self.llm_client is not None:
+            try:
+                return await self._llm_extract_fields(message), LLMUsage(
+                    used=True,
+                    fallback_used=False,
+                )
+            except (ValueError, json.JSONDecodeError, ValidationError):
+                return self._rule_based_fields(message), LLMUsage(
+                    used=False,
+                    fallback_used=True,
+                )
+            except Exception:
+                return self._rule_based_fields(message), LLMUsage(
+                    used=False,
+                    fallback_used=True,
+                )
+        return self._rule_based_fields(message), LLMUsage()
+
+    async def _llm_extract_fields(self, message: str) -> WorksheetFields:
+        """Extract fields through a strict JSON-only LLM prompt."""
+        response = await self.llm_client.generate_text(
+            system_prompt=build_worksheet_system_prompt(),
+            user_prompt=build_worksheet_user_prompt(message),
+            temperature=0.0,
+        )
+        payload = json.loads(response)
+        if not isinstance(payload, dict):
+            raise ValueError("Worksheet extraction response must be an object.")
+        extra_keys = set(payload) - set(self.required_fields)
+        if extra_keys:
+            raise ValueError("Worksheet extraction returned unexpected fields.")
+        return WorksheetFields.model_validate(payload)
+
+    def _rule_based_fields(self, message: str) -> WorksheetFields:
+        """Run the deterministic extractor used by the MVP fallback path."""
         values = {
             field: self._extract_labeled_value(message, labels)
             for field, labels in self.field_labels.items()
@@ -48,7 +109,7 @@ class WorksheetAgent:
         self._fill_heuristics(message, values)
 
         intensity = self._parse_intensity(values.get("emotion_intensity"), message)
-        fields = WorksheetFields(
+        return WorksheetFields(
             situation=values.get("situation"),
             automatic_thought=values.get("automatic_thought"),
             emotion=values.get("emotion"),
@@ -58,13 +119,6 @@ class WorksheetAgent:
             alternative_thought=values.get("alternative_thought"),
             next_action=values.get("next_action"),
         )
-        missing = [
-            field
-            for field in self.required_fields
-            if getattr(fields, field) in (None, "")
-        ]
-        questions = [self.followup_questions[field] for field in missing[:4]]
-        return fields, missing, questions
 
     def _fill_heuristics(self, message: str, values: dict[str, str | None]) -> None:
         if values.get("emotion") is None:

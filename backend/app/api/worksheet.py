@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.agents.worksheet import WorksheetAgent
 from app.knowledge.service import KnowledgeService
+from app.llm.factory import create_llm_client
 from app.memory.worksheet_store import worksheet_store
 from app.models import RiskLevel
 from app.models_knowledge import KnowledgeBaseType
@@ -13,18 +14,18 @@ from app.models_worksheet import (
     WorksheetCreateResponse,
     WorksheetRecord,
 )
-from app.safety.classifier import SafetyClassifier
+from app.safety.classifier import create_safety_classifier
 
 router = APIRouter(prefix="/worksheet", tags=["worksheet"])
-worksheet_agent = WorksheetAgent()
-safety_classifier = SafetyClassifier()
+worksheet_agent = WorksheetAgent(llm_client=create_llm_client())
+safety_classifier = create_safety_classifier()
 knowledge_service = KnowledgeService()
 
 
 @router.post("/create", response_model=WorksheetCreateResponse)
 async def create_worksheet(request: WorksheetCreateRequest) -> WorksheetCreateResponse:
     """Create a CBT-style worksheet from a user message."""
-    safety_result = safety_classifier.classify(request.message)
+    safety_result = await safety_classifier.classify(request.message)
     if safety_result.risk_level == RiskLevel.CRISIS:
         return WorksheetCreateResponse(
             worksheet=None,
@@ -40,7 +41,7 @@ async def create_worksheet(request: WorksheetCreateRequest) -> WorksheetCreateRe
             ),
         )
 
-    fields, missing_fields, followup_questions = worksheet_agent.create_fields(
+    fields, missing_fields, followup_questions, llm_usage = await worksheet_agent.create_fields(
         request.message
     )
     rag_response = knowledge_service.query(
@@ -69,6 +70,7 @@ async def create_worksheet(request: WorksheetCreateRequest) -> WorksheetCreateRe
         disclaimer=WORKSHEET_DISCLAIMER,
         blocked=False,
         response=response,
+        llm_usage=llm_usage,
     )
 
 

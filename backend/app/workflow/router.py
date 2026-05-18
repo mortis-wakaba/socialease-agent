@@ -1,24 +1,61 @@
-"""Intent router interfaces and the rule-based keyword scoring MVP."""
+"""Intent routers for rule-based and optional LLM-backed workflow selection."""
 
+import json
 from typing import Protocol
 
+from pydantic import ValidationError
+
+from app.llm.base import BaseLLMClient
+from app.llm.prompts import (
+    build_intent_router_system_prompt,
+    build_intent_router_user_prompt,
+)
 from app.models import Intent, IntentResult, RiskLevel, SafetyResult
+from app.models_llm import LLMUsage
 
 
 class BaseIntentRouter(Protocol):
-    """Interface for intent routers, including future LLM routers."""
+    """Interface for workflow intent routers."""
 
-    def route(self, message: str, safety_result: SafetyResult) -> IntentResult:
+    async def route(self, message: str, safety_result: SafetyResult) -> IntentResult:
         """Route a user message to a workflow intent."""
         ...
 
 
 class LlmIntentRouter:
-    """Placeholder adapter for a future LLM-based intent router."""
+    """Prefer LLM semantic routing while preserving rule-based fallback."""
 
-    def route(self, message: str, safety_result: SafetyResult) -> IntentResult:
-        """Reserve the same interface for future model-backed routing."""
-        raise NotImplementedError("LLM intent router is not implemented yet.")
+    def __init__(
+        self,
+        *,
+        llm_client: BaseLLMClient,
+        fallback_router: "RuleBasedIntentRouter | None" = None,
+    ) -> None:
+        self.llm_client = llm_client
+        self.fallback_router = fallback_router or RuleBasedIntentRouter()
+
+    async def route(self, message: str, safety_result: SafetyResult) -> IntentResult:
+        """Route with LLM by default unless crisis or fallback is required."""
+        if safety_result.risk_level == RiskLevel.CRISIS:
+            return await self.fallback_router.route(message, safety_result)
+        try:
+            response = await self.llm_client.generate_text(
+                system_prompt=build_intent_router_system_prompt(),
+                user_prompt=build_intent_router_user_prompt(message),
+                temperature=0.0,
+            )
+            payload = json.loads(response)
+            if not isinstance(payload, dict):
+                raise ValueError("Intent router response must be an object.")
+            result = IntentResult.model_validate(payload)
+            if result.intent == Intent.CRISIS:
+                raise ValueError("LLM router cannot emit crisis outside safety routing.")
+            return result.model_copy(update={"llm_usage": LLMUsage(used=True)})
+        except (ValueError, json.JSONDecodeError, ValidationError):
+            fallback = await self.fallback_router.route(message, safety_result)
+        except Exception:
+            fallback = await self.fallback_router.route(message, safety_result)
+        return fallback.model_copy(update={"llm_usage": LLMUsage(fallback_used=True)})
 
 
 class RuleBasedIntentRouter:
@@ -83,7 +120,7 @@ class RuleBasedIntentRouter:
         ),
     }
 
-    def route(self, message: str, safety_result: SafetyResult) -> IntentResult:
+    async def route(self, message: str, safety_result: SafetyResult) -> IntentResult:
         """Return a workflow intent, preserving crisis safety routing."""
         if safety_result.risk_level == RiskLevel.CRISIS:
             return IntentResult(

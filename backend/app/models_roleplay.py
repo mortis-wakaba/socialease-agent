@@ -6,6 +6,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from app.models import SafetyResult
+from app.models_llm import LLMUsage
 from app.models_knowledge import Citation
 
 
@@ -93,6 +94,7 @@ class RoleplayMessageResponse(BaseModel):
     response: str
     safety_result: SafetyResult
     blocked: bool = False
+    llm_usage: LLMUsage = LLMUsage()
 
 
 class RoleplayFeedbackRequest(BaseModel):

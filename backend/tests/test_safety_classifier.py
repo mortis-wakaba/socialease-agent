@@ -3,9 +3,10 @@
 import pytest
 
 from app.models import RiskLevel
-from app.safety.classifier import SafetyClassifier
+from app.safety.classifier import RuleBasedSafetyClassifier
 
 
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
@@ -23,18 +24,19 @@ from app.safety.classifier import SafetyClassifier
         ("我怕自己会伤害他人", RiskLevel.CRISIS),
     ],
 )
-def test_classifier_rule_based_cases(message: str, expected: RiskLevel) -> None:
-    classifier = SafetyClassifier()
+async def test_classifier_rule_based_cases(message: str, expected: RiskLevel) -> None:
+    classifier = RuleBasedSafetyClassifier()
 
-    result = classifier.classify(message)
+    result = await classifier.classify(message)
 
     assert result.risk_level == expected
     assert result.reason
 
 
-def test_classifier_prioritizes_crisis_over_medium_terms() -> None:
-    classifier = SafetyClassifier()
+@pytest.mark.anyio
+async def test_classifier_prioritizes_crisis_over_medium_terms() -> None:
+    classifier = RuleBasedSafetyClassifier()
 
-    result = classifier.classify("我崩溃了，也不想活了")
+    result = await classifier.classify("我崩溃了，也不想活了")
 
     assert result.risk_level == RiskLevel.CRISIS

@@ -49,6 +49,7 @@ async def test_worksheet_create_complete_input(client: httpx.AsyncClient) -> Non
     assert payload["worksheet"]["worksheet_id"]
     assert payload["worksheet"]["citations"]
     assert payload["worksheet"]["missing_fields"] == []
+    assert payload["llm_usage"] == {"used": False, "fallback_used": False}
 
 
 @pytest.mark.anyio
@@ -92,6 +93,7 @@ async def test_worksheet_create_crisis_input_is_blocked(
     assert payload["worksheet"] is None
     assert payload["safety_result"]["risk_level"] == "crisis"
     assert "暂停自助练习" in payload["response"]
+    assert payload["llm_usage"] == {"used": False, "fallback_used": False}
 
 
 @pytest.mark.anyio
@@ -149,7 +151,8 @@ async def test_worksheet_create_returns_citations(client: httpx.AsyncClient) -> 
     citations = payload["worksheet"]["citations"]
     assert citations
     assert any(citation["title"] == "CBT Style Reflection Guide" for citation in citations)
-    assert all(citation["source"] == "Synthetic demo knowledge base" for citation in citations)
+    assert all(citation["source_name"] == "Project Authored" for citation in citations)
+    assert all(citation["source_type"] == "project_authored" for citation in citations)
 
 
 @pytest.mark.anyio

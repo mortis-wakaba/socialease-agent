@@ -15,9 +15,10 @@ from app.models import (
     SafetyResult,
     TraceRecord,
 )
-from app.safety.classifier import BaseSafetyClassifier, SafetyClassifier
+from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.tracing.logger import TraceLogger
-from app.workflow.router import BaseIntentRouter, IntentRouter
+from app.llm.factory import create_llm_client
+from app.workflow.router import BaseIntentRouter, IntentRouter, LlmIntentRouter
 
 
 class AgentWorkflow:
@@ -31,8 +32,8 @@ class AgentWorkflow:
         support_agent: SupportAgent | None = None,
     ) -> None:
         self.trace_logger = trace_logger
-        self.safety_classifier = safety_classifier or SafetyClassifier()
-        self.intent_router = intent_router or IntentRouter()
+        self.safety_classifier = safety_classifier or create_safety_classifier()
+        self.intent_router = intent_router or self._default_intent_router()
         self.support_agent = support_agent or SupportAgent()
 
     async def run(self, request: ChatRequest) -> ChatResponse:
@@ -41,8 +42,8 @@ class AgentWorkflow:
         run_id = str(uuid4())
         errors: list[str] = []
 
-        safety_result = self.safety_classifier.classify(request.message)
-        intent_result = self.intent_router.route(request.message, safety_result)
+        safety_result = await self.safety_classifier.classify(request.message)
+        intent_result = await self.intent_router.route(request.message, safety_result)
         selected_agent = "support_agent"
 
         if safety_result.risk_level == RiskLevel.CRISIS:
@@ -78,6 +79,13 @@ class AgentWorkflow:
             structured_data=structured_data,
             trace=trace,
         )
+
+    @staticmethod
+    def _default_intent_router() -> BaseIntentRouter:
+        llm_client = create_llm_client()
+        if llm_client is not None:
+            return LlmIntentRouter(llm_client=llm_client)
+        return IntentRouter()
 
     @staticmethod
     def _crisis_escalation_response() -> tuple[str, dict[str, Any]]:

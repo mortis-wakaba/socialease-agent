@@ -97,6 +97,7 @@ async def test_roleplay_message_appends_turns(client: httpx.AsyncClient) -> None
     assert payload["session"]["messages"][-2]["role"] == "user"
     assert payload["session"]["messages"][-1]["role"] == "agent"
     assert payload["response"]
+    assert payload["llm_usage"] == {"used": False, "fallback_used": False}
 
 
 @pytest.mark.anyio
@@ -138,7 +139,8 @@ async def test_roleplay_feedback_returns_scores(client: httpx.AsyncClient) -> No
     assert feedback["suggestions"]
     assert feedback["next_try_prompt"]
     assert feedback["citations"]
-    assert feedback["citations"][0]["source"] == "Synthetic demo knowledge base"
+    assert feedback["citations"][0]["source_name"] == "Project Authored"
+    assert feedback["citations"][0]["source_type"] == "project_authored"
 
 
 @pytest.mark.anyio
@@ -170,3 +172,4 @@ async def test_roleplay_message_crisis_is_blocked(
     assert payload["safety_result"]["risk_level"] == "crisis"
     assert payload["session"]["messages"][-1]["role"] == "system"
     assert "角色扮演会先暂停" in payload["response"]
+    assert payload["llm_usage"] == {"used": False, "fallback_used": False}

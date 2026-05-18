@@ -1,15 +1,24 @@
 """Role-play agent for safe, RAG-grounded social practice scenarios."""
 
+from app.llm.base import BaseLLMClient
+from app.llm.prompts import (
+    build_roleplay_system_prompt,
+    build_roleplay_user_prompt,
+)
 from app.models_roleplay import (
     RoleplayFeedback,
     RoleplayGuidance,
     RoleplayScenario,
     RoleplaySession,
 )
+from app.models_llm import LLMUsage
 
 
 class RoleplayAgent:
-    """Generate deterministic MVP role-play turns and structured feedback."""
+    """Generate optional LLM-backed role-play turns plus structured feedback."""
+
+    def __init__(self, llm_client: BaseLLMClient | None = None) -> None:
+        self.llm_client = llm_client
 
     scenario_openings: dict[RoleplayScenario, str] = {
         RoleplayScenario.CLASSROOM_SPEECH: "你现在在课堂上准备发言。我会扮演同学，先看着你，等你开口。",
@@ -72,8 +81,53 @@ class RoleplayAgent:
             "这只是社交表达练习，不是诊断或治疗。"
         )
 
-    def next_turn(self, session: RoleplaySession, user_message: str) -> str:
-        """Return the agent's next role-play turn."""
+    async def next_turn(
+        self,
+        session: RoleplaySession,
+        user_message: str,
+    ) -> tuple[str, LLMUsage]:
+        """Return a next turn plus compact LLM execution metadata."""
+        if self.llm_client is not None:
+            try:
+                return await self._llm_next_turn(session, user_message), LLMUsage(
+                    used=True,
+                    fallback_used=False,
+                )
+            except Exception:
+                return self._deterministic_next_turn(session, user_message), LLMUsage(
+                    used=False,
+                    fallback_used=True,
+                )
+        return self._deterministic_next_turn(session, user_message), LLMUsage()
+
+    async def _llm_next_turn(self, session: RoleplaySession, user_message: str) -> str:
+        """Generate one grounded role-play turn through the configured LLM."""
+        recent_messages = [
+            f"{message.role.value}: {message.content}"
+            for message in session.messages
+        ]
+        guidance = (
+            session.retrieved_guidance.answer
+            if not session.retrieved_guidance.no_guidance_found
+            else "No specific guidance found; use general safe role-play scaffolding."
+        )
+        return await self.llm_client.generate_text(
+            system_prompt=build_roleplay_system_prompt(),
+            user_prompt=build_roleplay_user_prompt(
+                scenario=session.scenario.value,
+                difficulty=session.difficulty,
+                guidance=guidance,
+                recent_messages=recent_messages,
+                user_message=user_message,
+            ),
+        )
+
+    def _deterministic_next_turn(
+        self,
+        session: RoleplaySession,
+        user_message: str,
+    ) -> str:
+        """Return the deterministic MVP fallback turn."""
         prompt = self.scenario_prompts[session.scenario]
         if session.difficulty >= 4:
             return f"{prompt} 我会稍微追问得更具体一些。"

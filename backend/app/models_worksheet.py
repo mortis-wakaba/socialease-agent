@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.models import SafetyResult
+from app.models_llm import LLMUsage
 from app.models_knowledge import Citation
 
 
@@ -59,3 +60,4 @@ class WorksheetCreateResponse(BaseModel):
     disclaimer: str = WORKSHEET_DISCLAIMER
     blocked: bool = False
     response: str
+    llm_usage: LLMUsage = LLMUsage()

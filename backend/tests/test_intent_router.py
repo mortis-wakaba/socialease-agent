@@ -12,6 +12,7 @@ def low_safety() -> SafetyResult:
     return SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
 
 
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
@@ -29,25 +30,26 @@ def low_safety() -> SafetyResult:
         ("今天只是有点难受，想说说", Intent.EMOTIONAL_SUPPORT),
     ],
 )
-def test_router_rule_based_cases(
+async def test_router_rule_based_cases(
     message: str,
     expected: Intent,
     low_safety: SafetyResult,
 ) -> None:
     router = IntentRouter()
 
-    result = router.route(message, low_safety)
+    result = await router.route(message, low_safety)
 
     assert result.intent == expected
     assert result.reason
 
 
-def test_router_keyword_scoring_prefers_more_specific_intent(
+@pytest.mark.anyio
+async def test_router_keyword_scoring_prefers_more_specific_intent(
     low_safety: SafetyResult,
 ) -> None:
     router = IntentRouter()
 
-    result = router.route(
+    result = await router.route(
         "我想模拟面试自我介绍，也想练习对话和角色扮演",
         low_safety,
     )
@@ -56,20 +58,22 @@ def test_router_keyword_scoring_prefers_more_specific_intent(
     assert result.confidence > 0.7
 
 
-def test_router_preserves_crisis_from_safety() -> None:
+@pytest.mark.anyio
+async def test_router_preserves_crisis_from_safety() -> None:
     router = IntentRouter()
     safety = SafetyResult(risk_level=RiskLevel.CRISIS, reason="crisis")
 
-    result = router.route("我想角色扮演", safety)
+    result = await router.route("我想角色扮演", safety)
 
     assert result.intent == Intent.CRISIS
     assert result.confidence == 1.0
 
 
-def test_router_defaults_to_emotional_support_for_unknown_safe_message() -> None:
+@pytest.mark.anyio
+async def test_router_defaults_to_emotional_support_for_unknown_safe_message() -> None:
     router = IntentRouter()
     safety = SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
 
-    result = router.route("最近有点烦，但还没想好要做什么", safety)
+    result = await router.route("最近有点烦，但还没想好要做什么", safety)
 
     assert result.intent == Intent.EMOTIONAL_SUPPORT

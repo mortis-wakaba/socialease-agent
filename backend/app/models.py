@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.models_llm import LLMUsage
+
 
 class RiskLevel(str, Enum):
     """Risk levels emitted by the safety classifier."""
@@ -33,6 +35,7 @@ class SafetyResult(BaseModel):
 
     risk_level: RiskLevel
     reason: str
+    llm_usage: LLMUsage = LLMUsage()
 
 
 class IntentResult(BaseModel):
@@ -41,6 +44,7 @@ class IntentResult(BaseModel):
     intent: Intent
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str
+    llm_usage: LLMUsage = LLMUsage()
 
 
 class ChatRequest(BaseModel):
@@ -75,4 +79,3 @@ class ChatResponse(BaseModel):
     response: str
     structured_data: dict[str, Any] = Field(default_factory=dict)
     trace: TraceRecord
-
