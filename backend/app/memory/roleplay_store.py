@@ -1,9 +1,12 @@
-"""In-memory role-play session store with a replaceable repository shape."""
+"""Role-play session store backed by a replaceable repository."""
 
 from datetime import datetime, timezone
-from threading import Lock
 from uuid import uuid4
 
+from app.db.repositories import (
+    RoleplaySessionRepository,
+    SQLiteRoleplaySessionRepository,
+)
 from app.models_roleplay import (
     RoleplayGuidance,
     RoleplayMessage,
@@ -14,11 +17,10 @@ from app.models_roleplay import (
 
 
 class RoleplaySessionStore:
-    """Store role-play sessions in memory for the MVP."""
+    """Coordinate role-play session creation and repository persistence."""
 
-    def __init__(self) -> None:
-        self._sessions: dict[str, RoleplaySession] = {}
-        self._lock = Lock()
+    def __init__(self, repository: RoleplaySessionRepository | None = None) -> None:
+        self.repository = repository or SQLiteRoleplaySessionRepository()
 
     def create(
         self,
@@ -46,17 +48,11 @@ class RoleplaySessionStore:
             created_at=now,
             updated_at=now,
         )
-        with self._lock:
-            self._sessions[session.session_id] = session
-        return session
+        return self.repository.save(session)
 
     def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
         """Return a session only if it belongs to the user."""
-        with self._lock:
-            session = self._sessions.get(session_id)
-            if session is None or session.user_id != user_id:
-                return None
-            return session
+        return self.repository.get_for_user(session_id, user_id)
 
     def append_message(
         self,
@@ -67,26 +63,19 @@ class RoleplaySessionStore:
     ) -> RoleplaySession | None:
         """Append a message and return the updated session."""
         now = datetime.now(timezone.utc)
-        with self._lock:
-            session = self._sessions.get(session_id)
-            if session is None or session.user_id != user_id:
-                return None
-
-            updated = session.model_copy(
-                update={
-                    "messages": [
-                        *session.messages,
-                        RoleplayMessage(
-                            role=role,
-                            content=content,
-                            created_at=now,
-                        ),
-                    ],
-                    "updated_at": now,
-                }
-            )
-            self._sessions[session_id] = updated
-            return updated
+        session = self.repository.get_for_user(session_id, user_id)
+        if session is None:
+            return None
+        updated = session.model_copy(
+            update={
+                "messages": [
+                    *session.messages,
+                    RoleplayMessage(role=role, content=content, created_at=now),
+                ],
+                "updated_at": now,
+            }
+        )
+        return self.repository.save(updated)
 
 
 roleplay_session_store = RoleplaySessionStore()

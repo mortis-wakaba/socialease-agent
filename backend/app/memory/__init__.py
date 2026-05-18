@@ -1,2 +1,1 @@
-"""User memory components will live here in later milestones."""
-
+"""Privacy-minimized stores for persisted user practice state."""

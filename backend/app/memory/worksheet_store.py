@@ -1,9 +1,9 @@
-"""In-memory worksheet store with a replaceable repository shape."""
+"""Worksheet store backed by a replaceable repository."""
 
 from datetime import datetime, timezone
-from threading import Lock
 from uuid import uuid4
 
+from app.db.repositories import SQLiteWorksheetRepository, WorksheetRepository
 from app.models_worksheet import (
     WORKSHEET_DISCLAIMER,
     WorksheetFields,
@@ -13,11 +13,10 @@ from app.models_knowledge import Citation
 
 
 class WorksheetStore:
-    """Store CBT-style worksheets in memory for the MVP."""
+    """Coordinate worksheet creation and repository persistence."""
 
-    def __init__(self) -> None:
-        self._worksheets: dict[str, WorksheetRecord] = {}
-        self._lock = Lock()
+    def __init__(self, repository: WorksheetRepository | None = None) -> None:
+        self.repository = repository or SQLiteWorksheetRepository()
 
     def create(
         self,
@@ -40,14 +39,11 @@ class WorksheetStore:
             gentle_followup_questions=gentle_followup_questions,
             created_at=datetime.now(timezone.utc),
         )
-        with self._lock:
-            self._worksheets[record.worksheet_id] = record
-        return record
+        return self.repository.save(record)
 
     def get(self, worksheet_id: str) -> WorksheetRecord | None:
         """Return a worksheet by id, if present."""
-        with self._lock:
-            return self._worksheets.get(worksheet_id)
+        return self.repository.get(worksheet_id)
 
 
 worksheet_store = WorksheetStore()

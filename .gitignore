@@ -250,6 +250,7 @@ frontend/.env.production.local
 *.sqlite3
 backend/*.sqlite
 backend/*.sqlite3
+backend/*.db
 backend/data/*.sqlite
 backend/data/*.sqlite3
 

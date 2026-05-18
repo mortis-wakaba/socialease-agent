@@ -1,28 +1,22 @@
-"""In-memory trace logger for MVP workflow runs."""
+"""Trace logger backed by a replaceable repository."""
 
-from threading import Lock
-
+from app.db.repositories import SQLiteTraceRepository, TraceRepository
 from app.models import TraceRecord
 
 
 class TraceLogger:
-    """Store workflow traces in memory for local development."""
+    """Persist workflow traces through the configured repository."""
 
-    def __init__(self) -> None:
-        self._records: dict[str, TraceRecord] = {}
-        self._lock = Lock()
+    def __init__(self, repository: TraceRepository | None = None) -> None:
+        self.repository = repository or SQLiteTraceRepository()
 
     def save(self, record: TraceRecord) -> TraceRecord:
         """Persist a trace record and return it."""
-        with self._lock:
-            self._records[record.run_id] = record
-        return record
+        return self.repository.save(record)
 
     def get(self, run_id: str) -> TraceRecord | None:
         """Return a trace record by run id, if present."""
-        with self._lock:
-            return self._records.get(run_id)
+        return self.repository.get(run_id)
 
 
 trace_logger = TraceLogger()
-
