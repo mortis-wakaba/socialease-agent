@@ -1,0 +1,87 @@
+backend/data/knowledge_base/product_rubrics/project_authored/eval_rubric.md
+  s_b59e6dc46421cc::t_ce293c7281bbf9 1-24
+backend/data/knowledge_base/safety_policy/project_authored/crisis_response.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-22
+backend/data/knowledge_base/safety_policy/project_authored/risk_levels.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-18
+backend/data/knowledge_base/campus_resources_demo/project_authored/advisor_support_demo.md
+  s_b59e6dc46421cc::t_ce293c7281bbf9 1-16
+backend/tests/test_support_api.py
+  s_b59e6dc46421cc::t_725837bb39f506 1-71
+backend/app/api/support.py
+  s_b59e6dc46421cc::t_725837bb39f506 1-8,10-12,14-20,22-47
+  s_b59e6dc46421cc::t_fd1c7733bf468a 9,13,21
+backend/data/knowledge_base/social_skills/project_authored/cbt_reflection_guide.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-25
+backend/app/knowledge/formatter.py
+  s_b59e6dc46421cc::t_848503d3c2ba3e 16,25-27,33,35
+backend/data/knowledge_base/campus_resources_demo/project_authored/counseling_center_demo.md
+  s_b59e6dc46421cc::t_ce293c7281bbf9 1-16
+backend/data/knowledge_base/social_skills/project_authored/dorm_conflict.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-22
+backend/app/models_knowledge.py
+  s_b59e6dc46421cc::t_ed8e83fb790b39 5-7,36-51
+  s_b59e6dc46421cc::t_848503d3c2ba3e 14,16,31-33,67-69,71-74,83-85
+  s_b59e6dc46421cc::t_18b5cb5dd2daf5 17
+backend/app/models_support.py
+  s_b59e6dc46421cc::t_725837bb39f506 1-23
+backend/data/knowledge_base/support_resources/external/nhs_cbt_self_help.md
+  s_b59e6dc46421cc::t_f979bfdbd79824 5
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-4,6-17
+backend/data/knowledge_base/product_rubrics/project_authored/roleplay_feedback_rubric.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-21
+backend/data/knowledge_base/support_resources/external/nimh_social_anxiety.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-17
+backend/data/knowledge_base/support_resources/external/nhs_inform_social_anxiety_self_help.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-17
+backend/data/knowledge_base/social_skills/project_authored/exposure_training_guide.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-24
+backend/data/knowledge_base/safety_policy/external/who_digital_health_boundaries.md
+  s_b59e6dc46421cc::t_ce293c7281bbf9 1-17
+backend/data/knowledge_base/product_rubrics/project_authored/exposure_ladder_rubric.md
+  s_b59e6dc46421cc::t_ce293c7281bbf9 1-22
+backend/data/knowledge_base/safety_policy/project_authored/support_resource_policy.md
+  s_b59e6dc46421cc::t_9a3a09c6f97ccc 1-22
+docs/knowledge_base_design.md
+  s_b59e6dc46421cc::t_18b5cb5dd2daf5 20
+  s_b59e6dc46421cc::t_7a6df4a749fddc 1-19,21-192
+backend/data/knowledge_base/safety_policy/project_authored/prohibited_outputs.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-23
+backend/app/knowledge/loader.py
+  s_b59e6dc46421cc::t_848503d3c2ba3e 1,22,24,29-36
+backend/app/api/knowledge.py
+  s_b59e6dc46421cc::t_4fe78586d13f2d 16
+backend/data/knowledge_base/safety_policy/external/who_mental_health_promotion.md
+  s_b59e6dc46421cc::t_ce293c7281bbf9 1-17
+backend/tests/test_knowledge_api.py
+  s_b59e6dc46421cc::t_18b5cb5dd2daf5 153-190
+  s_b59e6dc46421cc::t_4fe78586d13f2d 1,45-46,107-108,127,133-152
+backend/data/knowledge_base/safety_policy/project_authored/non_medical_boundary.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-22
+backend/data/knowledge_base/social_skills/project_authored/classroom_speech.md
+  s_b59e6dc46421cc::t_0984ce4ebc78f2 1-23
+backend/data/knowledge_base/safety_policy/external/psychiatry_app_evaluation.md
+  s_b59e6dc46421cc::t_f979bfdbd79824 1-17
+backend/data/knowledge_base/social_skills/external/cci_social_anxiety_modules.md
+  s_b59e6dc46421cc::t_ce293c7281bbf9 1-17
+backend/app/knowledge/chunker.py
+  s_b59e6dc46421cc::t_848503d3c2ba3e 39-41
+backend/data/knowledge_base/product_rubrics/project_authored/worksheet_extraction_rubric.md
+  s_b59e6dc46421cc::t_ce293c7281bbf9 1-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "24c43c5d5cc00db74456bd37479b0c1e029a5fea",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
