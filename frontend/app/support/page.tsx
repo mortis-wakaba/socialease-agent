@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { CitationList, ErrorBox, PageHeader, Panel, TextArea, Button, Badge, riskTone } from "@/components/ui";
+import { CitationList, EmptyState, ErrorBox, PageHeader, Panel, TextArea, Button, Badge, LLMUsageBadge, riskTone } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { SupportQueryResponse } from "@/lib/types";
 
@@ -15,6 +15,7 @@ export default function SupportPage() {
     event.preventDefault();
     const trimmed = query.trim();
     if (!trimmed) {
+      setError("Please enter a support-resource query.");
       return;
     }
     setLoading(true);
@@ -78,6 +79,7 @@ export default function SupportPage() {
                 <Badge tone={riskTone(result.safety_result.risk_level)}>
                   risk: {result.safety_result.risk_level}
                 </Badge>
+                <LLMUsageBadge usage={result.safety_result.llm_usage} />
                 {status ? <Badge tone={status.tone}>{status.label}</Badge> : null}
               </div>
               {status ? (
@@ -89,7 +91,10 @@ export default function SupportPage() {
               <CitationList citations={result.citations} />
             </div>
           ) : (
-            <p className="text-sm text-slate-500">No query yet.</p>
+            <EmptyState
+              title="No query yet"
+              description="Ask for a verified public support resource. Demo campus resources are intentionally excluded here."
+            />
           )}
         </Panel>
       </div>

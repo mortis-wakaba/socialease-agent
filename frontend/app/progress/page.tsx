@@ -8,7 +8,9 @@ import {
   Badge,
   Button,
   CitationList,
+  EmptyState,
   ErrorBox,
+  FormHint,
   PageHeader,
   Panel,
   TextArea,
@@ -36,6 +38,10 @@ export default function ProgressPage() {
 
   async function createPlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!targetScenario.trim()) {
+      setError("Please enter a target social scenario.");
+      return;
+    }
     setLoading(true);
     setError(null);
     setStatusMessage(null);
@@ -66,6 +72,11 @@ export default function ProgressPage() {
 
   async function completeTask(status: "completed" | "skipped" | "too_hard") {
     if (!selectedTask) {
+      setError("Select a task before submitting feedback.");
+      return;
+    }
+    if (!reflection.trim()) {
+      setError("Please write a short reflection before submitting feedback.");
       return;
     }
     setLoading(true);
@@ -132,6 +143,9 @@ export default function ProgressPage() {
               <Button type="submit" disabled={loading}>
                 Create Ladder
               </Button>
+              <FormHint>
+                Plans are demo social-practice ladders and can be paused or adjusted.
+              </FormHint>
             </form>
           </Panel>
           <ErrorBox message={error} />
@@ -230,10 +244,38 @@ export default function ProgressPage() {
                   </div>
                 </Panel>
               )}
+              <Panel title="Attempt History">
+                {plan.attempts.length > 0 ? (
+                  <div className="space-y-3">
+                    {plan.attempts.map((attempt, index) => (
+                      <div key={`${attempt.task_id}-${attempt.created_at}`} className="rounded-md border border-line p-3 text-sm">
+                        <div className="mb-2 flex flex-wrap gap-2">
+                          <Badge>#{index + 1}</Badge>
+                          <Badge tone={attempt.status === "completed" ? "good" : attempt.status === "too_hard" ? "danger" : "warn"}>
+                            {attempt.status}
+                          </Badge>
+                          <Badge>
+                            anxiety {attempt.anxiety_before} → {attempt.anxiety_after}
+                          </Badge>
+                        </div>
+                        <p className="leading-6 text-slate-700">{attempt.reflection}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No attempts yet"
+                    description="Complete, skip, or mark a task too hard to build an attempt history."
+                  />
+                )}
+              </Panel>
             </>
           ) : (
             <Panel title="Exposure Ladder">
-              <p className="text-sm text-slate-500">Create a plan to see the ladder.</p>
+              <EmptyState
+                title="No ladder yet"
+                description="Create a plan to see tasks, citations, and adaptive recommendations."
+              />
             </Panel>
           )}
         </div>
@@ -241,4 +283,3 @@ export default function ProgressPage() {
     </>
   );
 }
-

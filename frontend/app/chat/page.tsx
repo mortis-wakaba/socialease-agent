@@ -7,7 +7,9 @@ import type { ChatResponse } from "@/lib/types";
 import {
   Badge,
   Button,
+  EmptyState,
   ErrorBox,
+  LLMUsageBadge,
   PageHeader,
   Panel,
   TextArea,
@@ -31,6 +33,7 @@ export default function ChatPage() {
     event.preventDefault();
     const trimmed = input.trim();
     if (!trimmed) {
+      setError("Please enter a message before sending.");
       return;
     }
     setLoading(true);
@@ -62,7 +65,10 @@ export default function ChatPage() {
         <Panel title="Conversation">
           <div className="mb-4 min-h-[360px] space-y-3 rounded-md border border-line bg-panel p-3">
             {messages.length === 0 ? (
-              <p className="text-sm text-slate-500">Send a message to start a run.</p>
+              <EmptyState
+                title="No conversation yet"
+                description="Send a low-risk social-stress message to inspect safety, routing, agent output, and trace metadata."
+              />
             ) : (
               messages.map((message, index) => (
                 <div
@@ -106,12 +112,22 @@ export default function ChatPage() {
                   risk: {latest.risk_level}
                 </Badge>
                 <Badge tone="info">intent: {latest.intent}</Badge>
+                <LLMUsageBadge usage={latest.trace.safety_result.llm_usage} />
+                <LLMUsageBadge usage={latest.trace.intent_result.llm_usage} />
               </div>
               <div>
                 <div className="text-xs font-medium uppercase text-slate-500">run_id</div>
                 <p className="break-all rounded-md border border-line bg-panel p-2 text-xs text-slate-700">
                   {latest.run_id}
                 </p>
+              </div>
+              <div className="rounded-md border border-line p-3 text-sm">
+                <div className="font-medium text-ink">Safety reason</div>
+                <div className="mt-1 text-slate-700">{latest.trace.safety_result.reason}</div>
+              </div>
+              <div className="rounded-md border border-line p-3 text-sm">
+                <div className="font-medium text-ink">Router reason</div>
+                <div className="mt-1 text-slate-700">{latest.trace.intent_result.reason}</div>
               </div>
               <div className="rounded-md border border-line p-3 text-sm">
                 <div className="font-medium text-ink">Selected agent</div>
@@ -132,4 +148,3 @@ export default function ChatPage() {
     </>
   );
 }
-

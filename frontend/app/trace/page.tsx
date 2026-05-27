@@ -6,7 +6,9 @@ import type { TraceRecord } from "@/lib/types";
 import {
   Badge,
   Button,
+  EmptyState,
   ErrorBox,
+  LLMUsageBadge,
   PageHeader,
   Panel,
   TextInput,
@@ -22,6 +24,7 @@ export default function TracePage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!runId.trim()) {
+      setError("Please paste a run_id before loading a trace.");
       return;
     }
     setLoading(true);
@@ -42,20 +45,33 @@ export default function TracePage() {
           title: "Safety",
           body: trace.safety_result.reason,
           badge: (
-            <Badge tone={riskTone(trace.safety_result.risk_level)}>
-              {trace.safety_result.risk_level}
-            </Badge>
+            <div className="flex flex-wrap gap-2">
+              <Badge tone={riskTone(trace.safety_result.risk_level)}>
+                {trace.safety_result.risk_level}
+              </Badge>
+              <LLMUsageBadge usage={trace.safety_result.llm_usage} />
+            </div>
           )
         },
         {
           title: "Router",
           body: trace.intent_result.reason,
-          badge: <Badge tone="info">{trace.intent_result.intent}</Badge>
+          badge: (
+            <div className="flex flex-wrap gap-2">
+              <Badge tone="info">{trace.intent_result.intent}</Badge>
+              <LLMUsageBadge usage={trace.intent_result.llm_usage} />
+            </div>
+          )
         },
         {
           title: "Agent",
           body: `Selected agent: ${trace.selected_agent}`,
           badge: <Badge>{trace.latency_ms.toFixed(1)} ms</Badge>
+        },
+        {
+          title: "Memory",
+          body: "Trace saved for this run. Practice-specific memory is updated only by role-play, worksheet, and exposure APIs.",
+          badge: <Badge tone="info">persisted</Badge>
         },
         {
           title: "Output",
@@ -69,7 +85,7 @@ export default function TracePage() {
     <>
       <PageHeader
         title="Trace"
-        description="Inspect one saved agent run as Safety → Router → Agent → Output."
+        description="Inspect one saved agent run as Safety → Router → Agent → Memory → Output."
       />
       <Panel title="Lookup">
         <form onSubmit={handleSubmit} className="flex flex-col gap-3 sm:flex-row">
@@ -122,7 +138,14 @@ export default function TracePage() {
           </Panel>
         </div>
       )}
+      {!trace && !error && (
+        <div className="mt-4">
+          <EmptyState
+            title="No trace loaded"
+            description="Run a chat message first, then paste the run_id here to inspect the workflow."
+          />
+        </div>
+      )}
     </>
   );
 }
-

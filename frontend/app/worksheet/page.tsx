@@ -8,7 +8,9 @@ import {
   Badge,
   Button,
   CitationList,
+  EmptyState,
   ErrorBox,
+  LLMUsageBadge,
   PageHeader,
   Panel,
   TextArea,
@@ -37,6 +39,7 @@ export default function WorksheetPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!message.trim()) {
+      setError("Please describe a social-stress situation before creating a worksheet.");
       return;
     }
     setLoading(true);
@@ -85,6 +88,10 @@ export default function WorksheetPage() {
                   </Badge>
                 }
               >
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <LLMUsageBadge usage={result.safety_result.llm_usage} />
+                  <LLMUsageBadge usage={result.llm_usage} />
+                </div>
                 <p className="text-sm leading-6 text-slate-700">{result.response}</p>
                 <p className="mt-3 rounded-md border border-line bg-panel p-3 text-sm leading-6 text-slate-700">
                   {result.disclaimer}
@@ -134,7 +141,10 @@ export default function WorksheetPage() {
             </>
           ) : (
             <Panel title="Result">
-              <p className="text-sm text-slate-500">Create a worksheet to see structured fields.</p>
+              <EmptyState
+                title="No worksheet yet"
+                description="Create a worksheet to see extracted fields, missing items, follow-up prompts, and citations."
+              />
             </Panel>
           )}
         </div>
@@ -142,4 +152,3 @@ export default function WorksheetPage() {
     </>
   );
 }
-

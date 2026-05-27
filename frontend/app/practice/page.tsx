@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { api } from "@/lib/api";
 import { DEMO_USER_ID, roleplayScenarios } from "@/lib/constants";
 import type {
+  LLMUsage,
   RoleplayFeedback,
   RoleplayScenario,
   RoleplaySession
@@ -12,7 +13,10 @@ import {
   Badge,
   Button,
   CitationList,
+  EmptyState,
   ErrorBox,
+  FormHint,
+  LLMUsageBadge,
   PageHeader,
   Panel,
   TextArea,
@@ -26,6 +30,8 @@ export default function PracticePage() {
   const [message, setMessage] = useState("我想先说我的核心观点。");
   const [feedback, setFeedback] = useState<RoleplayFeedback | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [citationsExpanded, setCitationsExpanded] = useState(false);
+  const [lastTurnUsage, setLastTurnUsage] = useState<LLMUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -41,6 +47,8 @@ export default function PracticePage() {
       );
       setSession(result.session);
       setStatus(result.session.retrieved_guidance.no_guidance_found ? "fallback" : "grounded");
+      setCitationsExpanded(false);
+      setLastTurnUsage(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start session");
     } finally {
@@ -51,6 +59,7 @@ export default function PracticePage() {
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!session || !message.trim()) {
+      setError(session ? "Please enter a practice response before sending." : "Start a session first.");
       return;
     }
     setLoading(true);
@@ -63,12 +72,22 @@ export default function PracticePage() {
       );
       setSession(result.session);
       setStatus(result.blocked ? `blocked: ${result.safety_result.risk_level}` : null);
+      setLastTurnUsage(result.llm_usage);
       setMessage("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send message");
     } finally {
       setLoading(false);
     }
+  }
+
+  function resetSession() {
+    setSession(null);
+    setFeedback(null);
+    setStatus(null);
+    setError(null);
+    setLastTurnUsage(null);
+    setCitationsExpanded(false);
   }
 
   async function loadFeedback() {
@@ -131,6 +150,11 @@ export default function PracticePage() {
                 Start Session
               </Button>
             </div>
+            <div className="mt-2">
+              <FormHint>
+                This is social-expression practice only; it is not diagnosis or treatment.
+              </FormHint>
+            </div>
           </Panel>
           <ErrorBox message={error} />
         </div>
@@ -151,8 +175,19 @@ export default function PracticePage() {
                         ? "no guidance found"
                         : "RAG grounded"}
                     </Badge>
+                    {lastTurnUsage && <LLMUsageBadge usage={lastTurnUsage} />}
                   </div>
-                  <CitationList citations={session.retrieved_guidance.citations} />
+                  <Button
+                    variant="secondary"
+                    onClick={() => setCitationsExpanded((value) => !value)}
+                  >
+                    {citationsExpanded ? "Hide Citations" : "Show Citations"}
+                  </Button>
+                  {citationsExpanded && (
+                    <div className="mt-3">
+                      <CitationList citations={session.retrieved_guidance.citations} />
+                    </div>
+                  )}
                 </div>
                 <div className="max-h-[360px] space-y-3 overflow-y-auto rounded-md border border-line bg-panel p-3">
                   {session.messages.map((item, index) => (
@@ -179,11 +214,17 @@ export default function PracticePage() {
                     <Button variant="secondary" onClick={loadFeedback} disabled={loading}>
                       Get Feedback
                     </Button>
+                    <Button variant="secondary" onClick={resetSession} disabled={loading}>
+                      Reset
+                    </Button>
                   </div>
                 </form>
               </div>
             ) : (
-              <p className="text-sm text-slate-500">Choose a scenario and start a session.</p>
+              <EmptyState
+                title="No active session"
+                description="Choose a scenario, set a difficulty, and start a grounded role-play session."
+              />
             )}
           </Panel>
 

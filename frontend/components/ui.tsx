@@ -1,5 +1,5 @@
 import type React from "react";
-import type { Citation, RiskLevel } from "@/lib/types";
+import type { Citation, LLMUsage, RiskLevel } from "@/lib/types";
 
 export function PageHeader({
   title,
@@ -142,6 +142,38 @@ export function ErrorBox({ message }: { message: string | null }) {
       {message}
     </div>
   );
+}
+
+export function EmptyState({
+  title,
+  description
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-md border border-dashed border-line bg-panel p-4 text-sm">
+      <div className="font-medium text-ink">{title}</div>
+      <p className="mt-1 leading-6 text-slate-600">{description}</p>
+    </div>
+  );
+}
+
+export function LLMUsageBadge({ usage }: { usage?: LLMUsage }) {
+  if (!usage) {
+    return <Badge>LLM unknown</Badge>;
+  }
+  if (usage.used) {
+    return <Badge tone="good">LLM used</Badge>;
+  }
+  if (usage.fallback_used) {
+    return <Badge tone="warn">LLM fallback</Badge>;
+  }
+  return <Badge tone="neutral">deterministic</Badge>;
+}
+
+export function FormHint({ children }: { children: React.ReactNode }) {
+  return <p className="text-xs leading-5 text-slate-500">{children}</p>;
 }
 
 export function CitationList({ citations }: { citations: Citation[] }) {
