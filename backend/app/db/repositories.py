@@ -16,6 +16,7 @@ class TraceRepository(Protocol):
 
     def save(self, record: TraceRecord) -> TraceRecord: ...
     def get(self, run_id: str) -> TraceRecord | None: ...
+    def list_recent(self, limit: int = 100) -> list[TraceRecord]: ...
 
 
 class RoleplaySessionRepository(Protocol):
@@ -64,6 +65,15 @@ class SQLiteTraceRepository:
         with connect() as connection:
             row = connection.execute("SELECT payload FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         return TraceRecord.model_validate_json(row["payload"]) if row else None
+
+    def list_recent(self, limit: int = 100) -> list[TraceRecord]:
+        """Return recent trace records ordered from newest to oldest."""
+        with connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM runs ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [TraceRecord.model_validate_json(row["payload"]) for row in rows]
 
 
 class SQLiteRoleplaySessionRepository:
@@ -199,6 +209,12 @@ class InMemoryTraceRepository:
     def __init__(self) -> None: self.records: dict[str, TraceRecord] = {}
     def save(self, record: TraceRecord) -> TraceRecord: self.records[record.run_id] = record; return record
     def get(self, run_id: str) -> TraceRecord | None: return self.records.get(run_id)
+    def list_recent(self, limit: int = 100) -> list[TraceRecord]:
+        return sorted(
+            self.records.values(),
+            key=lambda record: record.created_at,
+            reverse=True,
+        )[:limit]
 
 
 class InMemoryRoleplaySessionRepository:

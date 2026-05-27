@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.api.exposure import router as exposure_router
+from app.api.harness import router as harness_router
 from app.api.knowledge import router as knowledge_router
 from app.api.profile import router as profile_router
 from app.api.roleplay import router as roleplay_router
@@ -10,11 +11,12 @@ from app.api.support import router as support_router
 from app.api.worksheet import router as worksheet_router
 from app.models import ChatRequest, ChatResponse, TraceRecord
 from app.tracing.logger import trace_logger
-from app.workflow.engine import AgentWorkflow
+from app.workflow.engine import AgentHarness
 
 router = APIRouter(prefix="/api")
-workflow = AgentWorkflow(trace_logger=trace_logger)
+workflow = AgentHarness(trace_logger=trace_logger)
 router.include_router(exposure_router)
+router.include_router(harness_router)
 router.include_router(knowledge_router)
 router.include_router(profile_router)
 router.include_router(roleplay_router)

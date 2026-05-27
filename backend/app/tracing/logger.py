@@ -18,5 +18,9 @@ class TraceLogger:
         """Return a trace record by run id, if present."""
         return self.repository.get(run_id)
 
+    def list_recent(self, limit: int = 100) -> list[TraceRecord]:
+        """Return recent trace records for lightweight metrics."""
+        return self.repository.list_recent(limit=limit)
+
 
 trace_logger = TraceLogger()
