@@ -14,6 +14,15 @@ class SafetyEvalCase(BaseModel):
     expected_risk_level: RiskLevel
 
 
+class SafetyRedTeamEvalCase(BaseModel):
+    """One red-team safety example for conservative regression checks."""
+
+    id: str
+    message: str
+    expected_min_risk_level: RiskLevel
+    notes: str = ""
+
+
 class IntentEvalCase(BaseModel):
     """One expected intent-routing example."""
 
@@ -55,6 +64,17 @@ class WorksheetEvalCase(BaseModel):
     expected_missing_fields: list[str] = Field(default_factory=list)
 
 
+class E2EWorkflowEvalCase(BaseModel):
+    """One expected end-to-end harness workflow example."""
+
+    id: str
+    message: str
+    expected_risk_level: RiskLevel
+    expected_intent: Intent
+    expected_selected_agent: str
+    expected_escalation: bool = False
+
+
 class EvalMetric(BaseModel):
     """Aggregate result for one evaluation family."""
 
@@ -67,9 +87,11 @@ class EvalReport(BaseModel):
     """Aggregate deterministic evaluation report."""
 
     safety_accuracy: EvalMetric
+    safety_red_team_pass_rate: EvalMetric
     blocked_crisis_rate: EvalMetric
     intent_accuracy: EvalMetric
     citation_hit_rate: EvalMetric
     unknown_precision: EvalMetric
     roleplay_feedback_pass_rate: EvalMetric
     worksheet_extraction_pass_rate: EvalMetric
+    e2e_workflow_pass_rate: EvalMetric

@@ -5,16 +5,19 @@ from datetime import datetime, timezone
 from app.agents.roleplay import RoleplayAgent
 from app.agents.worksheet import WorksheetAgent
 from app.evals.loader import (
+    load_e2e_workflow_cases,
     load_intent_cases,
     load_rag_cases,
     load_roleplay_feedback_cases,
     load_safety_cases,
+    load_safety_red_team_cases,
     load_worksheet_cases,
 )
 from app.evals.metrics import ratio
 from app.evals.models import EvalReport
 from app.knowledge.service import KnowledgeService
 from app.models import Intent, RiskLevel, SafetyResult
+from app.safety.permissions import PermissionAction, SafetyPermissionGate
 from app.models_knowledge import Citation
 from app.models_roleplay import (
     RoleplayGuidance,
@@ -34,11 +37,20 @@ def run_evaluations() -> EvalReport:
     knowledge_service = KnowledgeService()
     roleplay_agent = RoleplayAgent()
     worksheet_agent = WorksheetAgent()
+    permission_gate = SafetyPermissionGate()
 
     safety_cases = load_safety_cases()
     safety_results = [
         _rule_based_safety_for_eval(safety_classifier, case.message) == case.expected_risk_level
         for case in safety_cases
+    ]
+    safety_red_team_cases = load_safety_red_team_cases()
+    safety_red_team_results = [
+        _risk_at_least(
+            _rule_based_safety_for_eval(safety_classifier, case.message),
+            case.expected_min_risk_level,
+        )
+        for case in safety_red_team_cases
     ]
     crisis_cases = [case for case in safety_cases if case.expected_risk_level == RiskLevel.CRISIS]
     crisis_results = [
@@ -116,14 +128,37 @@ def run_evaluations() -> EvalReport:
         missing_ok = all(field in missing_fields for field in case.expected_missing_fields)
         worksheet_results.append(present_ok and missing_ok)
 
+    e2e_cases = load_e2e_workflow_cases()
+    e2e_results = []
+    for case in e2e_cases:
+        risk_level = _rule_based_safety_for_eval(safety_classifier, case.message)
+        safety_result = SafetyResult(risk_level=risk_level, reason="eval")
+        permission_action = permission_gate.decide(safety_result)
+        if permission_action == PermissionAction.ESCALATE:
+            intent = Intent.CRISIS
+            selected_agent = "crisis_escalation"
+            escalation = True
+        else:
+            intent = _deterministic_intent_for_eval(intent_router, case.message, risk_level)
+            selected_agent = "support_agent"
+            escalation = False
+        e2e_results.append(
+            risk_level == case.expected_risk_level
+            and intent == case.expected_intent
+            and selected_agent == case.expected_selected_agent
+            and escalation == case.expected_escalation
+        )
+
     return EvalReport(
         safety_accuracy=ratio(sum(safety_results), len(safety_results)),
+        safety_red_team_pass_rate=ratio(sum(safety_red_team_results), len(safety_red_team_results)),
         blocked_crisis_rate=ratio(sum(crisis_results), len(crisis_results)),
         intent_accuracy=ratio(sum(intent_results), len(intent_results)),
         citation_hit_rate=ratio(sum(citation_hits), len(citation_hits)),
         unknown_precision=ratio(sum(unknown_correct), len(unknown_correct)),
         roleplay_feedback_pass_rate=ratio(sum(roleplay_results), len(roleplay_results)),
         worksheet_extraction_pass_rate=ratio(sum(worksheet_results), len(worksheet_results)),
+        e2e_workflow_pass_rate=ratio(sum(e2e_results), len(e2e_results)),
     )
 
 
@@ -137,6 +172,17 @@ def _deterministic_intent_for_eval(
         return Intent.CRISIS
     scored_matches = intent_router._score_intents(message.casefold())
     return scored_matches[0][0] if scored_matches else Intent.EMOTIONAL_SUPPORT
+
+
+def _risk_at_least(actual: RiskLevel, minimum: RiskLevel) -> bool:
+    """Return whether the actual risk is at least the expected minimum."""
+    rank = {
+        RiskLevel.LOW: 0,
+        RiskLevel.MEDIUM: 1,
+        RiskLevel.HIGH: 2,
+        RiskLevel.CRISIS: 3,
+    }
+    return rank[actual] >= rank[minimum]
 
 
 def _rule_based_safety_for_eval(

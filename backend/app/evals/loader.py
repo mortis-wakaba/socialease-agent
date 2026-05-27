@@ -7,10 +7,12 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from app.evals.models import (
+    E2EWorkflowEvalCase,
     IntentEvalCase,
     RagEvalCase,
     RoleplayFeedbackEvalCase,
     SafetyEvalCase,
+    SafetyRedTeamEvalCase,
     WorksheetEvalCase,
 )
 
@@ -32,6 +34,11 @@ def load_safety_cases() -> list[SafetyEvalCase]:
     return load_jsonl(DATA_DIR / "safety.jsonl", SafetyEvalCase)
 
 
+def load_safety_red_team_cases() -> list[SafetyRedTeamEvalCase]:
+    """Load conservative safety red-team cases."""
+    return load_jsonl(DATA_DIR / "safety_red_team.jsonl", SafetyRedTeamEvalCase)
+
+
 def load_intent_cases() -> list[IntentEvalCase]:
     """Load intent-routing cases."""
     return load_jsonl(DATA_DIR / "intent.jsonl", IntentEvalCase)
@@ -50,3 +57,8 @@ def load_roleplay_feedback_cases() -> list[RoleplayFeedbackEvalCase]:
 def load_worksheet_cases() -> list[WorksheetEvalCase]:
     """Load worksheet-extraction cases."""
     return load_jsonl(DATA_DIR / "worksheet.jsonl", WorksheetEvalCase)
+
+
+def load_e2e_workflow_cases() -> list[E2EWorkflowEvalCase]:
+    """Load end-to-end harness workflow cases."""
+    return load_jsonl(DATA_DIR / "e2e_workflow.jsonl", E2EWorkflowEvalCase)
