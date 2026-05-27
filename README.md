@@ -16,9 +16,72 @@ SocialEase Agent 是一个面向大学生社交压力场景的安全可控 Agent
 - 分层知识库 RAG MVP：Social Skills、Support Resources、Safety Policy、Product Rubrics、Campus Resources Demo，基于本地 markdown 检索并返回带来源类型的引用
 - SQLite 持久化 + repository 层
 - LLM provider abstraction：支持 OpenAI-compatible provider（例如 DeepSeek）
+- Agent Harness：统一编排 safety、routing、skill dispatch、memory/persistence 和 trace
+- Skill Registry：将 crisis、support、role-play、worksheet、exposure、support RAG 等能力登记为 skills
 - Trace Logger + `llm_usage` 元数据
+- Agent Eval Suite：覆盖 safety、safety red-team、routing、RAG citation、skill-level rubric、E2E workflow 和 fallback
 - `GET /api/runs/{run_id}` 用于查看单次 agent run trace
-- 使用 pytest 覆盖 safety、routing、RAG、LLM fallback 和 API workflow
+- 使用 pytest 覆盖 safety、routing、RAG、LLM fallback、skills registry 和 API workflow
+
+## 快速查看
+
+- Demo walkthrough：[`docs/demo_walkthrough.md`](docs/demo_walkthrough.md)
+- Agent Harness 设计：[`docs/agent_harness_design.md`](docs/agent_harness_design.md)
+- Production readiness gap analysis：[`docs/production_readiness.md`](docs/production_readiness.md)
+- 面试 Q&A：[`docs/interview_qa.md`](docs/interview_qa.md)
+- 架构决策记录：[`docs/adr/`](docs/adr/)
+- 项目讲解与简历包装：[`docs/project_pitch.md`](docs/project_pitch.md)
+- 知识库分层设计：[`docs/knowledge_base_design.md`](docs/knowledge_base_design.md)
+
+## 一键 Docker 启动
+
+```bash
+docker compose up --build
+```
+
+启动后访问：
+
+- 前端：<http://127.0.0.1:3000>
+- 后端 API docs：<http://127.0.0.1:8000/docs>
+- 后端健康检查：<http://127.0.0.1:8000/health>
+
+不配置 LLM API key 时，系统会使用 deterministic fallback 跑通完整 demo。
+
+## 系统架构
+
+```text
+User Input
+  → Agent Harness
+  → Safety Classifier
+  → Intent Router
+  → Skill Registry / Skill Dispatch
+  → Knowledge RAG / User Memory / SQLite Persistence
+  → Trace Logger
+  → Frontend UI
+```
+
+```text
+┌────────────┐
+│  Frontend  │
+│ Next.js UI │
+└─────┬──────┘
+      │ REST API
+┌─────▼──────────────────────────────────────────────┐
+│                    FastAPI Backend                  │
+│                                                     │
+│  ┌────────┐   ┌────────┐   ┌────────────────────┐  │
+│  │ Safety │ → │ Router │ → │ Skill Registry     │  │
+│  └────────┘   └────────┘   └─────────┬──────────┘  │
+│      │             │                  │             │
+│      │             │          ┌───────▼────────┐    │
+│      │             │          │ Skills + RAG   │    │
+│      │             │          └───────┬────────┘    │
+│      │             │                  │             │
+│  ┌───▼─────────────▼──────────────────▼─────────┐  │
+│  │ Trace Logger / Repository / SQLite Persistence│  │
+│  └───────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
 
 ## 推荐目录结构
 
@@ -30,6 +93,7 @@ backend/
     db/
     knowledge/
     llm/
+    skills/
     workflow/
     safety/
     memory/
@@ -90,7 +154,7 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 - `/worksheet`：CBT 风格自助反思 worksheet 和 disclaimer；
 - `/support`：真实公开支持资源查询，展示 grounded / unknown / blocked 与 citations；
 - `/progress`：社交练习阶梯和 completed / skipped / too_hard 操作；
-- `/trace`：输入 run_id 查看 Safety → Router → Agent → Output。
+- `/trace`：输入 run_id 查看 Safety → Router → Agent → Memory → Output。
 
 示例请求：
 
@@ -112,12 +176,63 @@ pytest
 - Safety Classifier：至少 10 个 rule-based 分类用例；
 - Intent Router：至少 10 个 keyword scoring 路由用例；
 - API workflow：验证 `/api/chat`、crisis escalation、trace 查询和 trace 核心字段。
+- Skill Registry：验证 harness 可解析 crisis/support executable skills，并暴露 role-play、worksheet、exposure、support RAG 等 skill metadata。
+- Harness API：验证 `/api/harness/capabilities` 能公开 runtime loop、permissions、skills、knowledge layers 和 observation，并验证 `/api/harness/metrics` 的轻量聚合指标。
 - Role-play API：验证创建 session、发送 message、获取 feedback、crisis message 拦截。
 - CBT Worksheet API：验证完整输入、信息不足输入、crisis 输入拦截和非医疗化 disclaimer。
 - Exposure API：验证计划生成、completed / skipped / too_hard 的难度调整和用户进度查询。
 - Knowledge RAG API：验证 social_skills / safety_policy 检索、unknown query、citations 和不生成假联系方式。
 
+## Agent Harness / Skills / Eval 对应关系
+
+本项目将现有 agent workflow 组织为三个工程概念：
+
+- **Harness**：`backend/app/workflow/engine.py` 中的 `AgentHarness`，负责一次请求的完整生命周期，包括 safety、permission gate、routing、skill dispatch、hooks、trace 和 fallback。
+- **Skills**：`backend/app/skills/` 中的 skill interface、registry、manifest loader 和 `SKILL.md` manifests。当前 chat harness 可执行 `crisis_escalation_skill` 和 `general_support_skill`，同时 registry 暴露 role-play、worksheet、exposure planning、support resource RAG 等专业 skill metadata，对应已有 API/agent 模块。
+- **Permissions**：`backend/app/safety/permissions.py` 将 safety classification 转换为 harness-level `ALLOW` / `ESCALATE` 决策；crisis 会跳过普通 routing 和 skills。
+- **Hooks**：`backend/app/workflow/hooks.py` 提供 before/after safety、routing、skill、trace 的扩展点，方便后续 audit logging、metrics 或 eval capture。
+- **Eval Suite**：`backend/app/evals/` 中的 JSONL cases、metrics 和 runner，用来固定 safety、safety red-team、routing、citation grounding、roleplay feedback、worksheet extraction 和 E2E harness workflow 等关键行为。
+
+这层抽象的目标不是制造复杂插件系统，而是让项目表达更接近现代 agent runtime：能力可登记、调度可解释、风险可评测。
+
 ## 核心 API
+
+### Harness API
+
+#### `GET /api/harness/capabilities`
+
+返回当前 Agent Harness 的能力发现信息，适合 demo、调试和面试展示。
+
+```bash
+curl http://127.0.0.1:8000/api/harness/capabilities
+```
+
+响应包含：
+
+- `runtime_loop`：AgentHarness 的主循环节点；
+- `permission_actions`：当前支持的 permission decision，例如 `allow`、`escalate`；
+- `skills`：已注册 skills、支持 intents、安全边界和 manifest 状态；
+- `knowledge_layers`：可用知识库层；
+- `observation`：trace、eval、`llm_usage` 等可观察性能力。
+
+#### `GET /api/harness/metrics`
+
+返回最近 harness runs 的轻量聚合指标。
+
+```bash
+curl "http://127.0.0.1:8000/api/harness/metrics?limit=100"
+```
+
+响应包含：
+
+- `total_runs`；
+- `crisis_runs`；
+- `fallback_runs`；
+- `average_latency_ms`；
+- `intent_counts`；
+- `selected_agent_counts`。
+
+该接口用于 demo observability，不替代生产级监控系统。
 
 ### `POST /api/chat`
 
@@ -463,7 +578,7 @@ curl -X POST http://127.0.0.1:8000/api/support/query \
   - 从已有练习记录聚合近期场景、练习次数、最近 anxiety level 和偏好难度；
   - 明确 memory 只保存 demo summary，不保存诊断标签，也不额外复制危机原文；
   - 增加 profile API 测试，覆盖普通练习更新与 crisis 不进入普通 summarization。
-- **阶段 3：Evaluation 模块**
+- **阶段 3：Agent Eval Suite**
   - 新增 JSONL eval dataset、loader、metric 和 `python -m app.evals.run`；
   - 覆盖 safety、intent、RAG citation、roleplay feedback、worksheet extraction；
   - 增加稳定回归测试和 crisis hard requirement。
@@ -478,12 +593,30 @@ curl -X POST http://127.0.0.1:8000/api/support/query \
   - Safety 升级为 hybrid design，Intent Router 在启用 LLM 时默认走语义路由；
   - role-play next turn 与 worksheet extraction 支持 LLM-first + deterministic fallback；
   - `llm_usage` 覆盖 safety、routing、role-play、worksheet 的使用与 fallback 状态。
+- **阶段 6：前端质量提升**
+  - 增加统一 API 错误解析、空状态和表单校验；
+  - `/practice` 支持 session reset、citations 展开和 LLM usage 展示；
+  - `/progress` 增加 attempt history；
+  - `/trace` 增加 Safety → Router → Agent → Memory → Output 流程节点与 LLM usage；
+  - `/support`、`/worksheet`、`/chat` 展示更清楚的状态与安全/LLM 元数据。
+- **阶段 7：Docker Compose 与部署**
+  - 新增后端和前端 Dockerfile；
+  - 新增 `docker-compose.yml`，一条命令启动前后端；
+  - SQLite 数据库使用 Docker named volume 持久化；
+  - 后端与前端均配置 healthcheck；
+  - demo knowledge base 会随后端镜像一起打包。
+- **阶段 8：展示材料和简历包装**
+  - 新增 demo walkthrough，覆盖普通社交压力、role-play feedback、worksheet、support RAG、crisis escalation 和 trace；
+  - 新增项目 pitch / 简历包装文档，包含架构图、技术亮点、面试 tradeoffs 和中英文简历 bullet points；
+  - 新增 production readiness gap analysis、interview Q&A 和 ADR，沉淀架构权衡；
+  - 新增 `/api/harness/capabilities` 能力发现接口和 `/api/harness/metrics` 轻量可观察性接口；
+  - README 增加快速查看、一键 Docker 启动和系统架构入口。
 
-后续仍需完成：
+后续可选增强：
 
-1. 阶段 6：前端质量提升
-2. 阶段 7：Docker Compose 与部署
-3. 阶段 8：展示材料和简历包装
+1. 部署到公网云平台，提供可直接访问的 demo link；
+2. 补充 screenshots 或 1-2 分钟演示视频；
+3. 增加前端 Vitest / Testing Library 组件测试。
 
 知识库分层设计见 [`docs/knowledge_base_design.md`](docs/knowledge_base_design.md)：
 
@@ -738,53 +871,114 @@ LLM_TIMEOUT_SECONDS=30
 - 前端组件测试通过；
 - 手动走通 chat、practice、worksheet、progress、trace 五个页面。
 
+当前实现：
+
+- API client 增加统一错误解析，能展示 FastAPI validation detail；
+- 共享 UI 增加 `EmptyState`、`FormHint`、`LLMUsageBadge`；
+- `/chat` 展示 safety / router reason 和 LLM usage；
+- `/practice` 增加 session reset、citations 展开、非医疗化提示和 turn-level LLM usage；
+- `/worksheet` 增加空状态、输入校验、safety / extraction LLM usage；
+- `/support` 增加 safety LLM usage 和更明确的 grounded / unknown / blocked 状态；
+- `/progress` 增加创建 / 反馈校验和 attempt history；
+- `/trace` 增加 Safety → Router → Agent → Memory → Output 可视化，并显示 safety / router LLM usage；
+- 当前未新增 Vitest / Testing Library 依赖；前端验证以 `npm run typecheck` 和 `npm run build` 为准。
+
 ### 阶段 7：Docker Compose 与部署
+
+状态：已完成基础 demo 部署编排。
 
 目标：让项目可以一键启动，方便演示、提交和部署。
 
-交付物：
+已交付：
 
-- `Dockerfile.backend`；
-- `Dockerfile.frontend`；
-- `docker-compose.yml`；
-- SQLite volume 或 PostgreSQL service；
+- `Dockerfile.backend`：构建 FastAPI 后端镜像，打包 `backend/app` 和 `backend/data`；
+- `Dockerfile.frontend`：构建 Next.js 前端镜像；
+- `docker-compose.yml`：同时启动 backend 与 frontend；
+- `socialease-data` named volume：持久化 SQLite 数据库到容器内 `/data/socialease.db`；
+- backend / frontend healthcheck；
 - README 一键启动说明。
 
-执行计划：
+一键启动：
 
-- 后端容器运行 `uvicorn app.main:app --host 0.0.0.0`；
-- 前端容器配置 `NEXT_PUBLIC_API_BASE_URL`；
-- 可选加入 PostgreSQL；
-- 增加健康检查；
-- 保证 demo knowledge base 被打包进容器。
+```bash
+docker compose up --build
+```
+
+启动后访问：
+
+- 前端：<http://127.0.0.1:3000>
+- 后端 API docs：<http://127.0.0.1:8000/docs>
+- 后端健康检查：<http://127.0.0.1:8000/health>
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+如果需要清空 demo SQLite 数据：
+
+```bash
+docker compose down -v
+```
+
+可选启用 DeepSeek / OpenAI-compatible LLM：
+
+```bash
+LLM_ENABLED=true LLM_API_KEY=你的_api_key docker compose up --build
+```
+
+也可以在项目根目录创建本地 `.env` 文件，Docker Compose 会自动读取；`.env` 不应提交到 Git。示例：
+
+```env
+LLM_ENABLED=true
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=你的_api_key
+LLM_MODEL=deepseek-chat
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+```
+
+部署到非本机环境时，需要把 `NEXT_PUBLIC_API_BASE_URL` 改成浏览器可访问的后端地址。注意这个变量会在前端 build 阶段写入 Next.js 静态包，因此变更后需要重新 build 前端镜像。
 
 验证方式：
 
-- `docker compose up --build` 可启动前后端；
-- 浏览器访问前端；
-- `/api/health` 和 `/docs` 可访问；
-- pytest 可在容器或本地稳定运行。
+- `docker compose config` 检查 Compose 配置；
+- `docker compose up --build` 启动前后端；
+- 浏览器访问前端、`/docs` 和 `/health`；
+- pytest 可在本地稳定运行。
 
 ### 阶段 8：展示材料和简历包装
 
+状态：已完成基础展示材料。
+
 目标：把工程能力和安全设计讲清楚，方便大创展示和简历呈现。
 
-交付物：
+已交付：
 
-- 项目架构图；
-- agent workflow 图；
-- demo script；
-- screenshots；
-- 简历 bullet points；
-- 技术亮点说明。
+- README 顶部增加快速查看、一键 Docker 启动和系统架构；
+- [`docs/demo_walkthrough.md`](docs/demo_walkthrough.md)：5 分钟 demo script；
+- [`docs/agent_harness_design.md`](docs/agent_harness_design.md)：Model + Harness、skills、permissions、hooks、observation 和 eval 对应关系；
+- [`docs/production_readiness.md`](docs/production_readiness.md)：上线前缺口、隐私、安全、监控和部署成熟度说明；
+- [`docs/interview_qa.md`](docs/interview_qa.md)：面试高频问题和回答思路；
+- [`docs/adr/`](docs/adr/)：hybrid safety、skill registry、资源边界、LLM adapter 等架构决策；
+- [`docs/project_pitch.md`](docs/project_pitch.md)：项目讲解、架构图、技术亮点、面试 tradeoffs 和中英文简历 bullet points；
+- [`docs/knowledge_base_design.md`](docs/knowledge_base_design.md)：知识库分层设计。
 
-执行计划：
+Demo walkthrough 覆盖：
 
-- 画出 Safety → Router → Agent → RAG → Memory → Trace 的流程；
-- 准备 3 条演示路径：普通社交压力、roleplay + feedback、crisis escalation；
-- README 增加 demo walkthrough；
-- 整理测试结果和 eval 指标；
-- 总结安全边界和非医疗化设计。
+- 普通社交压力输入；
+- role-play + structured feedback；
+- CBT 风格 worksheet；
+- support resource RAG；
+- crisis escalation；
+- trace 与 evaluation。
+
+可选后续增强：
+
+- 补充实际运行截图；
+- 录制 1-2 分钟演示视频；
+- 如果需要公开体验，再部署到 Render / Railway / Fly.io / VPS 等平台。
 
 验证方式：
 
