@@ -1,0 +1,33 @@
+backend/app/evals/loader.py
+  s_b59e6dc46421cc::t_2353179d7436b1 10,60-64
+  s_b59e6dc46421cc::t_6f4501cd545021 15,37-39
+backend/app/evals/data/e2e_workflow.jsonl
+  s_b59e6dc46421cc::t_2353179d7436b1 1-4
+backend/app/evals/run.py
+  s_b59e6dc46421cc::t_2353179d7436b1 8,20,40,131-151,161
+  s_b59e6dc46421cc::t_6f4501cd545021 13,47-54,154,177-185
+backend/app/evals/data/safety_red_team.jsonl
+  s_b59e6dc46421cc::t_6f4501cd545021 1-6
+backend/app/evals/models.py
+  s_b59e6dc46421cc::t_2353179d7436b1 67-77,97
+  s_b59e6dc46421cc::t_6f4501cd545021 17-25,90
+backend/tests/test_evals.py
+  s_b59e6dc46421cc::t_6f4501cd545021 9,19,41
+  s_b59e6dc46421cc::t_2353179d7436b1 4,24,48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "2c451a29983e7624bc9652128079219f90ec3595",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
