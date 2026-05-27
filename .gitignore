@@ -257,3 +257,6 @@ backend/data/*.sqlite3
 # OS files
 .DS_Store
 Thumbs.db
+
+# Private local notes
+local_notes/
