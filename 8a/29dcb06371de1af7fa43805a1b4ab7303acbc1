@@ -1,0 +1,51 @@
+docs/adr/0001-hybrid-safety-permission-gate.md
+  s_b59e6dc46421cc::t_8587d55b9a4efa 1-34
+docs/agent_harness_design.md
+  s_b59e6dc46421cc::t_67e6a148cf4835 122,125
+  s_b59e6dc46421cc::t_a4b5bb22ad4090 1-120,123-124,126-143
+  s_b59e6dc46421cc::t_ca7da6eef84a15 121
+docs/interview_qa.md
+  s_b59e6dc46421cc::t_8587d55b9a4efa 1-109,111-118,120,127-135,137-140
+  s_b59e6dc46421cc::t_67e6a148cf4835 110,119,121-126,136
+docs/project_pitch.md
+  s_b59e6dc46421cc::t_6d3a023c7dd7d1 1-6,8-23,25-26,28-32,34-57,59-61,63-84,86-88,90-114,116-119,122,124-145
+  s_b59e6dc46421cc::t_278aba51b91a5c 7,24,27,33,58,115
+  s_b59e6dc46421cc::t_a4b5bb22ad4090 120-121
+  s_b59e6dc46421cc::t_67e6a148cf4835 62,123
+  s_b59e6dc46421cc::t_a7054d8526ebba 85,89
+docs/demo_walkthrough.md
+  s_b59e6dc46421cc::t_6d3a023c7dd7d1 1-193
+docs/production_readiness.md
+  s_b59e6dc46421cc::t_1c401bd2f272a1 1-139
+docs/adr/0002-skill-registry-not-full-plugin-runtime.md
+  s_b59e6dc46421cc::t_8587d55b9a4efa 1-34
+README.md
+  s_b59e6dc46421cc::t_f5e51774484a24 596-601,874-884
+  s_b59e6dc46421cc::t_9e9b45b82b0851 602-607,888-889,892,894-898,901-929,931-942,946-949
+  s_b59e6dc46421cc::t_ca7da6eef84a15 31-32,201,204-216,236,963-964
+  s_b59e6dc46421cc::t_a4b5bb22ad4090 29,190-193,961
+  s_b59e6dc46421cc::t_67e6a148cf4835 22,30,180,194,200,202-203,217-235,611-612,962
+  s_b59e6dc46421cc::t_a7054d8526ebba 73,77
+  s_b59e6dc46421cc::t_278aba51b91a5c 19-20,24,54,57,96,179,186-189,195-197,581
+  s_b59e6dc46421cc::t_6cbaa820955a69 26-28,33-53,55-56,58-72,74-76,78-84,157,608-610,613-619,953-954,957,959-960,965-966,968-977,979-981
+docs/adr/0004-openai-compatible-llm-adapter-with-fallback.md
+  s_b59e6dc46421cc::t_8587d55b9a4efa 1-35
+docs/adr/0003-grounded-support-resources-and-demo-campus-boundary.md
+  s_b59e6dc46421cc::t_8587d55b9a4efa 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "8a29dcb06371de1af7fa43805a1b4ab7303acbc1",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
