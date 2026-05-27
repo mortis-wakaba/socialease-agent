@@ -1,0 +1,77 @@
+backend/tests/test_harness_architecture.py
+  s_b59e6dc46421cc::t_e8177f07fb1461 1-2,5-8,11-55,57-79
+  s_b59e6dc46421cc::t_83b1f731141a44 3-4,56
+  s_b59e6dc46421cc::t_8f80a2c9669b27 9-10
+backend/app/skills/manifests/crisis/SKILL.md
+  s_b59e6dc46421cc::t_c6981896bd1bcb 1-28
+backend/tests/test_skill_registry.py
+  s_b59e6dc46421cc::t_a7054d8526ebba 13,41
+  s_b59e6dc46421cc::t_58b0a627651276 1-12,14-40,42-51
+backend/app/skills/manifests/worksheet/SKILL.md
+  s_b59e6dc46421cc::t_c6981896bd1bcb 1-31
+backend/app/workflow/hooks.py
+  s_b59e6dc46421cc::t_61ed48a3d49515 1-49
+backend/app/skills/manifest_loader.py
+  s_b59e6dc46421cc::t_61ed48a3d49515 1-29
+backend/app/tracing/logger.py
+  s_b59e6dc46421cc::t_1821a5fd0a7f15 21-24
+backend/app/api/routes.py
+  s_b59e6dc46421cc::t_99024f50dda669 14,17
+backend/app/api/harness.py
+  s_b59e6dc46421cc::t_a1e2b49824fdaf 21
+  s_b59e6dc46421cc::t_1821a5fd0a7f15 5-11,66-69,71-83,87-104
+  s_b59e6dc46421cc::t_2e2be8d08b841d 15,70,84-86
+backend/app/skills/manifests/support_rag/SKILL.md
+  s_b59e6dc46421cc::t_c6981896bd1bcb 1-28
+backend/app/safety/permissions.py
+  s_b59e6dc46421cc::t_61ed48a3d49515 1-22
+backend/app/skills/base.py
+  s_b59e6dc46421cc::t_78215c6a74ded5 1-37,39-48
+  s_b59e6dc46421cc::t_5503adb597ee7f 38
+backend/app/skills/registry.py
+  s_b59e6dc46421cc::t_5503adb597ee7f 4,12-14,21,30,39,48
+  s_b59e6dc46421cc::t_a7054d8526ebba 77,85
+  s_b59e6dc46421cc::t_78215c6a74ded5 1-3,5-11,15-20,22-29,31-38,40-47,49-76,78-79,82,90-92
+  s_b59e6dc46421cc::t_019a9402de8a13 80-81,83-84,86-89
+backend/app/skills/crisis.py
+  s_b59e6dc46421cc::t_5503adb597ee7f 3,19
+  s_b59e6dc46421cc::t_78215c6a74ded5 1-2,4-18,20-50
+backend/app/skills/__init__.py
+  s_b59e6dc46421cc::t_4e8703809046a3 1,4,11,14
+  s_b59e6dc46421cc::t_78215c6a74ded5 2-3,5-10,12-13,15-16
+backend/app/workflow/engine.py
+  s_b59e6dc46421cc::t_418ad1abdb56d5 18,21,34-35,41-42,50-52,54-55,57-63,65-69,80-82,102-103
+  s_b59e6dc46421cc::t_99024f50dda669 1,8,19,25-26,33,40,45,70-73,77,79,84-86,96,109-110,121-123
+  s_b59e6dc46421cc::t_e8177f07fb1461 3
+backend/app/skills/support.py
+  s_b59e6dc46421cc::t_5503adb597ee7f 3-4,26
+  s_b59e6dc46421cc::t_a7054d8526ebba 14
+  s_b59e6dc46421cc::t_e8177f07fb1461 5
+  s_b59e6dc46421cc::t_78215c6a74ded5 1-2,6-13,15-25,27-43
+backend/app/models_harness.py
+  s_b59e6dc46421cc::t_1821a5fd0a7f15 31-42
+backend/app/skills/manifests/general_support/SKILL.md
+  s_b59e6dc46421cc::t_c6981896bd1bcb 1-29
+backend/app/db/repositories.py
+  s_b59e6dc46421cc::t_1821a5fd0a7f15 19,69-77,212-217
+backend/app/skills/manifests/exposure/SKILL.md
+  s_b59e6dc46421cc::t_c6981896bd1bcb 1-30
+backend/app/skills/manifests/roleplay/SKILL.md
+  s_b59e6dc46421cc::t_c6981896bd1bcb 1-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "f1444f80c48b680a5c4e138d0d2d46753cff551f",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
