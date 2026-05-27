@@ -1,0 +1,32 @@
+frontend/app/worksheet/page.tsx
+  s_b59e6dc46421cc::t_4cfc7310b1c7b7 11,13,42,91-94,144-147
+frontend/app/practice/page.tsx
+  s_b59e6dc46421cc::t_20cf3a6bd05c26 7,34
+  s_b59e6dc46421cc::t_5f8b57bb6ce61b 16,18-19,33,50-51,62,75,84-92,153-157,178,180-190,217-219,224-227
+frontend/components/ui.tsx
+  s_b59e6dc46421cc::t_4416e8d79e536c 2,147-176
+frontend/app/chat/page.tsx
+  s_b59e6dc46421cc::t_e7548f380e7a90 10,12,36,68-71,115-116,124-131
+frontend/app/progress/page.tsx
+  s_b59e6dc46421cc::t_a9d07f42be2386 11,13,41-44,75-79,146-148,247-271,275-278
+frontend/app/trace/page.tsx
+  s_b59e6dc46421cc::t_191bb00f6f61e1 9,11,27,48-53,59-64,71-75,88,141-146
+frontend/app/support/page.tsx
+  s_b59e6dc46421cc::t_4cfc7310b1c7b7 4,18,82,94-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "7f56560c26a0d58aab7bd645cb12f2e170e9f6e9",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
