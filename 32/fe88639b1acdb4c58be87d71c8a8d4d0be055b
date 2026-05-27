@@ -1,0 +1,25 @@
+Dockerfile.frontend
+  s_b59e6dc46421cc::t_786e7d285d9abd 1-32
+Dockerfile.backend
+  s_b59e6dc46421cc::t_786e7d285d9abd 1-23
+.dockerignore
+  s_b59e6dc46421cc::t_786e7d285d9abd 1-27
+docker-compose.yml
+  s_b59e6dc46421cc::t_786e7d285d9abd 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "32fe88639b1acdb4c58be87d71c8a8d4d0be055b",
+  "prompts": {},
+  "sessions": {
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
