@@ -1,0 +1,32 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app/frontend
+
+ARG NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+FROM node:20-alpine AS runner
+
+WORKDIR /app/frontend
+ENV NODE_ENV=production
+ARG NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+
+COPY --from=builder /app/frontend/package.json ./package.json
+COPY --from=builder /app/frontend/package-lock.json ./package-lock.json
+COPY --from=builder /app/frontend/node_modules ./node_modules
+COPY --from=builder /app/frontend/.next ./.next
+COPY --from=builder /app/frontend/next.config.mjs ./next.config.mjs
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+
+CMD ["npx", "next", "start", "--hostname", "0.0.0.0", "--port", "3000"]

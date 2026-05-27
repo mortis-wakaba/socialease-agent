@@ -1,0 +1,27 @@
+.git
+.gitignore
+.agents
+.codex
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local databases and secrets
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!backend/.env.example
+
+# Frontend generated/dependencies
+frontend/node_modules/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+
+# Misc
+.DS_Store
