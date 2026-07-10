@@ -1,0 +1,19 @@
+.gitignore
+  s_f8dae88ec33b77::t_5a9408f092b4d7 18-19,55-57,158-160,259,266-277,284-295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "36a7da1b383aac2add287bb89ea087fc8ba8e482",
+  "prompts": {},
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "unknown"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
