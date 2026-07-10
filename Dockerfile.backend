@@ -9,6 +9,8 @@ WORKDIR /app/backend
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/migrations ./migrations
 COPY backend/app ./app
 COPY backend/data ./data
 COPY backend/pytest.ini ./pytest.ini
@@ -18,6 +20,6 @@ RUN mkdir -p /data
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

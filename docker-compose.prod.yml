@@ -1,0 +1,89 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    environment:
+      SOCIALEASE_DATABASE_URL: ${SOCIALEASE_DATABASE_URL:?SOCIALEASE_DATABASE_URL is required}
+      SOCIALEASE_CORS_ORIGINS: ${SOCIALEASE_CORS_ORIGINS:?SOCIALEASE_CORS_ORIGINS is required}
+      SOCIALEASE_AUTH_MODE: ${SOCIALEASE_AUTH_MODE:-production}
+      SOCIALEASE_AUTH_TOKEN_SECRET: ${SOCIALEASE_AUTH_TOKEN_SECRET:?SOCIALEASE_AUTH_TOKEN_SECRET is required}
+      SOCIALEASE_ENABLE_SIGNUP: ${SOCIALEASE_ENABLE_SIGNUP:-false}
+      SOCIALEASE_SIGNUP_ALLOWED_EMAILS: ${SOCIALEASE_SIGNUP_ALLOWED_EMAILS:-}
+      SOCIALEASE_SIGNUP_INVITE_CODES: ${SOCIALEASE_SIGNUP_INVITE_CODES:-}
+      SOCIALEASE_AUTH_COOKIE_ENABLED: ${SOCIALEASE_AUTH_COOKIE_ENABLED:-true}
+      SOCIALEASE_AUTH_COOKIE_SECURE: ${SOCIALEASE_AUTH_COOKIE_SECURE:-true}
+      SOCIALEASE_ENFORCE_DIRECT_ACTION_CONSENT: ${SOCIALEASE_ENFORCE_DIRECT_ACTION_CONSENT:-true}
+      SOCIALEASE_RATE_LIMIT_PER_MINUTE: ${SOCIALEASE_RATE_LIMIT_PER_MINUTE:-0}
+      SOCIALEASE_SLOW_REQUEST_MS: ${SOCIALEASE_SLOW_REQUEST_MS:-1000}
+      SOCIALEASE_TRACE_RETENTION_DAYS: ${SOCIALEASE_TRACE_RETENTION_DAYS:-30}
+      SOCIALEASE_PROTOCOL_RETENTION_DAYS: ${SOCIALEASE_PROTOCOL_RETENTION_DAYS:-30}
+      SOCIALEASE_ABANDONED_PLAN_MINUTES: ${SOCIALEASE_ABANDONED_PLAN_MINUTES:-60}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai_compatible}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      LLM_MAX_CONCURRENCY: ${LLM_MAX_CONCURRENCY:-4}
+      LLM_CONCURRENCY_WAIT_SECONDS: ${LLM_CONCURRENCY_WAIT_SECONDS:-0.25}
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL is required}
+        NEXT_PUBLIC_SOCIALEASE_AUTH_MODE: ${NEXT_PUBLIC_SOCIALEASE_AUTH_MODE:-production}
+        NEXT_PUBLIC_SOCIALEASE_ENABLE_SIGNUP: ${NEXT_PUBLIC_SOCIALEASE_ENABLE_SIGNUP:-false}
+        NEXT_PUBLIC_SOCIALEASE_TOKEN_STORAGE: ${NEXT_PUBLIC_SOCIALEASE_TOKEN_STORAGE:-cookie}
+        NEXT_PUBLIC_SOCIALEASE_SHOW_TRACE: ${NEXT_PUBLIC_SOCIALEASE_SHOW_TRACE:-false}
+        NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOSTICS: ${NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOSTICS:-false}
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL is required}
+      NEXT_PUBLIC_SOCIALEASE_AUTH_MODE: ${NEXT_PUBLIC_SOCIALEASE_AUTH_MODE:-production}
+      NEXT_PUBLIC_SOCIALEASE_ENABLE_SIGNUP: ${NEXT_PUBLIC_SOCIALEASE_ENABLE_SIGNUP:-false}
+      NEXT_PUBLIC_SOCIALEASE_TOKEN_STORAGE: ${NEXT_PUBLIC_SOCIALEASE_TOKEN_STORAGE:-cookie}
+      NEXT_PUBLIC_SOCIALEASE_SHOW_TRACE: ${NEXT_PUBLIC_SOCIALEASE_SHOW_TRACE:-false}
+      NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOSTICS: ${NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOSTICS:-false}
+    expose:
+      - "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SOCIALEASE_FRONTEND_DOMAIN: ${SOCIALEASE_FRONTEND_DOMAIN:?SOCIALEASE_FRONTEND_DOMAIN is required}
+      SOCIALEASE_API_DOMAIN: ${SOCIALEASE_API_DOMAIN:?SOCIALEASE_API_DOMAIN is required}
+      SOCIALEASE_NGINX_API_RATE: ${SOCIALEASE_NGINX_API_RATE:-60r/m}
+      NGINX_ENVSUBST_FILTER: "^SOCIALEASE_"
+    volumes:
+      - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      - ${SOCIALEASE_TLS_CERT_DIR:-./deploy/certs}:/etc/nginx/certs:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy

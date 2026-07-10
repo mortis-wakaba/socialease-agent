@@ -1,0 +1,70 @@
+.PHONY: dev-backend dev-frontend test-backend eval eval-gate typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
+
+dev-backend:
+	cd backend && uvicorn app.main:app --reload
+
+dev-frontend:
+	cd frontend && npm run dev
+
+test-backend:
+	cd backend && pytest
+
+eval:
+	cd backend && python -m app.evals.run
+
+eval-gate:
+	cd backend && python -m app.evals.gate
+
+typecheck-frontend:
+	cd frontend && npm run typecheck
+
+lint-frontend:
+	cd frontend && npm run lint
+
+build-frontend:
+	cd frontend && npm run build
+
+test-e2e:
+	cd frontend && npm run test:e2e
+
+test-e2e-production-auth:
+	cd frontend && npm run test:e2e:production-auth
+
+e2e-smoke:
+	bash scripts/e2e_smoke.sh
+
+migration-check:
+	cd backend && python -m app.db.migration_check --check-names-only
+
+ready:
+	curl -fsS http://127.0.0.1:8000/ready
+
+backup-db:
+	bash scripts/backup_database.sh
+
+restore-drill:
+	test -n "$(BACKUP_FILE)" || (echo "Usage: make restore-drill BACKUP_FILE=<backup-file>" && exit 1)
+	bash scripts/restore_drill.sh "$(BACKUP_FILE)"
+
+monitor-alerts:
+	python scripts/monitor_alerts.py --dry-run
+
+smoke-check:
+	python scripts/deployment_smoke_check.py
+
+prod-config-check:
+	docker compose -f docker-compose.prod.yml --env-file .env.production config >/tmp/socialease-prod-compose.yml
+
+docker-up:
+	docker compose up --build
+
+docker-down:
+	docker compose down
+
+docker-reset:
+	docker compose down -v
+
+docker-prod-config:
+	docker compose -f docker-compose.prod.yml --env-file .env.production config
+
+check: test-backend eval eval-gate typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth migration-check

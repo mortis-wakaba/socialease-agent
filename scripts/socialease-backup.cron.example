@@ -1,0 +1,10 @@
+# Example cron entry for SocialEase database backups.
+# Install with `crontab scripts/socialease-backup.cron.example` after editing paths.
+# Keep logs and backups on private encrypted storage.
+
+SHELL=/bin/bash
+SOCIALEASE_DATABASE_URL=postgresql+psycopg://socialease:replace-password@db.example.edu:5432/socialease
+SOCIALEASE_BACKUP_DIR=/secure/socialease-backups
+
+# Run daily at 03:15 UTC.
+15 3 * * * cd /srv/socialease-agent && bash scripts/backup_database.sh >> /var/log/socialease-backup.log 2>&1

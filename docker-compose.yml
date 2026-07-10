@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-socialease}
+      POSTGRES_USER: ${POSTGRES_USER:-socialease}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-socialease}
+    ports:
+      - "5432:5432"
+    volumes:
+      - socialease-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   backend:
     build:
       context: .
@@ -11,12 +28,14 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      SOCIALEASE_DATABASE_URL: ${SOCIALEASE_DATABASE_URL:-sqlite:////data/socialease.db}
+      SOCIALEASE_CORS_ORIGINS: ${SOCIALEASE_CORS_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
     ports:
       - "8000:8000"
     volumes:
       - socialease-data:/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -44,3 +63,4 @@ services:
 
 volumes:
   socialease-data:
+  socialease-postgres-data:

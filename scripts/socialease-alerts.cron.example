@@ -1,0 +1,15 @@
+# Example cron entry for SocialEase operational alert checks.
+# Install with `crontab scripts/socialease-alerts.cron.example` after editing values.
+
+SHELL=/bin/bash
+SOCIALEASE_MONITOR_BASE_URL=https://your-api.example.edu
+SOCIALEASE_ALERT_WEBHOOK_URL=https://alerts.example.edu/socialease-webhook
+SOCIALEASE_ALERT_CRISIS_RUNS=5
+SOCIALEASE_ALERT_FALLBACK_RUNS=20
+SOCIALEASE_ALERT_RATE_LIMIT_HITS=20
+SOCIALEASE_ALERT_LLM_CONCURRENCY_SATURATION=0
+SOCIALEASE_ALERT_SLOW_REQUESTS=20
+SOCIALEASE_ALERT_LATENCY_P95_MS=5000
+
+# Run every five minutes.
+*/5 * * * * cd /srv/socialease-agent && python scripts/monitor_alerts.py >> /var/log/socialease-alerts.log 2>&1
