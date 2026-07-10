@@ -1,0 +1,107 @@
+backend/tests/test_heavier_load.py
+  s_46966c272b0b84::t_31bce8a4f8d61d 1-202
+backend/tests/test_auth_api.py
+  s_46966c272b0b84::t_5695e486279cba 1-718
+backend/tests/test_auth_boundaries.py
+  s_46966c272b0b84::t_6138ef640fc5ec 1-456
+backend/tests/test_chat_api.py
+  s_46966c272b0b84::t_e0dd0a8f5ce1c7 6,8-11,31-37,39-168,184-198,204-579,599-600
+backend/tests/test_cleanup_scheduler.py
+  s_46966c272b0b84::t_03849bb50ca7cc 1-124
+backend/tests/test_evals.py
+  s_46966c272b0b84::t_956701f2d750b0 3-4,8,15-16,28,38-39,51-52,57-103
+backend/tests/test_exposure_api.py
+  s_46966c272b0b84::t_96ab7f555d7367 3-4,11-13,49-63,69,80-117,133-169,253-276,299-329
+backend/tests/test_harness_api.py
+  s_46966c272b0b84::t_651402ad0911ea 3-4,8,10-12,24,33-39,49,59-117,142-150,152-228
+backend/tests/test_harness_architecture.py
+  s_46966c272b0b84::t_76aee549bb2666 3-5,9-16,22-25,50-149,152-177,215,217-601
+backend/tests/test_intent_router.py
+  s_46966c272b0b84::t_5249f4ce7c007f 80-101
+backend/tests/test_knowledge_api.py
+  s_46966c272b0b84::t_989ee93a11404c 8,11-12,56,58,125,133-138,166,169-188,204-279
+backend/tests/test_llm.py
+  s_46966c272b0b84::t_7fdf81d233d50e 3-4,10-17,41,50-66,109-231
+backend/tests/test_llm_intent_router.py
+  s_46966c272b0b84::t_6feb2d81f27a2a 60,71
+backend/tests/test_llm_safety_classifier.py
+  s_46966c272b0b84::t_0f77e0778c5809 80
+backend/tests/test_memory_settings_payload.py
+  s_46966c272b0b84::t_f667293aa4f231 1-27
+backend/tests/test_metrics_backend.py
+  s_46966c272b0b84::t_bd638214a03782 1-86
+backend/tests/test_migration_discipline.py
+  s_46966c272b0b84::t_59531c67943c73 1-42
+backend/tests/test_monitor_alerts.py
+  s_46966c272b0b84::t_c386464b6e37ce 1-75
+backend/tests/test_multi_user_concurrency.py
+  s_46966c272b0b84::t_7770467030575d 1-64
+backend/tests/test_postgres_app_import.py
+  s_46966c272b0b84::t_ece0ab336b4926 1-30
+backend/tests/test_postgres_exposure_repository.py
+  s_46966c272b0b84::t_279e58e7ad2420 1-191
+backend/tests/test_postgres_metrics_repository.py
+  s_46966c272b0b84::t_5561df86ce18b9 1-140
+backend/tests/test_postgres_protocol_repository.py
+  s_46966c272b0b84::t_3311e8c86aea12 1-131
+backend/tests/test_postgres_protocol_service.py
+  s_46966c272b0b84::t_cbd7469408b2cd 1-298
+backend/tests/test_postgres_roleplay_repository.py
+  s_46966c272b0b84::t_f08c2266e763c3 1-154
+backend/tests/test_postgres_runtime_smoke.py
+  s_46966c272b0b84::t_2cc97741c5c5d8 1-145
+backend/tests/test_postgres_trace_repository.py
+  s_46966c272b0b84::t_dbc6e470b08c3c 1-111
+backend/tests/test_postgres_user_memory_repository.py
+  s_46966c272b0b84::t_31d9b63abba018 1-323
+backend/tests/test_postgres_worksheet_repository.py
+  s_46966c272b0b84::t_ddce2635aea4e4 1-94
+backend/tests/test_privacy_persistence_gate.py
+  s_46966c272b0b84::t_fd5277ea61d65a 1-611
+backend/tests/test_profile_api.py
+  s_46966c272b0b84::t_fff2d57d4753fc 3-6,10,46-62,108-111,140-744
+backend/tests/test_protocol_service.py
+  s_46966c272b0b84::t_1ae679c2c877ee 1-171
+backend/tests/test_rag_retrieval.py
+  s_b59e6dc46421cc::t_bbe8163ece4dbe 1-55
+backend/tests/test_rate_limit.py
+  s_46966c272b0b84::t_3628637b0b6def 1-216
+backend/tests/test_repository_factory.py
+  s_46966c272b0b84::t_703f51219326cc 1-247
+backend/tests/test_request_logging.py
+  s_46966c272b0b84::t_1a07f561b2c23a 1-72
+backend/tests/test_roleplay_agent.py
+  s_46966c272b0b84::t_1f1ffce21e87e7 12,85-178,215
+backend/tests/test_roleplay_api.py
+  s_46966c272b0b84::t_6c769b2630d97b 43,48,73-104,133-564,605,609,640,642-644
+backend/tests/test_skill_registry.py
+  s_46966c272b0b84::t_c4c5b73a4b6bd0 32,41
+backend/tests/test_worksheet_agent.py
+  s_46966c272b0b84::t_f5d82556305b3b 85,97
+backend/tests/test_worksheet_api.py
+  s_46966c272b0b84::t_c8e2b07c59cebf 52-54,98-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8dde9ab7ea485e1cb85a83081672d5502c2669db",
+  "prompts": {},
+  "sessions": {
+    "s_46966c272b0b84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de80a-ff90-7321-ab6c-a24ba9ec9924",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "unknown"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
