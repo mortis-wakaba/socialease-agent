@@ -1,0 +1,14 @@
+docs/README.md
+  h_267b8cfe3a59a4 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5f33fc17d2734567e84071fbe787a428880da202",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
