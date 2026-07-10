@@ -1,139 +1,201 @@
-# SocialEase Production Readiness Gap Analysis
+# SocialEase 生产化能力与差距分析
 
-SocialEase is a **production-inspired prototype**, not a production mental-health service. This document explains what has already been designed with production concerns in mind, and what would be required before any real deployment.
+SocialEase 是一个**产品化 Agent 原型**，不是医疗产品，也不是正式心理健康服务。本文记录当前工程基线，以及在真实多用户部署前仍需补齐的安全、隐私、运维和合规工作。
 
-## Current production-inspired controls
+## 当前基线
 
-### Safety and escalation
+最近一次产品化检查点：
 
-Implemented:
+```text
+backend pytest: 297 passed, 26 skipped
+eval suite: all metrics passed
+eval gate: passed
+frontend typecheck: passed
+frontend lint: passed
+frontend build: passed
+frontend E2E: 23 passed
+production auth E2E: 16 passed
+real frontend/backend smoke E2E: 1 passed
+```
 
-- deterministic safety floor for explicit crisis expressions;
-- optional LLM safety classifier that may only raise risk;
-- `SafetyPermissionGate` that turns crisis into an `ESCALATE` harness decision;
-- crisis inputs bypass ordinary routing and skills;
-- non-medical crisis response that recommends real-world support.
+## 已实现的生产化控制
 
-Production gap:
+### Safety 与 crisis escalation
 
-- larger multilingual red-team dataset;
-- human-reviewed crisis escalation protocol;
-- institution-specific response workflow;
-- clinical/legal review of wording.
+已实现：
 
-### Grounding and resource integrity
+- 显式 crisis 表达的 deterministic safety floor；
+- 可选 LLM safety classifier，但只能提高风险等级；
+- classifier fallback 不会把疑似 crisis 降级成普通低风险；
+- `SafetyPermissionGate` 支持 allow、ask consent、downshift、block、escalate；
+- crisis 输入绕过普通 routing 和 skills；
+- 非医疗化 crisis response，引导用户联系现实支持；
+- safety、red-team、prompt-injection、confidential-crisis、blocked-crisis eval。
 
-Implemented:
+真实试点前仍需：
 
-- layered knowledge base;
-- support-resource RAG restricted to public verified resources;
-- citation metadata with source type and URL;
-- `unknown=true` instead of hallucinating missing resources;
-- demo campus resources separated from real public resources.
+- 更大的多语言红队数据集；
+- 覆盖所有状态写入接口的 continuation-turn red-team；
+- 人工审核的 crisis escalation protocol；
+- 学校/机构特定的响应流程；
+- 临床、法律、隐私措辞审核。
 
-Production gap:
+### Harness、权限和同意机制
 
-- audited campus-resource import workflow;
-- resource freshness checks;
-- owner/reviewer metadata;
-- scheduled review and expiration policy.
+已实现：
 
-### Reliability and fallback
+- 主 `AgentHarness`：safety、routing、permission、skill dispatch、hooks、memory/update、trace、recovery；
+- support、role-play、worksheet、exposure planning、support-resource RAG、crisis escalation 等 executable skills；
+- 主动练习 action 的 consent protocol；
+- protocol request hash、session binding、过期、同意/拒绝、一次性消费和 replay resistance；
+- PostgreSQL protocol 与 intervention-plan 的事务边界；
+- 前端覆盖 `consent_required`、roleplay、worksheet、exposure-plan、support-resource、blocked、failed、crisis；
+- harness-managed run 自动创建 intervention plan。
 
-Implemented:
+真实试点前仍需：
 
-- `BaseLLMClient` abstraction;
-- OpenAI-compatible provider adapter;
-- `LLM_ENABLED=false` default;
-- deterministic fallback for routing, role-play, worksheet extraction, and safety;
-- `llm_usage` metadata for visibility.
+- 使用 OIDC 或托管身份服务替换自建 HS256 JWT/session；
+- 根据产品政策扩展高风险 support/practice 的策略组合；
+- 为直接写状态 API 补更深的 HTTP-level eval。
 
-Production gap:
+### Grounding 与资源完整性
 
-- retry policy and circuit breaker;
-- rate-limit handling;
-- provider-level monitoring;
-- prompt/model versioning;
-- rollout and rollback strategy.
+已实现：
+
+- 分层知识库；
+- 可配置 markdown chunking；
+- BM25 本地检索和 retrieval diagnostics；
+- support-resource RAG 只使用 verified public resources；
+- citation metadata 包含 source type 和 URL；
+- 未检索到时返回 `unknown=true`，不编造资源；
+- 演示校园资源与真实公开资源隔离。
+
+真实试点前仍需：
+
+- 经审核的校园资源导入流程；
+- 资源 freshness 检查；
+- owner/reviewer metadata；
+- 定期审核和过期策略。
+
+### Reliability 与 fallback
+
+已实现：
+
+- `BaseLLMClient` 抽象；
+- OpenAI-compatible provider adapter；
+- 默认 `LLM_ENABLED=false`；
+- provider 瞬时失败 retry；
+- repeated provider failure circuit breaker；
+- routing、role-play、worksheet extraction、safety 的 deterministic fallback；
+- `llm_usage.fallback_used` 和 `llm_usage.error_category` metadata；
+- skill/tool failure 和 memory-write failure 的 workflow recovery。
+
+真实试点前仍需：
+
+- provider-level monitoring；
+- prompt/model versioning；
+- rollout/rollback 策略；
+- 多 provider failover 策略。
 
 ### Observability
 
-Implemented:
+已实现：
 
 - `TraceLogger` for individual runs;
 - `/api/runs/{run_id}` trace lookup;
 - `/api/harness/capabilities` capability discovery;
+- `/api/harness/metrics` aggregate non-identifying metrics;
+- `MetricsHook` backed by aggregate non-identifying metric events;
+- latency average, p50, and p95 metrics;
+- runtime metrics for rate-limit hits, LLM concurrency saturation, auth lockout, memory export/delete, and preference changes;
+- standalone cleanup scheduler entrypoint;
 - `llm_usage` on key LLM-backed nodes;
-- deterministic eval suite.
+- deterministic eval suite。
 
-Production gap:
+真实试点前仍需：
 
-- aggregated metrics dashboard;
-- alerting for crisis/fallback spikes;
-- structured logs with redaction;
-- privacy-aware audit trail;
-- SLO/SLA definitions.
+- 如保留审计 trace，需要更严格的受限访问；
+- crisis/fallback spike 的托管告警；
+- SLO/SLA 定义；
+- Prometheus/OpenTelemetry 或托管 metrics export。
 
-### Data and privacy
+### 数据与隐私
 
-Implemented:
+已实现：
 
-- SQLite persistence for demo records;
-- repository interfaces for future storage replacement;
+- SQLite 本地开发持久化；
+- repository interfaces for storage replacement;
+- repository factory with SQLite default and PostgreSQL adapters for trace, roleplay, worksheet, exposure, user profile, memory settings, protocol, intervention plan, metrics, account, and session records;
+- explicit database runtime capability check with a clear support matrix;
+- Alembic migration discipline and PostgreSQL CI migration check;
+- first-pass structured PostgreSQL query fields for trace risk/intent, roleplay scenario/difficulty, and exposure plan/attempt state while retaining JSON payloads for full agent artifacts;
 - lightweight user profile summary;
-- crisis text is not copied into ordinary memory summarization.
+- user memory export/delete endpoints;
+- account deletion endpoint that revokes sessions and deletes user-owned practice records;
+- explicit consent before writing practice preferences;
+- privacy persistence gate for selected trace text;
+- privacy persistence gate for worksheet source messages, roleplay user turns, exposure previous attempts, and exposure reflections;
+- 本地演示 auth mode 与 production signed bearer-token auth mode，支持可选 HttpOnly access/refresh cookies；
+- owner-aware API boundaries for trace, memory, protocol, worksheet, roleplay, and exposure access;
+- `PrivacyGuardHook` for intervention-plan memory writes with sensitive identifier detection;
+- crisis text 不会复制到普通 memory summarization。
 
-Production gap:
+真实试点前仍需：
 
-- consent flow;
-- data retention policy;
-- user deletion/export APIs;
-- encryption at rest and in transit;
-- access control and admin roles;
-- privacy impact assessment.
+- OIDC 或托管身份服务接入；
+- 对新增持久化用户派生字段持续审计；
+- 试点 owner 审核 retention window 和删除/匿名化策略；
+- 静态和传输加密；
+- admin 角色和访问控制；
+- privacy impact assessment。
 
-### Evaluation and testing
+### 评测与测试
 
-Implemented:
+已实现：
 
-- pytest for safety, routing, RAG, LLM fallback, skills, APIs, and harness behavior;
-- eval suite for safety, routing, citation, unknown handling, roleplay feedback, worksheet extraction, and E2E workflow;
-- bundled JSONL eval cases for deterministic regression.
+- pytest 覆盖 safety、routing、RAG、LLM fallback、skills、APIs、hooks、protocols、memory controls、harness behavior；
+- eval suite 覆盖 safety、routing、citation、unknown handling、roleplay feedback、worksheet extraction、retrieval metrics、E2E workflow；
+- product-boundary eval gate with 210 bundled Chinese boundary cases;
+- heavier local load regression tests for concurrency and migration readiness;
+- bundled JSONL eval cases for deterministic regression;
+- GitHub Actions workflow 覆盖 backend tests、evals、migration check、frontend quality gates。
 
-Production gap:
+真实试点前仍需：
 
-- expanded red-team evals;
-- adversarial prompt injection cases;
-- longitudinal quality monitoring;
-- human evaluation rubric;
-- regression gates in CI.
+- 比当前 deterministic gate 更大的人工审核中文产品边界数据集；
+- 长期质量监控；
+- 人工评审 rubric 的实际执行记录。
 
-## Deployment readiness
+## 部署就绪度
 
-Current deployment is suitable for local/demo use:
+当前适合本地开发、答辩展示和小规模受控测试：
 
 ```bash
 docker compose up --build
 ```
 
-Production deployment would require:
+真实部署仍需：
 
-- managed database;
-- secret management;
+- 托管数据库；
+- migration 流程；
+- connection pooling；
+- secret management；
 - HTTPS and CORS hardening;
-- authentication/authorization;
-- observability stack;
-- backup and restore process;
-- reviewed environment-specific configuration.
+- authentication/authorization；
+- observability stack；
+- backup/restore；
+- 环境配置审核；
+- retention/cleanup job 审核。
 
-## Risk statement
+## 风险声明
 
-SocialEase should not be presented as a medical product or crisis service. It is a demo of how to engineer a safety-aware LLM agent harness around a sensitive domain. A real deployment would require institutional, clinical, legal, privacy, and operational review.
+SocialEase 不能被表述为医疗产品或危机服务。它展示的是如何在敏感场景中工程化一个安全可控的 LLM agent harness。真实部署前必须经过学校/机构、临床、法律、隐私和运维审核。
 
-## Suggested next production-hardening steps
+## 后续生产化方向
 
-1. Expand safety red-team evals and make crisis blocking a CI gate.
-2. Add privacy-aware run metrics with redacted aggregation.
-3. Add user data deletion/export endpoints.
-4. Add reviewed campus-resource import and freshness workflow.
-5. Add cloud deployment with secret management and monitoring.
+1. 用 OIDC 或托管身份服务替换自建 HS256 JWT/session。
+2. 持续统一所有状态写入入口的 permission/protocol gate。
+3. 多实例部署时把共享 rate limit 和 LLM concurrency 迁移到 Redis 或 API gateway。
+4. 将 210 条 product-boundary eval 扩展成人工审核红队样本。
+5. 在真实部署环境接入监控、告警、备份恢复和审核过的 retention window。
+6. 真实用户试点前完成法律、隐私、临床和机构审核。

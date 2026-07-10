@@ -1,35 +1,35 @@
-# ADR 0004: OpenAI-Compatible LLM Adapter with Deterministic Fallback
+# ADR 0004：OpenAI-Compatible LLM Adapter 与 Deterministic Fallback
 
-## Context
+## 背景
 
-The project should support DeepSeek or other OpenAI-compatible providers without coupling business logic to a vendor. It must also run without an API key for demos and tests.
+项目需要支持 DeepSeek 或其他 OpenAI-compatible provider，同时不能把业务逻辑绑定到某个厂商。系统也必须在没有 API key 时可运行、可测试。
 
-## Decision
+## 决策
 
-Use:
+采用：
 
-- `BaseLLMClient` as the provider-agnostic interface;
-- `OpenAICompatibleLLMClient` for DeepSeek-style APIs;
-- `LLM_ENABLED=false` by default;
-- deterministic fallback for routing, role-play, worksheet extraction, and safety.
+- `BaseLLMClient` 作为 provider-agnostic interface；
+- `OpenAICompatibleLLMClient` 适配 DeepSeek 风格 API；
+- 默认 `LLM_ENABLED=false`；
+- routing、role-play、worksheet extraction 和 safety 都有 deterministic fallback。
 
-## Consequences
+## 影响
 
-Benefits:
+优点：
 
-- provider can be changed without rewriting business agents;
-- local demo works without secrets;
-- fallback behavior is testable;
-- `llm_usage` makes provider usage observable.
+- provider 可替换；
+- 本地运行不依赖 secret；
+- fallback 行为可测试；
+- `llm_usage` 让 provider 使用情况可观察。
 
-Tradeoffs:
+权衡：
 
-- OpenAI-compatible APIs may differ slightly between providers;
-- deterministic fallback is less fluent than LLM output;
-- prompts and evals need versioning if the project grows.
+- 不同 OpenAI-compatible API 仍可能有细节差异；
+- deterministic fallback 不如 LLM 输出自然；
+- 项目扩大后需要 prompt/model versioning。
 
-## Alternatives Considered
+## 备选方案
 
-- Hardcode DeepSeek into agents: rejected due to vendor coupling.
-- Require LLM for all features: rejected because demos/tests should work without API keys.
-- Use multiple provider SDKs directly: too much surface area for MVP.
+- 在 agent 中硬编码 DeepSeek：不采用，厂商耦合过强。
+- 所有功能都强依赖 LLM：不采用，不利于测试和展示。
+- 直接接多个 provider SDK：接口面过大。

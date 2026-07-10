@@ -1,10 +1,6 @@
-# SocialEase Agent Harness Design
+# SocialEase Agent Harness 设计
 
-SocialEase follows a lightweight **Model + Harness** design inspired by agent-engineering patterns such as tools, skills, permission gates, hooks, memory, and evals.
-
-The goal is not to copy a coding-agent architecture directly. SocialEase is a safety-sensitive social-stress support demo, so the harness is adapted around non-medical boundaries, crisis escalation, grounded resources, and auditable workflow traces.
-
-## Core formula
+SocialEase 采用轻量的 **Model + Harness** 架构。LLM 只负责语义理解、生成或抽取的可选增强；真正的安全边界、权限判断、同意机制、记忆写入和 trace 都由 harness 控制。
 
 ```text
 Agent = Model + Harness
@@ -12,59 +8,142 @@ Agent = Model + Harness
 Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 ```
 
-In SocialEase:
+## 设计目标
 
-| Harness part | Project implementation |
-|---|---|
-| Skills | `backend/app/skills/`, `backend/app/agents/`, feature APIs |
-| Knowledge | `backend/data/knowledge_base/`, `backend/app/knowledge/` |
-| Observation | `TraceLogger`, `/api/runs/{run_id}`, `llm_usage`, eval metrics |
-| Action Interfaces | FastAPI routes and Next.js pages |
-| Permissions | `backend/app/safety/`, crisis escalation, non-medical output rules |
+- 不把系统做成单轮心理聊天机器人；
+- 在社交压力场景中保持非医疗化边界；
+- crisis 输入绕过普通 agent，进入 escalation flow；
+- 所有主动练习 action 都可被 permission gate 和 consent protocol 管住；
+- 记忆只注入低敏结构化上下文，不注入原始聊天历史；
+- trace、metrics、eval gate 让系统行为可解释、可回归。
 
-## Runtime loop
+## 当前架构快照
+
+当前 SocialEase 是一个产品化 Agent 原型，核心链路已经可运行：
+
+- `/api/chat` 是主 harness 入口；
+- Safety classification 在 routing 和 skill execution 前执行；
+- Intent routing 可分发到 support、role-play、worksheet、exposure planning、support-resource RAG、crisis escalation；
+- 主动练习通过 `SafetyPermissionGate` 和 consent protocol；
+- hooks 提供 metrics、privacy guard 和未来审计扩展点；
+- memory export/delete、practice preference consent 已实现；
+- LLM provider 支持 retry、circuit breaker、timeout、deterministic fallback；
+- protocol 支持 request hash、session binding、过期、同意/拒绝、一次性消费、replay resistance；
+- intervention plan 可视化为 timeline，记录当前步骤、进度、protocol 绑定、stop condition 和结果摘要；
+- auth 同时支持本地演示模式和 production bearer-token/cookie 模式；
+- PostgreSQL repository adapters 覆盖当前主要运行路径，SQLite 保留为本地开发路径。
+
+当前验证基线：
+
+```text
+backend pytest: 297 passed, 26 skipped
+eval suite: all metrics passed
+eval gate: passed
+frontend typecheck: passed
+frontend lint: passed
+frontend build: passed
+frontend E2E: 23 passed
+production auth E2E: 16 passed
+real frontend/backend smoke E2E: 1 passed
+```
+
+## Runtime Loop
 
 ```text
 User Input
-  → AgentHarness
-  → before_safety hooks
-  → SafetyClassifier
-  → SafetyPermissionGate
-  → IntentRouter, unless permission requires escalation
-  → SkillRegistry.resolve_for_chat(...)
-  → Skill.run(...)
-  → TraceLogger
-  → after_trace hooks
-  → API Response
+  -> AgentHarness
+  -> before_safety hooks
+  -> load RunContext: auth, profile, memory context, request context
+  -> SafetyClassifier
+  -> SafetyPermissionGate
+  -> IntentRouter, unless safety requires escalation
+  -> consent protocol check, if required
+  -> before_action hooks
+  -> SkillRegistry.resolve_for_chat(...)
+  -> Skill.run(...)
+  -> after_action / after_skill hooks
+  -> before_memory_write hooks
+  -> intervention plan / memory update
+  -> TraceLogger
+  -> after_trace hooks
+  -> on_stop hooks
+  -> API Response
 ```
 
-The harness decides **what may happen**. The model, when enabled, helps with semantic classification, routing, generation, or extraction, but it does not own the safety boundary.
+Harness 决定“能不能做”和“以什么边界做”。LLM 即使启用，也不能拥有 safety boundary。
 
-## Permission gate
+## Permission Gate
 
-`backend/app/safety/permissions.py` converts safety classification into a harness-level decision:
+`backend/app/safety/permissions.py` 将 safety result 和 requested action 转成 harness decision：
 
 ```text
-low / medium / high → allow normal routing
-crisis             → escalate, skip ordinary routing and skills
+crisis                   -> escalate, skip ordinary actions
+high active practice      -> block
+medium role-play          -> ask consent
+medium exposure           -> ask consent + intensity_adjustment=-2
+low active practice       -> ask consent
+support/resource          -> allow within safety boundaries
 ```
 
-This makes crisis escalation a runtime permission decision rather than merely a response template.
-
-Current actions:
+当前 action：
 
 - `ALLOW`
+- `ASK_CONSENT`
+- `DOWN_SHIFT`
+- `BLOCK`
 - `ESCALATE`
 
-Future extensions could include:
+这让 crisis escalation 成为运行时权限决策，而不是普通 response template。
 
-- `BLOCK_MEDICAL_CLAIM`
-- `REQUIRE_CITATION`
-- `REQUIRE_HUMAN_REVIEW`
+## Consent Protocol
 
-## Skill registry and manifests
+Consent protocol 位于：
 
-`backend/app/skills/registry.py` registers executable and documented skills:
+```text
+backend/app/protocols/
+backend/app/models_protocols.py
+```
+
+主 harness 可以返回 `action=consent_required` 和 `protocol_id`。前端同意或拒绝后，使用 approved `protocol_id` 重放原始 action。
+
+当前能力：
+
+- request hash binding；
+- optional session binding；
+- expiration；
+- approval/rejection；
+- one-time consumption；
+- replay resistance；
+- PostgreSQL transaction boundary for protocol response + linked intervention-plan update。
+
+Production mode 下，直接写状态 API 也可共享该协议：未携带 approved protocol 时返回 `409 consent_required`，客户端同意后用 `X-SocialEase-Protocol-Id` 重试。
+
+## Intervention Plan
+
+主动练习 action 会创建 session-level intervention plan。它不是隐藏 metadata，而是可以展示给用户和开发者的行动 timeline。
+
+View model：
+
+- plan status：`pending_consent`、`active`、`completed`、`cancelled`、`blocked`、`paused`；
+- ordered timeline steps；
+- current step marker；
+- completed/total step count 和 progress ratio；
+- linked `protocol_id`；
+- selected skill；
+- intensity、stop condition、result summary。
+
+相关 API：
+
+```text
+GET /api/intervention-plans/{plan_id}?user_id=...
+GET /api/users/{user_id}/intervention-plans
+```
+
+`/trace` 会通过 `trace.intervention_plan_id` 展示 Safety -> Router -> Agent -> Intervention Plan -> Output。
+
+## Skills 与 Manifests
+
+`backend/app/skills/registry.py` 注册 executable skills：
 
 - `crisis_escalation_skill`
 - `general_support_skill`
@@ -73,37 +152,38 @@ Future extensions could include:
 - `exposure_planning_skill`
 - `support_resource_rag_skill`
 
-Each skill can have an on-demand manifest:
+每个 skill 可以有按需加载的 manifest：
 
 ```text
 backend/app/skills/manifests/<skill>/SKILL.md
 ```
 
-Manifests describe:
-
-- when to use the skill;
-- expected inputs;
-- output contract;
-- safety boundaries;
-- fallback behavior.
-
-The loader in `backend/app/skills/manifest_loader.py` keeps this knowledge lazy: callers can list skills by metadata first, then load detailed skill knowledge only when needed.
+Manifest 描述使用时机、输入、输出契约、安全边界和 fallback。这样可以保留“技能说明”结构，但不引入复杂 plugin runtime。
 
 ## Hooks
 
-`backend/app/workflow/hooks.py` defines no-op-compatible lifecycle hooks around the harness loop:
+`backend/app/workflow/hooks.py` 定义 harness 生命周期 hook：
 
 - `before_safety`
 - `after_safety`
 - `after_routing`
+- `before_action`
+- `after_action`
 - `after_skill`
+- `before_memory_write`
 - `after_trace`
+- `on_stop`
 
-Hooks are intentionally small. They provide future extension points for trace enrichment, audit logging, eval capture, or metrics without rewriting the main harness loop.
+已实现 hook：
 
-## Knowledge and grounding
+- `MetricsHook`：写入非识别性聚合 runtime metrics；
+- `PrivacyGuardHook`：在 intervention-plan memory write 前检测敏感标识。
 
-SocialEase separates knowledge into layers:
+Hook 的定位是扩展点，不把主 harness 变成一团条件判断。
+
+## Knowledge 与 Grounding
+
+SocialEase 使用本地 markdown RAG、可配置 chunking 和 BM25 retrieval。知识库按用途分层：
 
 - `social_skills`
 - `support_resources`
@@ -111,33 +191,77 @@ SocialEase separates knowledge into layers:
 - `product_rubrics`
 - `campus_resources_demo`
 
-This separation is part of the harness boundary. Skills should retrieve from the correct layer and return citations when grounding matters. Demo campus resources must not be presented as real services.
+约束：
 
-## Observation and evals
+- skill 必须从正确知识层检索；
+- 需要 grounding 的回答必须返回 citation；
+- `campus_resources_demo` 只能作为演示数据形态，不能冒充真实学校资源；
+- 不知道时返回 unknown，不编造学校、电话、热线或联系人。
 
-Observation includes runtime trace and offline evals:
+## Observation 与 Evals
 
-- `TraceLogger` stores each run;
-- `/api/harness/capabilities` exposes runtime loop, permissions, skills, knowledge layers, and observation features;
-- `/api/harness/metrics` aggregates recent runs, crisis count, fallback count, intent distribution, selected-agent distribution, and latency;
-- `/trace` visualizes Safety → Router → Agent/Skill → Memory → Output;
-- `llm_usage` shows whether LLM calls succeeded or fell back;
-- `backend/app/evals/` checks safety, safety red-team cases, routing, citations, roleplay feedback, worksheet extraction, and E2E workflow behavior.
+Observation 包含运行时 trace、聚合 metrics 和离线 eval：
 
-Eval requirements are part of the harness contract. For example, crisis cases should remain hard requirements, not subjective generation quality checks.
+- `TraceLogger` 记录每次 run；
+- `/api/harness/capabilities` 暴露 runtime loop、permissions、skills、knowledge layers、observation features；
+- `/api/harness/metrics` 聚合 runs、crisis count、fallback count、permission decisions、selected-agent 分布、latency avg/p50/p95；
+- `/trace` 可视化 Safety -> Router -> Agent/Skill -> Memory -> Output；
+- `llm_usage` 记录 LLM 是否成功或 fallback；
+- `backend/app/evals/` 覆盖 safety、routing、citation、retrieval、roleplay feedback、worksheet extraction、E2E workflow 和 210 条 product-boundary gate。
 
-## What this design intentionally avoids
+Eval 是 harness contract 的一部分。Crisis 拦截、隐私最小化、consent replay resistance 和多用户隔离都是硬要求。
 
-SocialEase does not currently implement:
+## Memory 与 Privacy
 
-- subagent teams;
-- worktree isolation;
-- shell/tool execution permissions;
-- cron/background autonomous jobs;
-- broad plugin installation.
+当前 memory 相关对象：
 
-Those patterns are useful for coding agents, but they would add complexity without serving the current safety-sensitive social-support demo.
+- role-play sessions；
+- worksheet records；
+- exposure plans and attempts；
+- intervention plans；
+- user profile summaries；
+- memory settings and practice preferences；
+- 每次 harness run 注入的 privacy-safe `MemoryContext`；
+- memory export/delete endpoints；
+- practice preferences 写入前的 explicit consent。
 
-## Current tradeoff
+`MemoryContext` 在 run 开始时构造，包含近期安全场景摘要、偏好难度、最近焦虑等级、active exposure plan、推荐下一步任务和 context notes。它不注入原始聊天历史。
 
-The project uses a lightweight registry rather than a full plugin runtime. This is intentional: it gives the project agent-harness structure without overengineering the MVP.
+运行时用法：
+
+- role-play 可使用用户保存过的 preferred difficulty；
+- role-play 可从近期安全场景推断 scenario；
+- exposure planning 可默认使用最近 anxiety level；
+- generic exposure planning 可复用近期安全场景；
+- response 的 `structured_data.memory_context` 展示本轮使用的低敏记忆包。
+
+写入前会进行敏感标识 redaction。后续仍需继续审计所有新增 persisted user-derived fields，确保统一经过 privacy-aware persistence gate。
+
+## 存储与运维
+
+- SQLite：本地开发和展示路径；
+- PostgreSQL：生产化目标路径，已覆盖 trace、roleplay、worksheet、exposure、user profile、memory settings、protocol、intervention plan、metrics、account、session；
+- Alembic：PostgreSQL schema migration；
+- cleanup scheduler：过期 protocol、取消 abandoned pending-consent plan、按 retention window 删除记录；
+- metrics backend：聚合非识别性运行指标。
+
+真实试点前仍需要托管数据库、OIDC/托管身份服务、Redis 或 gateway 级共享限流、备份恢复演练、隐私/法律/机构审核。
+
+## 有意不做的复杂度
+
+当前没有实现：
+
+- subagent teams；
+- worktree isolation；
+- shell/tool execution permission；
+- 广泛 plugin 安装系统。
+
+这些模式对 coding agent 有价值，但对当前安全敏感社交练习产品会增加复杂度。SocialEase 当前选择 lightweight skill registry，把精力放在安全、隐私、consent、memory、trace 和 eval。
+
+## 后续方向
+
+1. 用 OIDC 或托管身份服务替换自建 HS256 JWT/session；
+2. 多实例部署时将 rate limit 和 LLM concurrency 迁移到 Redis 或 gateway；
+3. 扩展中文 product-boundary eval 为人工审核红队集；
+4. 对所有新增持久化字段保持 privacy gate 审计；
+5. 在真实试点前完成学校/机构、法律、隐私和安全审核。

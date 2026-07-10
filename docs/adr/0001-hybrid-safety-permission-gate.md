@@ -1,34 +1,34 @@
-# ADR 0001: Hybrid Safety and Permission Gate
+# ADR 0001：混合 Safety 与 Permission Gate
 
-## Context
+## 背景
 
-SocialEase 处理的是心理健康相关但非医疗化的社交压力场景。系统必须避免诊断、治疗承诺和普通 agent 对 crisis 输入的继续处理。
+SocialEase 面向心理健康相关但非医疗化的社交压力场景。系统必须避免诊断、治疗承诺，并确保 crisis 输入不会进入普通 agent 流程。
 
-## Decision
+## 决策
 
-Use a hybrid safety design:
+采用混合 safety 设计：
 
-- deterministic rules provide a non-degradable safety floor;
-- optional LLM safety classification may raise risk but cannot lower deterministic risk;
-- `SafetyPermissionGate` converts `crisis` risk into an `ESCALATE` harness decision;
-- crisis escalation bypasses ordinary routing and skill execution.
+- 规则分类器提供不可降级的 safety floor；
+- 可选 LLM safety classification 只能提高风险等级，不能降低规则风险；
+- `SafetyPermissionGate` 将 `crisis` 转成 `ESCALATE` harness decision；
+- crisis escalation 绕过普通 routing 和 skill execution。
 
-## Consequences
+## 影响
 
-Benefits:
+优点：
 
-- explicit crisis hard requirement;
-- more reliable than pure LLM classification;
-- easy to test and explain in interviews.
+- crisis 是硬约束；
+- 比纯 LLM 分类更可控；
+- 易于测试、审计和维护。
 
-Tradeoffs:
+权衡：
 
-- rules may be conservative;
-- subtle non-crisis nuance still depends on LLM quality when enabled;
-- permission actions are currently simple and may need expansion for production.
+- 规则可能偏保守；
+- 细微语义仍依赖启用时的 LLM 质量；
+- permission action 还需要随着产品策略继续扩展。
 
-## Alternatives Considered
+## 备选方案
 
-- Pure LLM safety classification: rejected because it can be unstable and hard to guarantee.
-- Pure keyword rules: rejected because subtle semantic risk may be missed.
-- Human approval for every risky message: too heavy for MVP, but possible for production review workflows.
+- 纯 LLM safety classification：不采用，因为稳定性和可证明性不足。
+- 纯关键词规则：不采用，因为可能漏掉隐式风险。
+- 所有风险消息都人工审批：当前过重，但未来可用于生产审查流程。

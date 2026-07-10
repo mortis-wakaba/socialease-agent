@@ -1,34 +1,34 @@
-# ADR 0003: Grounded Support Resources and Demo Campus Boundary
+# ADR 0003：Grounded Support Resources 与演示校园资源边界
 
-## Context
+## 背景
 
-A support-resource feature can easily hallucinate phone numbers, school offices, or services. That is unsafe in a mental-health-adjacent project.
+支持资源问答很容易编造电话、学校办公室或服务。在心理健康相邻场景中，这类幻觉是安全风险。
 
-## Decision
+## 决策
 
-Separate knowledge layers:
+分离知识层：
 
-- `support_resources` contains real, public, verifiable resources;
-- `campus_resources_demo` contains sample campus data shape only;
-- ordinary support-resource RAG does not present demo campus resources as real services;
-- unknown queries return `unknown=true` instead of invented resources.
+- `support_resources` 保存真实、公开、可验证资源；
+- `campus_resources_demo` 只保存演示用校园资源数据形态；
+- 普通 support-resource RAG 不把演示校园资源当成真实服务；
+- 检索不到时返回 `unknown=true`，不编造资源。
 
-## Consequences
+## 影响
 
-Benefits:
+优点：
 
-- reduces resource hallucination risk;
-- makes demo limitations explicit;
-- supports future audited campus-specific resource import.
+- 降低资源幻觉风险；
+- 清楚标注演示数据边界；
+- 为未来审核过的校园资源导入流程预留结构。
 
-Tradeoffs:
+权衡：
 
-- demo may feel less locally personalized;
-- requires careful citation display;
-- real deployment would need institution-specific review.
+- 本地展示时校园个性化较弱；
+- citation 展示必须清楚；
+- 真实部署需要学校/机构特定审核。
 
-## Alternatives Considered
+## 备选方案
 
-- Invent a campus resource database: rejected as unsafe and misleading.
-- Use only general support links: safe but less extensible.
-- Let LLM answer resource questions freely: rejected due to hallucination risk.
+- 自造校园资源库：不采用，容易误导。
+- 只使用通用支持链接：安全但扩展性较弱。
+- 让 LLM 自由回答资源问题：不采用，幻觉风险高。

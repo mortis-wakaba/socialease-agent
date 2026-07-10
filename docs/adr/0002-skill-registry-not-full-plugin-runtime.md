@@ -1,34 +1,34 @@
-# ADR 0002: Skill Registry Instead of Full Plugin Runtime
+# ADR 0002：使用 Skill Registry，而不是完整 Plugin Runtime
 
-## Context
+## 背景
 
-The project needs to express role-play, worksheet, exposure planning, support RAG, and crisis escalation as agent capabilities. A full plugin runtime would add complexity before the MVP needs it.
+项目需要把 role-play、worksheet、exposure planning、support RAG 和 crisis escalation 表达为 agent 能力。完整 plugin runtime 会在当前阶段引入过多复杂度。
 
-## Decision
+## 决策
 
-Use a lightweight `SkillRegistry` with:
+使用轻量 `SkillRegistry`：
 
-- `SkillDescriptor` metadata;
-- executable skills for chat harness dispatch;
-- documented skill descriptors for existing feature APIs;
-- on-demand `SKILL.md` manifests.
+- `SkillDescriptor` 描述能力 metadata；
+- executable skills 供 chat harness dispatch；
+- documented skill descriptors 连接已有 feature APIs；
+- `SKILL.md` manifest 按需加载。
 
-## Consequences
+## 影响
 
-Benefits:
+优点：
 
-- makes capabilities discoverable;
-- aligns the project with modern agent harness architecture;
-- avoids overengineering a plugin system.
+- 能力可发现；
+- 符合现代 agent harness 架构；
+- 避免过早工程化 plugin system。
 
-Tradeoffs:
+权衡：
 
-- not all skills are executable through the same interface yet;
-- some feature APIs still call their existing agents directly;
-- future plugin loading would require a stronger contract.
+- 不是所有 skill 都完全统一到同一个 interface；
+- 部分 feature API 仍直接调用已有 agent/service；
+- 未来若要动态加载 plugin，需要更强 contract。
 
-## Alternatives Considered
+## 备选方案
 
-- Keep APIs as isolated features: simpler, but weaker architecture story.
-- Build dynamic plugin loading: too complex for current demo.
-- Rewrite all feature APIs behind one skill interface: possible later, but risky as a large refactor now.
+- 保持 API 完全分散：更简单，但架构表达弱。
+- 动态 plugin loading：当前过重。
+- 立刻把所有 feature API 重写到统一 skill interface：可行但风险大。
