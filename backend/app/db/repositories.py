@@ -2,13 +2,22 @@
 
 from typing import Protocol
 
+from app.db.config import database_settings
 from app.db.engine import connect
+from app.db.providers import DatabaseProvider, resolve_database_provider
 from app.db.session import initialize_database
 from app.models import TraceRecord
 from app.models_exposure import ExposureAttempt, ExposurePlan
 from app.models_roleplay import RoleplaySession
+from app.models_session_review import SessionReviewRecord
 from app.models_worksheet import WorksheetRecord
 from app.models_memory import UserPracticeSummary
+
+
+def _initialize_sqlite_if_configured() -> None:
+    """Initialize local SQLite tables only when SQLite is the active provider."""
+    if resolve_database_provider(database_settings().database_url) == DatabaseProvider.SQLITE:
+        initialize_database()
 
 
 class TraceRepository(Protocol):
@@ -24,6 +33,7 @@ class RoleplaySessionRepository(Protocol):
 
     def save(self, session: RoleplaySession) -> RoleplaySession: ...
     def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None: ...
+    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]: ...
 
 
 class WorksheetRepository(Protocol):
@@ -38,6 +48,7 @@ class ExposureRepository(Protocol):
 
     def save_plan(self, plan: ExposurePlan) -> ExposurePlan: ...
     def get_for_user(self, user_id: str) -> ExposurePlan | None: ...
+    def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None: ...
     def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan: ...
 
 
@@ -47,11 +58,18 @@ class UserProfileRepository(Protocol):
     def get_summary(self, user_id: str) -> UserPracticeSummary: ...
 
 
+class SessionReviewRepository(Protocol):
+    """Persistence contract for privacy-safe session reviews."""
+
+    def save(self, record: SessionReviewRecord) -> SessionReviewRecord: ...
+    def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]: ...
+
+
 class SQLiteTraceRepository:
     """SQLite-backed workflow trace repository."""
 
     def __init__(self) -> None:
-        initialize_database()
+        _initialize_sqlite_if_configured()
 
     def save(self, record: TraceRecord) -> TraceRecord:
         with connect() as connection:
@@ -80,7 +98,7 @@ class SQLiteRoleplaySessionRepository:
     """SQLite-backed role-play session repository."""
 
     def __init__(self) -> None:
-        initialize_database()
+        _initialize_sqlite_if_configured()
 
     def save(self, session: RoleplaySession) -> RoleplaySession:
         with connect() as connection:
@@ -99,12 +117,24 @@ class SQLiteRoleplaySessionRepository:
             ).fetchone()
         return RoleplaySession.model_validate_json(row["payload"]) if row else None
 
+    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]:
+        """Return recent role-play sessions for one user."""
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT payload FROM roleplay_sessions
+                WHERE user_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?""",
+                (user_id, limit),
+            ).fetchall()
+        return [RoleplaySession.model_validate_json(row["payload"]) for row in rows]
+
 
 class SQLiteWorksheetRepository:
     """SQLite-backed worksheet repository."""
 
     def __init__(self) -> None:
-        initialize_database()
+        _initialize_sqlite_if_configured()
 
     def save(self, record: WorksheetRecord) -> WorksheetRecord:
         with connect() as connection:
@@ -124,7 +154,7 @@ class SQLiteExposureRepository:
     """SQLite-backed active exposure plan repository."""
 
     def __init__(self) -> None:
-        initialize_database()
+        _initialize_sqlite_if_configured()
 
     def save_plan(self, plan: ExposurePlan) -> ExposurePlan:
         with connect() as connection:
@@ -145,6 +175,14 @@ class SQLiteExposureRepository:
             row = connection.execute("SELECT payload FROM exposure_plans WHERE user_id = ?", (user_id,)).fetchone()
         return ExposurePlan.model_validate_json(row["payload"]) if row else None
 
+    def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
+        with connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM exposure_plans WHERE plan_id = ? AND user_id = ?",
+                (plan_id, user_id),
+            ).fetchone()
+        return ExposurePlan.model_validate_json(row["payload"]) if row else None
+
     def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan:
         with connect() as connection:
             connection.execute(
@@ -162,7 +200,7 @@ class SQLiteUserProfileRepository:
     """Build a lightweight summary from existing practice records."""
 
     def __init__(self) -> None:
-        initialize_database()
+        _initialize_sqlite_if_configured()
 
     def get_summary(self, user_id: str) -> UserPracticeSummary:
         with connect() as connection:
@@ -204,6 +242,41 @@ class SQLiteUserProfileRepository:
             preferred_difficulty=preferred_difficulty,
         )
 
+
+class SQLiteSessionReviewRepository:
+    """SQLite-backed structured session review repository."""
+
+    def __init__(self) -> None:
+        _initialize_sqlite_if_configured()
+
+    def save(self, record: SessionReviewRecord) -> SessionReviewRecord:
+        with connect() as connection:
+            connection.execute(
+                """INSERT OR REPLACE INTO session_reviews
+                (review_id, user_id, source, source_id, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    record.review_id,
+                    record.user_id,
+                    record.source,
+                    record.source_id,
+                    record.model_dump_json(),
+                    record.created_at.isoformat(),
+                ),
+            )
+        return record
+
+    def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]:
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT payload FROM session_reviews
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?""",
+                (user_id, limit),
+            ).fetchall()
+        return [SessionReviewRecord.model_validate_json(row["payload"]) for row in rows]
+
 class InMemoryTraceRepository:
     """In-memory trace repository for tests."""
     def __init__(self) -> None: self.records: dict[str, TraceRecord] = {}
@@ -224,6 +297,9 @@ class InMemoryRoleplaySessionRepository:
     def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
         session = self.sessions.get(session_id)
         return session if session and session.user_id == user_id else None
+    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]:
+        sessions = [session for session in self.sessions.values() if session.user_id == user_id]
+        return sorted(sessions, key=lambda session: session.updated_at, reverse=True)[:limit]
 
 
 class InMemoryWorksheetRepository:
@@ -238,6 +314,26 @@ class InMemoryExposureRepository:
     def __init__(self) -> None: self.plans_by_user: dict[str, ExposurePlan] = {}
     def save_plan(self, plan: ExposurePlan) -> ExposurePlan: self.plans_by_user[plan.user_id] = plan; return plan
     def get_for_user(self, user_id: str) -> ExposurePlan | None: return self.plans_by_user.get(user_id)
+    def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
+        plan = self.plans_by_user.get(user_id)
+        return plan if plan and plan.plan_id == plan_id else None
     def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan:
         self.plans_by_user[user_id] = plan
         return plan
+
+
+class InMemorySessionReviewRepository:
+    """In-memory session review repository for tests."""
+
+    def __init__(self) -> None:
+        self.reviews: dict[str, SessionReviewRecord] = {}
+
+    def save(self, record: SessionReviewRecord) -> SessionReviewRecord:
+        self.reviews[record.review_id] = record
+        return record
+
+    def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]:
+        records = [
+            record for record in self.reviews.values() if record.user_id == user_id
+        ]
+        return sorted(records, key=lambda record: record.created_at, reverse=True)[:limit]

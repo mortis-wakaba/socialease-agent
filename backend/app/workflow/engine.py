@@ -2,23 +2,45 @@
 
 from collections.abc import Iterable
 from datetime import datetime, timezone
+import hashlib
+import json
 from time import perf_counter
 from uuid import uuid4
 
 from app.llm.factory import create_llm_client
+from app.db.factory import repository_factory
+from app.db.repositories import ExposureRepository, UserProfileRepository
+from app.memory.settings_store import UserMemorySettingsRepository
 from app.models import (
     ChatRequest,
     ChatResponse,
     Intent,
     IntentResult,
     RiskLevel,
+    SafetyResult,
+    TraceFieldPolicy,
+    TracePrivacySummary,
     TraceRecord,
 )
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
-from app.safety.permissions import PermissionAction, SafetyPermissionGate
+from app.safety.actions import HarnessAction
+from app.safety.permissions import PermissionAction, PermissionDecision, SafetyPermissionGate
 from app.skills import SkillContext, SkillRegistry
 from app.tracing.logger import TraceLogger
-from app.workflow.hooks import AgentHarnessHook
+from app.memory.context_builder import build_memory_context
+from app.protocols.service import protocol_service
+from app.privacy.persistence_gate import persistence_gate
+from app.privacy.policy import PersistenceKind
+from app.request_context import get_request_id
+from app.services.intervention_plan_service import intervention_plan_service
+from app.workflow.context import RunContext
+from app.workflow.hooks import AgentHarnessHook, HookDecision
+from app.workflow.recovery import (
+    ErrorCategory,
+    categorize_error,
+    format_trace_error,
+    skill_failure_result,
+)
 from app.workflow.router import BaseIntentRouter, IntentRouter, LlmIntentRouter
 
 
@@ -33,6 +55,9 @@ class AgentHarness:
         skill_registry: SkillRegistry | None = None,
         permission_gate: SafetyPermissionGate | None = None,
         hooks: Iterable[AgentHarnessHook] | None = None,
+        user_profile_repository: UserProfileRepository | None = None,
+        exposure_repository: ExposureRepository | None = None,
+        memory_settings_repository: UserMemorySettingsRepository | None = None,
     ) -> None:
         self.trace_logger = trace_logger
         self.safety_classifier = safety_classifier or create_safety_classifier()
@@ -40,22 +65,64 @@ class AgentHarness:
         self.skill_registry = skill_registry or SkillRegistry()
         self.permission_gate = permission_gate or SafetyPermissionGate()
         self.hooks = tuple(hooks or ())
+        factory = repository_factory()
+        self.user_profile_repository = user_profile_repository or factory.user_profile_repository()
+        self.exposure_repository = exposure_repository or factory.exposure_repository()
+        self.memory_settings_repository = (
+            memory_settings_repository or factory.user_memory_settings_repository()
+        )
 
     async def run(self, request: ChatRequest) -> ChatResponse:
         """Execute one full harness run and store a trace."""
         started = perf_counter()
         run_id = str(uuid4())
         errors: list[str] = []
+        request_id = _optional_string(request.context.get("request_id")) or get_request_id()
+        user_profile = self.user_profile_repository.get_summary(request.user_id)
+        active_exposure_plan = self.exposure_repository.get_for_user(request.user_id)
+        memory_context = build_memory_context(
+            practice_summary=user_profile,
+            memory_settings=self.memory_settings_repository.get(request.user_id),
+            active_exposure_plan=active_exposure_plan,
+        )
+        run_context = RunContext(
+            run_id=run_id,
+            user_id=request.user_id,
+            session_id=_optional_string(request.context.get("session_id")),
+            message=request.message,
+            request_context=request.context,
+            user_profile=user_profile,
+            active_exposure_plan=active_exposure_plan,
+            memory_context=memory_context,
+        )
 
         for hook in self.hooks:
-            hook.before_safety(request)
+            method = getattr(hook, "before_safety", None)
+            if method is not None:
+                method(request)
 
-        safety_result = await self.safety_classifier.classify(request.message)
+        try:
+            safety_result = await self.safety_classifier.classify(request.message)
+        except Exception as exc:
+            safety_result = SafetyResult(
+                risk_level=RiskLevel.HIGH,
+                reason=(
+                    "Safety classifier failed; using conservative high-risk fallback "
+                    "instead of ordinary low-risk handling."
+                ),
+            )
+            errors.append(format_trace_error(ErrorCategory.SAFETY_CLASSIFIER_FAILURE, exc))
+        run_context.safety_result = safety_result
         for hook in self.hooks:
-            hook.after_safety(request, safety_result)
+            method = getattr(hook, "after_safety", None)
+            if method is not None:
+                method(request, safety_result)
 
-        permission_action = self.permission_gate.decide(safety_result)
-        if permission_action == PermissionAction.ESCALATE:
+        crisis_decision = self.permission_gate.decide(
+            safety_result,
+            HarnessAction.CRISIS_ESCALATION,
+        )
+        if crisis_decision.action == PermissionAction.ESCALATE:
             intent_result = IntentResult(
                 intent=Intent.CRISIS,
                 confidence=1.0,
@@ -63,51 +130,269 @@ class AgentHarness:
             )
         else:
             intent_result = await self.intent_router.route(request.message, safety_result)
+        run_context.intent_result = intent_result
 
         for hook in self.hooks:
-            hook.after_routing(request, intent_result)
+            method = getattr(hook, "after_routing", None)
+            if method is not None:
+                method(request, intent_result)
+
+        harness_action = _action_for_intent(intent_result.intent)
+        permission_decision = self.permission_gate.decide(safety_result, harness_action)
+        approved_protocol_id = _optional_string(request.context.get("protocol_id"))
+        protocol_request_hash = _protocol_request_hash(
+            harness_action=harness_action,
+            message=request.message,
+            request_context=request.context,
+        )
+        protocol_to_consume = None
+        if (
+            permission_decision.action == PermissionAction.ASK_CONSENT
+            and protocol_service.is_approved_for_action(
+                protocol_id=approved_protocol_id,
+                user_id=request.user_id,
+                harness_action=harness_action,
+                request_hash=protocol_request_hash,
+                session_id=run_context.session_id,
+            )
+        ):
+            permission_decision = PermissionDecision(
+                action=PermissionAction.ALLOW,
+                reason="Approved consent protocol allowed the requested action.",
+                required_protocol=None,
+                allowed=True,
+                requires_consent=False,
+                intensity_adjustment=permission_decision.intensity_adjustment,
+            )
+            protocol_to_consume = approved_protocol_id
+        if permission_decision.intensity_adjustment is not None:
+            _apply_intensity_adjustment(
+                run_context=run_context,
+                harness_action=harness_action,
+                permission_decision=permission_decision,
+            )
 
         skill = self.skill_registry.resolve_for_chat(intent_result.intent, safety_result)
-        skill_result = skill.run(
-            SkillContext(
-                user_id=request.user_id,
-                message=request.message,
-                intent=intent_result.intent,
-                safety_result=safety_result,
-                request_context=request.context,
+        hook_decision = None
+        if permission_decision.action != PermissionAction.ESCALATE:
+            hook_decision = _run_before_action_hooks(
+                hooks=self.hooks,
+                run_context=run_context,
+                harness_action=harness_action,
+                permission_decision=permission_decision,
             )
-        )
+        if hook_decision is not None and not hook_decision.allow:
+            errors.append(f"before_action_blocked:{hook_decision.reason}")
+            skill_result = _hook_limited_result(
+                hook_decision=hook_decision,
+                harness_action=harness_action,
+            )
+        elif permission_decision.action in {
+            PermissionAction.ASK_CONSENT,
+            PermissionAction.BLOCK,
+        }:
+            skill_result = _permission_limited_result(
+                decision=permission_decision,
+                harness_action=harness_action,
+                user_id=request.user_id,
+                session_id=run_context.session_id,
+                request_hash=protocol_request_hash,
+            )
+        else:
+            try:
+                skill_result = await skill.run(SkillContext(run=run_context))
+                _annotate_intensity_adjustment(
+                    run_context=run_context,
+                    skill_result_data=skill_result.structured_data,
+                )
+                if protocol_to_consume is not None:
+                    consumed = protocol_service.consume_for_action(
+                        protocol_id=protocol_to_consume,
+                        user_id=request.user_id,
+                        harness_action=harness_action,
+                        request_hash=protocol_request_hash,
+                        session_id=run_context.session_id,
+                    )
+                    if consumed is not None:
+                        skill_result.structured_data["protocol_status"] = consumed.status.value
+            except Exception as exc:
+                category = categorize_error(exc)
+                if category == ErrorCategory.UNKNOWN_FAILURE:
+                    category = ErrorCategory.TOOL_OR_SKILL_FAILURE
+                errors.append(format_trace_error(category, exc))
+                skill_result = skill_failure_result(
+                    harness_action=harness_action,
+                    category=category,
+                )
 
+        _run_after_action_hooks(
+            hooks=self.hooks,
+            run_context=run_context,
+            harness_action=harness_action,
+            skill_result=skill_result,
+        )
+        if safety_result.risk_level != RiskLevel.CRISIS:
+            _annotate_memory_context(
+                run_context=run_context,
+                skill_result_data=skill_result.structured_data,
+            )
         for hook in self.hooks:
-            hook.after_skill(request, skill_result)
+            method = getattr(hook, "after_skill", None)
+            if method is not None:
+                method(request, skill_result)
 
         selected_agent = skill_result.selected_agent
         if safety_result.risk_level == RiskLevel.CRISIS:
             selected_agent = "crisis_escalation"
+        selected_skill = (
+            "lead_harness"
+            if (
+                permission_decision.action in {PermissionAction.ASK_CONSENT, PermissionAction.BLOCK}
+                or (hook_decision is not None and not hook_decision.allow)
+            )
+            else skill.descriptor.name
+        )
+        action = _optional_string(skill_result.structured_data.get("action"))
+        session_id = (
+            _optional_string(skill_result.structured_data.get("session_id"))
+            or (
+                _optional_string(skill_result.structured_data.get("plan_id"))
+                if harness_action == HarnessAction.CREATE_EXPOSURE_PLAN
+                else None
+            )
+            or run_context.session_id
+        )
+        intervention_plan = None
+        linked_intervention_plan_id = protocol_service.linked_intervention_plan_id(
+            protocol_id=protocol_to_consume,
+            user_id=request.user_id,
+        )
+        memory_payload = {
+            "memory_kind": "intervention_plan",
+            "harness_action": harness_action.value,
+            "selected_skill": selected_skill,
+            "session_id": session_id or run_id,
+        }
+        should_consider_intervention_plan = (
+            safety_result.risk_level != RiskLevel.CRISIS
+            and permission_decision.action != PermissionAction.BLOCK
+        )
+        memory_decision = (
+            _run_before_memory_write_hooks(
+                hooks=self.hooks,
+                run_context=run_context,
+                memory_kind="intervention_plan",
+                payload=memory_payload,
+            )
+            if should_consider_intervention_plan
+            else None
+        )
+        if memory_decision is not None and not memory_decision.allow:
+            errors.append(f"before_memory_write_blocked:{memory_decision.reason}")
+            if memory_decision.structured_data:
+                skill_result.structured_data.update(memory_decision.structured_data)
+        elif should_consider_intervention_plan:
+            try:
+                if linked_intervention_plan_id is not None:
+                    intervention_plan = intervention_plan_service.mark_action_completed(
+                        user_id=request.user_id,
+                        plan_id=linked_intervention_plan_id,
+                        result_session_id=session_id or run_id,
+                        result_summary=f"Executed {action or harness_action.value}.",
+                    )
+                if intervention_plan is None:
+                    protocol_id = _optional_string(skill_result.structured_data.get("protocol_id"))
+                    intervention_plan = _create_intervention_plan(
+                        user_id=request.user_id,
+                        session_id=session_id or run_id,
+                        harness_action=harness_action,
+                        selected_skill=selected_skill,
+                        permission_decision=permission_decision,
+                        skill_result_data=skill_result.structured_data,
+                        safety_result=safety_result,
+                        protocol_id=protocol_id,
+                    )
+                    if intervention_plan is not None and protocol_id is not None:
+                        protocol_service.link_intervention_plan(
+                            protocol_id=protocol_id,
+                            user_id=request.user_id,
+                            intervention_plan_id=intervention_plan.plan_id,
+                        )
+            except Exception as exc:
+                errors.append(format_trace_error(ErrorCategory.MEMORY_WRITE_FAILURE, exc))
+                skill_result.structured_data["memory_write_failed"] = True
+                skill_result.structured_data["memory_error_category"] = (
+                    ErrorCategory.MEMORY_WRITE_FAILURE.value
+                )
+        if intervention_plan is not None:
+            run_context.intervention_plan = intervention_plan
+            skill_result.structured_data.setdefault(
+                "intervention_plan_id",
+                intervention_plan.plan_id,
+            )
+            skill_result.structured_data.setdefault(
+                "intervention_plan",
+                intervention_plan.model_dump(mode="json"),
+            )
 
         latency_ms = (perf_counter() - started) * 1000
+        input_decision = persistence_gate.persist_text(
+            user_id=request.user_id,
+            kind=PersistenceKind.TRACE_INPUT,
+            text=request.message,
+        )
+        output_decision = persistence_gate.persist_text(
+            user_id=request.user_id,
+            kind=PersistenceKind.TRACE_OUTPUT,
+            text=skill_result.response,
+        )
+        privacy_summary = TracePrivacySummary(
+            raw_input_retained=not input_decision.changed,
+            raw_output_retained=not output_decision.changed,
+            fields=[
+                _trace_field_policy("input", input_decision),
+                _trace_field_policy("output", output_decision),
+            ]
+        )
         trace = TraceRecord(
             run_id=run_id,
+            request_id=request_id,
             user_id=request.user_id,
-            input=request.message,
+            session_id=session_id,
+            intervention_plan_id=intervention_plan.plan_id if intervention_plan else None,
+            input=input_decision.persisted_text,
             safety_result=safety_result,
             intent_result=intent_result,
+            selected_skill=selected_skill,
             selected_agent=selected_agent,
-            output=skill_result.response,
+            action=action,
+            permission_action=permission_decision.action.value,
+            permission_reason=permission_decision.reason,
+            output=output_decision.persisted_text,
+            product_safe=True,
+            privacy_summary=privacy_summary,
             latency_ms=latency_ms,
             errors=errors,
+            error_categories=_error_categories(errors),
             created_at=datetime.now(timezone.utc),
         )
         self.trace_logger.save(trace)
         for hook in self.hooks:
-            hook.after_trace(trace)
+            method = getattr(hook, "after_trace", None)
+            if method is not None:
+                method(trace)
+        _run_on_stop_hooks(self.hooks, run_context, trace)
 
         return ChatResponse(
             run_id=run_id,
             risk_level=safety_result.risk_level,
             intent=intent_result.intent,
             response=skill_result.response,
-            structured_data=skill_result.structured_data,
+            structured_data={
+                **skill_result.structured_data,
+                "request_id": request_id,
+                "error_categories": trace.error_categories,
+            },
             trace=trace,
         )
 
@@ -117,6 +402,326 @@ class AgentHarness:
         if llm_client is not None:
             return LlmIntentRouter(llm_client=llm_client)
         return IntentRouter()
+
+
+def _optional_string(value: object) -> str | None:
+    """Return a non-empty string value from loose structured data."""
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _error_categories(errors: list[str]) -> list[str]:
+    """Return stable error category labels parsed from trace error strings."""
+    categories: list[str] = []
+    for error in errors:
+        category = error.split(":", 1)[0]
+        if category and category not in categories:
+            categories.append(category)
+    return categories
+
+
+def _trace_field_policy(field: str, decision: object) -> TraceFieldPolicy:
+    """Convert a persistence decision into trace-safe policy metadata."""
+    from app.privacy.policy import PersistenceDecision
+
+    if not isinstance(decision, PersistenceDecision):
+        return TraceFieldPolicy(field=field, persistence_kind="unknown")
+    return TraceFieldPolicy(
+        field=field,
+        persistence_kind=decision.kind.value,
+        minimized=decision.minimized,
+        summarized=decision.summarized,
+        policy=decision.policy,
+        redacted_types=decision.redacted_types,
+        original_length=decision.original_length,
+        persisted_length=len(decision.persisted_text),
+    )
+
+
+def _action_for_intent(intent: Intent) -> HarnessAction:
+    """Map routed intent to a bounded harness action."""
+    return {
+        Intent.EMOTIONAL_SUPPORT: HarnessAction.GENERAL_SUPPORT,
+        Intent.ROLEPLAY_PRACTICE: HarnessAction.START_ROLEPLAY,
+        Intent.CBT_WORKSHEET: HarnessAction.CREATE_WORKSHEET,
+        Intent.EXPOSURE_PLANNING: HarnessAction.CREATE_EXPOSURE_PLAN,
+        Intent.PROGRESS_REVIEW: HarnessAction.CREATE_EXPOSURE_PLAN,
+        Intent.CAMPUS_RESOURCE_QUERY: HarnessAction.QUERY_SUPPORT_RESOURCE,
+        Intent.CRISIS: HarnessAction.CRISIS_ESCALATION,
+    }.get(intent, HarnessAction.GENERAL_SUPPORT)
+
+
+def _apply_intensity_adjustment(
+    *,
+    run_context: RunContext,
+    harness_action: HarnessAction,
+    permission_decision: PermissionDecision,
+) -> None:
+    """Apply conservative intensity adjustment before skill execution."""
+    if harness_action != HarnessAction.CREATE_EXPOSURE_PLAN:
+        return
+    adjustment = permission_decision.intensity_adjustment
+    if adjustment is None:
+        return
+    if run_context.request_context.get("permission_intensity_adjusted") is True:
+        return
+    current = run_context.request_context.get("current_anxiety_level", 5)
+    if not isinstance(current, int):
+        current = 5
+    run_context.request_context["current_anxiety_level"] = max(1, min(10, current + adjustment))
+    run_context.request_context["permission_down_shifted"] = True
+    run_context.request_context["permission_intensity_adjusted"] = True
+    run_context.request_context["permission_intensity_adjustment"] = adjustment
+
+
+def _annotate_intensity_adjustment(
+    *,
+    run_context: RunContext,
+    skill_result_data: dict[str, object],
+) -> None:
+    """Expose applied permission intensity modifiers in skill output."""
+    if run_context.request_context.get("permission_intensity_adjusted") is not True:
+        return
+    skill_result_data["permission_intensity_adjusted"] = True
+    skill_result_data["permission_intensity_adjustment"] = run_context.request_context.get(
+        "permission_intensity_adjustment"
+    )
+
+
+def _annotate_memory_context(
+    *,
+    run_context: RunContext,
+    skill_result_data: dict[str, object],
+) -> None:
+    """Expose privacy-safe memory context used by the current run."""
+    if run_context.memory_context is None:
+        return
+    memory_context = run_context.memory_context
+    skill_result_data.setdefault("memory_context_used", bool(memory_context.context_notes))
+    skill_result_data.setdefault(
+        "memory_context",
+        memory_context.model_dump(mode="json"),
+    )
+
+
+def _permission_limited_result(
+    *,
+    decision: PermissionDecision,
+    harness_action: HarnessAction,
+    user_id: str,
+    session_id: str | None,
+    request_hash: str,
+) -> "SkillResult":
+    """Return a bounded response when an action cannot run immediately."""
+    from app.skills.base import SkillResult
+
+    if decision.action == PermissionAction.ASK_CONSENT:
+        protocol = protocol_service.create_consent_request(
+            user_id=user_id,
+            harness_action=harness_action,
+            reason=decision.reason,
+            required_protocol=decision.required_protocol,
+            session_id=session_id,
+            request_hash=request_hash,
+        )
+        response = (
+            "在开始这个练习前，我想先确认你是否愿意继续。"
+            "你可以选择不同意，也可以随时停止；这只是社交练习，不是诊断或治疗。"
+        )
+        action = "consent_required"
+        protocol_data = {
+            "protocol_id": protocol.protocol_id,
+            "protocol_type": protocol.protocol_type.value,
+            "protocol_status": protocol.status.value,
+            "protocol_expires_at": protocol.expires_at.isoformat() if protocol.expires_at else None,
+            "protocol_request_hash": protocol.request_hash,
+        }
+    else:
+        response = (
+            "我先不启动这个练习。当前表达提示压力较高，更适合先做支持性整理或联系现实支持，"
+            "而不是进入角色扮演或分级练习。"
+        )
+        action = "action_blocked"
+        protocol_data = {}
+
+    return SkillResult(
+        response=response,
+        structured_data={
+            "agent": "lead_harness",
+            "action": action,
+            "blocked": decision.action == PermissionAction.BLOCK,
+            "consent_required": decision.action == PermissionAction.ASK_CONSENT,
+            "harness_action": harness_action.value,
+            "permission_action": decision.action.value,
+            "permission_reason": decision.reason,
+            "required_protocol": decision.required_protocol,
+            "allowed": decision.allowed,
+            "requires_consent": decision.requires_consent,
+            "intensity_adjustment": decision.intensity_adjustment,
+            "escalation_required": decision.escalation_required,
+            "block_reason": decision.block_reason,
+            **protocol_data,
+        },
+        selected_agent="lead_harness",
+    )
+
+
+def _protocol_request_hash(
+    *,
+    harness_action: HarnessAction,
+    message: str,
+    request_context: dict[str, object],
+) -> str:
+    """Return a stable hash binding consent to one normalized action request."""
+    context_without_control_fields = {
+        key: value
+        for key, value in request_context.items()
+        if key not in {"protocol_id"}
+    }
+    payload = {
+        "harness_action": harness_action.value,
+        "message": message,
+        "context": context_without_control_fields,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _hook_limited_result(
+    *,
+    hook_decision: HookDecision,
+    harness_action: HarnessAction,
+) -> "SkillResult":
+    """Return a bounded response when a hook blocks an action."""
+    from app.skills.base import SkillResult
+
+    structured_data = {
+        "agent": "lead_harness",
+        "action": "action_blocked",
+        "blocked": True,
+        "harness_action": harness_action.value,
+        "hook_blocked": True,
+        "hook_reason": hook_decision.reason,
+    }
+    if hook_decision.structured_data:
+        structured_data.update(hook_decision.structured_data)
+    return SkillResult(
+        response="这个操作被当前 harness hook 暂停了。你可以先选择更低强度的支持性整理。",
+        structured_data=structured_data,
+        selected_agent="lead_harness",
+    )
+
+
+def _create_intervention_plan(
+    *,
+    user_id: str,
+    session_id: str,
+    harness_action: HarnessAction,
+    selected_skill: str,
+    permission_decision: PermissionDecision,
+    skill_result_data: dict[str, object],
+    safety_result: "SafetyResult",
+    protocol_id: str | None,
+) -> "InterventionPlan | None":
+    """Create a session-level plan for non-crisis harness actions."""
+    from app.models import SafetyResult
+    from app.models_intervention import InterventionPlan
+
+    if safety_result.risk_level == RiskLevel.CRISIS:
+        return None
+    if permission_decision.action == PermissionAction.BLOCK:
+        return None
+    intensity = _plan_intensity(harness_action, skill_result_data)
+    return intervention_plan_service.create_for_action(
+        user_id=user_id,
+        session_id=session_id,
+        harness_action=harness_action,
+        selected_skill=selected_skill,
+        requires_consent=permission_decision.action == PermissionAction.ASK_CONSENT,
+        intensity=intensity,
+        protocol_id=protocol_id,
+    )
+
+
+def _plan_intensity(
+    harness_action: HarnessAction,
+    skill_result_data: dict[str, object],
+) -> int | None:
+    """Derive a simple plan intensity from skill output."""
+    if harness_action == HarnessAction.START_ROLEPLAY:
+        value = skill_result_data.get("difficulty")
+        return value if isinstance(value, int) else None
+    if harness_action == HarnessAction.CREATE_EXPOSURE_PLAN:
+        preview_tasks = skill_result_data.get("preview_tasks")
+        if isinstance(preview_tasks, list) and preview_tasks:
+            first = preview_tasks[0]
+            if isinstance(first, dict):
+                difficulty = first.get("difficulty")
+                return difficulty if isinstance(difficulty, int) else None
+    return None
+
+
+def _run_before_action_hooks(
+    *,
+    hooks: tuple[AgentHarnessHook, ...],
+    run_context: RunContext,
+    harness_action: HarnessAction,
+    permission_decision: PermissionDecision,
+) -> HookDecision | None:
+    """Run before-action hooks and return the first blocking decision."""
+    for hook in hooks:
+        method = getattr(hook, "before_action", None)
+        if method is None:
+            continue
+        decision = method(run_context, harness_action, permission_decision)
+        if decision is not None and not decision.allow:
+            return decision
+    return None
+
+
+def _run_after_action_hooks(
+    *,
+    hooks: tuple[AgentHarnessHook, ...],
+    run_context: RunContext,
+    harness_action: HarnessAction,
+    skill_result: "SkillResult",
+) -> None:
+    """Run after-action hooks."""
+    for hook in hooks:
+        method = getattr(hook, "after_action", None)
+        if method is not None:
+            method(run_context, harness_action, skill_result)
+
+
+def _run_before_memory_write_hooks(
+    *,
+    hooks: tuple[AgentHarnessHook, ...],
+    run_context: RunContext,
+    memory_kind: str,
+    payload: dict[str, object],
+) -> HookDecision | None:
+    """Run before-memory-write hooks and return the first blocking decision."""
+    for hook in hooks:
+        method = getattr(hook, "before_memory_write", None)
+        if method is None:
+            continue
+        decision = method(run_context, memory_kind, payload)
+        if decision is not None and not decision.allow:
+            return decision
+    return None
+
+
+def _run_on_stop_hooks(
+    hooks: tuple[AgentHarnessHook, ...],
+    run_context: RunContext,
+    trace: TraceRecord,
+) -> None:
+    """Run stop hooks after trace persistence."""
+    for hook in hooks:
+        method = getattr(hook, "on_stop", None)
+        if method is not None:
+            method(run_context, trace)
 
 
 # Backwards-compatible name used by older imports and tests.

@@ -3,7 +3,7 @@
 from pydantic import BaseModel, Field
 
 from app.models import SafetyResult
-from app.models_knowledge import Citation
+from app.models_knowledge import Citation, RetrievalDiagnostics
 
 
 class SupportQueryRequest(BaseModel):
@@ -19,5 +19,6 @@ class SupportQueryResponse(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     unknown: bool
     confidence: float = Field(ge=0.0, le=1.0)
+    retrieval: RetrievalDiagnostics | None = None
     safety_result: SafetyResult
     blocked: bool = False

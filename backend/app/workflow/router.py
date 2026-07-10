@@ -6,6 +6,7 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from app.llm.base import BaseLLMClient
+from app.llm.retry import ProviderError
 from app.llm.prompts import (
     build_intent_router_system_prompt,
     build_intent_router_user_prompt,
@@ -53,13 +54,52 @@ class LlmIntentRouter:
             return result.model_copy(update={"llm_usage": LLMUsage(used=True)})
         except (ValueError, json.JSONDecodeError, ValidationError):
             fallback = await self.fallback_router.route(message, safety_result)
-        except Exception:
+            return fallback.model_copy(
+                update={
+                    "llm_usage": LLMUsage(
+                        fallback_used=True,
+                        error_category="INVALID_JSON",
+                    )
+                }
+            )
+        except Exception as exc:
             fallback = await self.fallback_router.route(message, safety_result)
-        return fallback.model_copy(update={"llm_usage": LLMUsage(fallback_used=True)})
+            category = (
+                exc.category.value
+                if isinstance(exc, ProviderError)
+                else "TRANSIENT_PROVIDER_ERROR"
+            )
+            return fallback.model_copy(
+                update={
+                    "llm_usage": LLMUsage(
+                        fallback_used=True,
+                        error_category=category,
+                    )
+                }
+            )
 
 
 class RuleBasedIntentRouter:
     """Route safe messages with transparent keyword scoring rules."""
+
+    stop_practice_terms: tuple[str, ...] = (
+        "不想继续",
+        "先暂停",
+        "暂停练习",
+        "停止练习",
+        "不要继续",
+        "不想练了",
+        "不想角色扮演",
+        "退出练习",
+        "停止 roleplay",
+        "停止 role play",
+        "stop roleplay",
+        "stop role play",
+        "pause roleplay",
+        "pause role play",
+        "stop practice",
+        "pause practice",
+    )
 
     intent_terms: dict[Intent, tuple[str, ...]] = {
         Intent.ROLEPLAY_PRACTICE: (
@@ -130,6 +170,13 @@ class RuleBasedIntentRouter:
             )
 
         normalized = message.casefold()
+        if self._is_stop_practice_request(normalized):
+            return IntentResult(
+                intent=Intent.EMOTIONAL_SUPPORT,
+                confidence=0.84,
+                reason="User asked to pause or stop active practice; routed to support.",
+            )
+
         scored_matches = self._score_intents(normalized)
         if scored_matches:
             best_intent, best_terms = scored_matches[0]
@@ -159,6 +206,10 @@ class RuleBasedIntentRouter:
                 matches.append((intent, matched_terms))
 
         return sorted(matches, key=lambda item: len(item[1]), reverse=True)
+
+    def _is_stop_practice_request(self, message: str) -> bool:
+        """Return whether the user is asking to pause or stop practice."""
+        return any(term in message for term in self.stop_practice_terms)
 
 
 IntentRouter = RuleBasedIntentRouter

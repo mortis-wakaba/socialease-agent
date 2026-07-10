@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 
 from app.models import Intent, RiskLevel
 from app.models_knowledge import KnowledgeBaseType
+from datetime import datetime
+from typing import Any
 
 
 class SafetyEvalCase(BaseModel):
@@ -75,11 +77,20 @@ class E2EWorkflowEvalCase(BaseModel):
     expected_escalation: bool = False
 
 
+class ProductBoundaryEvalCase(BaseModel):
+    """One expected product-boundary behavior example."""
+
+    id: str
+    category: str
+    input: dict[str, object] = Field(default_factory=dict)
+    expected: dict[str, object] = Field(default_factory=dict)
+
+
 class EvalMetric(BaseModel):
     """Aggregate result for one evaluation family."""
 
     total: int
-    passed: int
+    passed: float
     score: float = Field(ge=0.0, le=1.0)
 
 
@@ -91,7 +102,47 @@ class EvalReport(BaseModel):
     blocked_crisis_rate: EvalMetric
     intent_accuracy: EvalMetric
     citation_hit_rate: EvalMetric
+    retrieval_recall_at_3: EvalMetric
+    retrieval_mrr: EvalMetric
     unknown_precision: EvalMetric
     roleplay_feedback_pass_rate: EvalMetric
     worksheet_extraction_pass_rate: EvalMetric
     e2e_workflow_pass_rate: EvalMetric
+    product_boundary_pass_rate: EvalMetric
+    privacy_redaction_pass_rate: EvalMetric
+    consent_replay_resistance: EvalMetric
+    cross_user_access_denial: EvalMetric
+    continuation_crisis_detection: EvalMetric
+    unsafe_exposure_progression_block_rate: EvalMetric
+    stale_plan_cancellation_rate: EvalMetric
+
+
+class EvalStepTrace(BaseModel):
+    """Expected/actual detail for one deterministic eval step."""
+
+    name: str
+    expected: dict[str, Any] = Field(default_factory=dict)
+    actual: dict[str, Any] = Field(default_factory=dict)
+    passed: bool
+
+
+class EvalCaseTrace(BaseModel):
+    """Trace artifact for one deterministic eval case."""
+
+    suite: str
+    case_id: str
+    category: str | None = None
+    passed: bool
+    expected: dict[str, Any] = Field(default_factory=dict)
+    actual: dict[str, Any] = Field(default_factory=dict)
+    steps: list[EvalStepTrace] = Field(default_factory=list)
+    failure_reason: str | None = None
+
+
+class EvalTraceReport(BaseModel):
+    """Full deterministic eval report plus per-case traces."""
+
+    generated_at: datetime
+    report: EvalReport
+    summary: dict[str, int]
+    cases: list[EvalCaseTrace] = Field(default_factory=list)

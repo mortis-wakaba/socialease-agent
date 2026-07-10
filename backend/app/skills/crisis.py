@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models import Intent
+from app.safety.crisis import full_crisis_escalation_response
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
 
 
@@ -19,7 +20,7 @@ class CrisisEscalationSkill:
         manifest_path=str(Path(__file__).parent / "manifests" / "crisis" / "SKILL.md"),
     )
 
-    def run(self, context: SkillContext) -> SkillResult:
+    async def run(self, context: SkillContext) -> SkillResult:
         """Return a non-medical crisis escalation response."""
         response, structured_data = self._crisis_escalation_response()
         return SkillResult(
@@ -30,15 +31,10 @@ class CrisisEscalationSkill:
 
     @staticmethod
     def _crisis_escalation_response() -> tuple[str, dict[str, Any]]:
-        response = (
-            "我很担心你现在的安全。这个系统不能处理危机，也不能替代专业帮助。\n\n"
-            "如果你可能马上伤害自己或他人，请立刻联系当地紧急服务，或请身边可信任的人陪你一起求助。"
-            "如果你在学校，也建议尽快联系学校心理中心、辅导员或宿舍管理人员。\n\n"
-            "在获得现实帮助前，尽量不要独处，远离可能伤害自己或他人的物品，并把这条信息直接发给一个"
-            "你信任的人：我现在不安全，需要你马上陪我联系帮助。"
-        )
+        response = full_crisis_escalation_response()
         structured_data = {
             "agent": "crisis_escalation",
+            "action": "crisis_escalation",
             "escalation": True,
             "recommended_actions": [
                 "contact_local_emergency_services",

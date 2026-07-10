@@ -1,6 +1,7 @@
 """Trace logger backed by a replaceable repository."""
 
-from app.db.repositories import SQLiteTraceRepository, TraceRepository
+from app.db.factory import repository_factory
+from app.db.repositories import TraceRepository
 from app.models import TraceRecord
 
 
@@ -8,7 +9,7 @@ class TraceLogger:
     """Persist workflow traces through the configured repository."""
 
     def __init__(self, repository: TraceRepository | None = None) -> None:
-        self.repository = repository or SQLiteTraceRepository()
+        self.repository = repository or repository_factory().trace_repository()
 
     def save(self, record: TraceRecord) -> TraceRecord:
         """Persist a trace record and return it."""

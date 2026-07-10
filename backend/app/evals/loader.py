@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.evals.models import (
     E2EWorkflowEvalCase,
     IntentEvalCase,
+    ProductBoundaryEvalCase,
     RagEvalCase,
     RoleplayFeedbackEvalCase,
     SafetyEvalCase,
@@ -62,3 +63,11 @@ def load_worksheet_cases() -> list[WorksheetEvalCase]:
 def load_e2e_workflow_cases() -> list[E2EWorkflowEvalCase]:
     """Load end-to-end harness workflow cases."""
     return load_jsonl(DATA_DIR / "e2e_workflow.jsonl", E2EWorkflowEvalCase)
+
+
+def load_product_boundary_cases() -> list[ProductBoundaryEvalCase]:
+    """Load product-boundary eval cases."""
+    return [
+        *load_jsonl(DATA_DIR / "product_boundaries.jsonl", ProductBoundaryEvalCase),
+        *load_jsonl(DATA_DIR / "product_boundaries_phase6.jsonl", ProductBoundaryEvalCase),
+    ]

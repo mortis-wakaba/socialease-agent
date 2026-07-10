@@ -47,6 +47,10 @@ class ExposureStore:
         """Return the user's active exposure plan, if present."""
         return self.repository.get_for_user(user_id)
 
+    def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
+        """Return a plan by id only if it belongs to the user."""
+        return self.repository.get_by_id_for_user(plan_id=plan_id, user_id=user_id)
+
     def update_after_attempt(
         self,
         user_id: str,

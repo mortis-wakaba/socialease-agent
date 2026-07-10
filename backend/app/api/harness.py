@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from app.auth.context import AuthContext
+from app.auth.dependencies import get_optional_current_user, require_developer_access
 from app.models_harness import (
     HarnessCapabilitiesResponse,
     HarnessMetricsResponse,
@@ -12,14 +14,18 @@ from app.models_harness import (
 from app.models_knowledge import KnowledgeBaseType
 from app.safety.permissions import PermissionAction
 from app.skills.registry import skill_registry
-from app.tracing.logger import trace_logger
+from app.workflow.default_hooks import metrics_hook
+
 
 router = APIRouter(prefix="/harness", tags=["harness"])
 
 
 @router.get("/capabilities", response_model=HarnessCapabilitiesResponse)
-async def get_harness_capabilities() -> HarnessCapabilitiesResponse:
+async def get_harness_capabilities(
+    current_user: AuthContext = Depends(get_optional_current_user),
+) -> HarnessCapabilitiesResponse:
     """Return the harness loop, permissions, skills, and knowledge layers."""
+    require_developer_access(current_user)
     skills = [
         HarnessSkillCapability(
             name=descriptor.name,
@@ -42,16 +48,21 @@ async def get_harness_capabilities() -> HarnessCapabilitiesResponse:
             "SafetyClassifier",
             "SafetyPermissionGate",
             "IntentRouter_or_Escalation",
+            "before_action_hooks",
             "SkillRegistry",
             "SkillExecution",
+            "before_memory_write_hooks",
             "TraceLogger",
             "after_trace_hooks",
+            "on_stop_hooks",
         ],
         permission_actions=[action.value for action in PermissionAction],
         skills=skills,
         knowledge_layers=list(KnowledgeBaseType),
         observation=[
             "TraceLogger",
+            "MetricsHook",
+            "PrivacyGuardHook",
             "GET /api/runs/{run_id}",
             "llm_usage",
             "backend/app/evals",
@@ -69,37 +80,35 @@ async def get_harness_capabilities() -> HarnessCapabilitiesResponse:
 @router.get("/metrics", response_model=HarnessMetricsResponse)
 async def get_harness_metrics(
     limit: int = Query(default=100, ge=1, le=500),
+    current_user: AuthContext = Depends(get_optional_current_user),
 ) -> HarnessMetricsResponse:
-    """Return lightweight aggregate metrics for recent harness runs."""
-    records = trace_logger.list_recent(limit=limit)
-    intent_counts: dict[str, int] = {}
-    selected_agent_counts: dict[str, int] = {}
-    fallback_runs = 0
-    crisis_runs = 0
-    total_latency = 0.0
-
-    for record in records:
-        intent = record.intent_result.intent.value
-        intent_counts[intent] = intent_counts.get(intent, 0) + 1
-        selected_agent_counts[record.selected_agent] = (
-            selected_agent_counts.get(record.selected_agent, 0) + 1
-        )
-        total_latency += record.latency_ms
-        if record.safety_result.risk_level.value == "crisis":
-            crisis_runs += 1
-        if (
-            record.safety_result.llm_usage.fallback_used
-            or record.intent_result.llm_usage.fallback_used
-        ):
-            fallback_runs += 1
-
-    total_runs = len(records)
+    """Return lightweight aggregate metrics captured by MetricsHook."""
+    require_developer_access(current_user)
+    snapshot = metrics_hook.snapshot()
     return HarnessMetricsResponse(
         window_size=limit,
-        total_runs=total_runs,
-        crisis_runs=crisis_runs,
-        fallback_runs=fallback_runs,
-        average_latency_ms=(total_latency / total_runs if total_runs else 0.0),
-        intent_counts=intent_counts,
-        selected_agent_counts=selected_agent_counts,
+        total_runs=snapshot.total_runs,
+        crisis_runs=snapshot.crisis_runs,
+        fallback_runs=snapshot.fallback_runs,
+        hook_blocked_runs=snapshot.hook_blocked_runs,
+        memory_write_blocked_runs=snapshot.memory_write_blocked_runs,
+        average_latency_ms=snapshot.average_latency_ms,
+        latency_p50_ms=snapshot.latency_p50_ms,
+        latency_p95_ms=snapshot.latency_p95_ms,
+        intent_counts=snapshot.intent_counts,
+        risk_counts=snapshot.risk_counts,
+        selected_agent_counts=snapshot.selected_agent_counts,
+        permission_counts=snapshot.permission_counts,
+        product_boundary_eval_counts=snapshot.product_boundary_eval_counts,
+        runtime_event_counts=snapshot.runtime_event_counts,
+        rate_limit_hits=snapshot.rate_limit_hits,
+        llm_concurrency_saturation=snapshot.llm_concurrency_saturation,
+        slow_request_count=snapshot.slow_request_count,
+        memory_export_count=snapshot.memory_export_count,
+        memory_delete_count=snapshot.memory_delete_count,
+        memory_preferences_saved_count=snapshot.memory_preferences_saved_count,
+        memory_preferences_disabled_count=snapshot.memory_preferences_disabled_count,
+        auth_rate_limit_hits=snapshot.auth_rate_limit_hits,
+        auth_failed_login_count=snapshot.auth_failed_login_count,
+        auth_lockout_count=snapshot.auth_lockout_count,
     )

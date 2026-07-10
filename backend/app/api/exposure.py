@@ -1,12 +1,14 @@
 """FastAPI routes for graded exposure planning."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
-from app.agents.exposure import ExposurePlanner
-from app.knowledge.service import KnowledgeService
-from app.memory.exposure_store import exposure_store
-from app.models import RiskLevel
-from app.models_knowledge import KnowledgeBaseType
+from app.auth.context import AuthContext
+from app.auth.dependencies import (
+    get_current_user,
+    resolve_optional_user_id,
+    resolve_request_user_id,
+    require_owner_path_user,
+)
 from app.models_exposure import (
     ExposureCompleteRequest,
     ExposureCompleteResponse,
@@ -14,111 +16,93 @@ from app.models_exposure import (
     ExposurePlanResponse,
     UserExposureResponse,
 )
-from app.safety.classifier import create_safety_classifier
+from app.services.errors import ServiceNotFoundError
+from app.services.exposure_service import exposure_service
+from app.safety.actions import HarnessAction
+from app.safety.direct_actions import (
+    PROTOCOL_HEADER_NAME,
+    consume_direct_action_consent,
+    require_direct_action_consent,
+)
 
 router = APIRouter(tags=["exposure"])
-exposure_planner = ExposurePlanner()
-knowledge_service = KnowledgeService()
-safety_classifier = create_safety_classifier()
 
 
 @router.post("/exposure/plan", response_model=ExposurePlanResponse)
 async def create_exposure_plan(
     request: ExposurePlanRequest,
+    current_user: AuthContext = Depends(get_current_user),
+    protocol_id: str | None = Header(default=None, alias=PROTOCOL_HEADER_NAME),
 ) -> ExposurePlanResponse:
     """Create a graded exposure practice plan."""
-    safety_text = " ".join(
-        [
-            request.target_scenario,
-            *request.previous_attempts,
-        ]
+    effective_request = request.model_copy(
+        update={"user_id": resolve_request_user_id(request.user_id, current_user)}
     )
-    safety_result = await safety_classifier.classify(safety_text)
-    if safety_result.risk_level == RiskLevel.CRISIS:
-        return ExposurePlanResponse(
-            plan=None,
-            safety_result=safety_result,
-            blocked=True,
-            response=(
-                "这个输入包含危机风险表达，系统会先暂停社交练习计划。"
-                "请立刻联系可信任的人、学校心理中心或当地紧急服务；如果你可能马上伤害自己或他人，"
-                "请不要独处，并尽快寻求现场帮助。"
-            ),
+    consent = require_direct_action_consent(
+        user_id=effective_request.user_id,
+        harness_action=HarnessAction.CREATE_EXPOSURE_PLAN,
+        payload=effective_request,
+        protocol_id=protocol_id,
+    )
+    response = await exposure_service.create_plan(effective_request)
+    if response.blocked is False:
+        consume_direct_action_consent(
+            user_id=effective_request.user_id,
+            consent=consent,
+            result_summary="Created exposure practice plan.",
         )
-
-    rag_response = knowledge_service.query(
-        query="分级暴露 社交练习 阶梯 anxiety_before anxiety_after 降低难度 提高难度",
-        kb_type=KnowledgeBaseType.SOCIAL_SKILLS,
-    )
-    tasks = exposure_planner.create_tasks(
-        target_scenario=request.target_scenario,
-        current_anxiety_level=request.current_anxiety_level,
-        previous_attempts=request.previous_attempts,
-        citations=rag_response.citations,
-    )
-    plan = exposure_store.create_plan(
-        user_id=request.user_id,
-        target_scenario=request.target_scenario,
-        current_anxiety_level=request.current_anxiety_level,
-        previous_attempts=request.previous_attempts,
-        tasks=tasks,
-    )
-    return ExposurePlanResponse(
-        plan=plan,
-        safety_result=safety_result,
-        blocked=False,
-        response=(
-            "已生成社交练习计划。请把它当作可调整的小步骤安排，"
-            "不是诊断或效果承诺；如果某一步太难，可以使用 fallback_task。"
-        ),
-    )
+    return response
 
 
 @router.post("/exposure/complete", response_model=ExposureCompleteResponse)
 async def complete_exposure_task(
     request: ExposureCompleteRequest,
+    current_user: AuthContext = Depends(get_current_user),
+    protocol_id: str | None = Header(default=None, alias=PROTOCOL_HEADER_NAME),
 ) -> ExposureCompleteResponse:
     """Record task feedback and update the recommended next task."""
-    plan = exposure_store.get_for_user(request.user_id)
-    if plan is None:
+    try:
+        effective_request = request.model_copy(
+            update={"user_id": resolve_request_user_id(request.user_id, current_user)}
+        )
+        consent = require_direct_action_consent(
+            user_id=effective_request.user_id,
+            harness_action=HarnessAction.COMPLETE_EXPOSURE_TASK,
+            payload=effective_request,
+            protocol_id=protocol_id,
+        )
+        response = await exposure_service.complete_task(effective_request)
+        if response.blocked is False:
+            consume_direct_action_consent(
+                user_id=effective_request.user_id,
+                consent=consent,
+                result_summary="Recorded exposure task feedback.",
+            )
+        return response
+    except ServiceNotFoundError as error:
+        detail = "Exposure task not found" if "task" in str(error).lower() else "Exposure plan not found"
+        raise HTTPException(status_code=404, detail=detail)
+
+
+@router.get("/exposure/{plan_id}", response_model=UserExposureResponse)
+async def get_exposure_plan_by_id(
+    plan_id: str,
+    user_id: str | None = None,
+    current_user: AuthContext = Depends(get_current_user),
+) -> UserExposureResponse:
+    """Return one exposure plan by id for the owning user."""
+    try:
+        effective_user_id = resolve_optional_user_id(user_id, current_user)
+        return exposure_service.get_plan_by_id(plan_id=plan_id, user_id=effective_user_id)
+    except ServiceNotFoundError:
         raise HTTPException(status_code=404, detail="Exposure plan not found")
-
-    next_task, reason = exposure_planner.choose_next_task(
-        plan=plan,
-        task_id=request.task_id,
-        status=request.status,
-        anxiety_before=request.anxiety_before,
-        anxiety_after=request.anxiety_after,
-    )
-    if reason.startswith("Task not found"):
-        raise HTTPException(status_code=404, detail="Exposure task not found")
-
-    attempt = exposure_planner.create_attempt(
-        task_id=request.task_id,
-        status=request.status,
-        anxiety_before=request.anxiety_before,
-        anxiety_after=request.anxiety_after,
-        reflection=request.reflection,
-    )
-    updated_plan = exposure_store.update_after_attempt(
-        user_id=request.user_id,
-        attempt=attempt,
-        recommended_next_task_id=next_task.task_id if next_task else None,
-    )
-    if updated_plan is None:
-        raise HTTPException(status_code=404, detail="Exposure plan not found")
-
-    return ExposureCompleteResponse(
-        plan=updated_plan,
-        next_task=next_task,
-        adjustment_reason=reason,
-    )
 
 
 @router.get("/users/{user_id}/exposure", response_model=UserExposureResponse)
-async def get_user_exposure(user_id: str) -> UserExposureResponse:
+async def get_user_exposure(
+    user_id: str,
+    current_user: AuthContext = Depends(get_current_user),
+) -> UserExposureResponse:
     """Return the user's active exposure plan and progress."""
-    return UserExposureResponse(
-        user_id=user_id,
-        plan=exposure_store.get_for_user(user_id),
-    )
+    require_owner_path_user(user_id, current_user)
+    return exposure_service.get_user_plan(user_id)

@@ -8,3 +8,4 @@ class LLMUsage(BaseModel):
 
     used: bool = False
     fallback_used: bool = False
+    error_category: str | None = None

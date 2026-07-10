@@ -6,6 +6,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from app.models import SafetyResult
+from app.models_intervention import InterventionPlanView
 from app.models_knowledge import Citation
 
 
@@ -77,6 +78,8 @@ class ExposurePlanResponse(BaseModel):
     """Response returned after creating an exposure plan."""
 
     plan: ExposurePlan | None = None
+    intervention_plan_id: str | None = None
+    intervention_plan: InterventionPlanView | None = None
     safety_result: SafetyResult
     blocked: bool = False
     response: str
@@ -99,6 +102,9 @@ class ExposureCompleteResponse(BaseModel):
     plan: ExposurePlan
     next_task: ExposureTask | None
     adjustment_reason: str
+    safety_result: SafetyResult | None = None
+    blocked: bool = False
+    response: str = ""
 
 
 class UserExposureResponse(BaseModel):
@@ -106,3 +112,5 @@ class UserExposureResponse(BaseModel):
 
     user_id: str
     plan: ExposurePlan | None = None
+    intervention_plan_id: str | None = None
+    intervention_plan: InterventionPlanView | None = None

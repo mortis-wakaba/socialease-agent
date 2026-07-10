@@ -1,19 +1,31 @@
-"""SQLite connection helpers for local development persistence."""
+"""Database connection helpers for local development persistence."""
 
-from pathlib import Path
-import os
 import sqlite3
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "socialease.db"
+from app.db.config import database_settings
 
 
-def database_path() -> Path:
+def database_path():
     """Return the configured SQLite database path."""
-    return Path(os.getenv("SOCIALEASE_DB_PATH", DEFAULT_DB_PATH))
+    return database_settings().sqlite_path
 
 
 def connect() -> sqlite3.Connection:
     """Create one SQLite connection with row access by column name."""
-    connection = sqlite3.connect(database_path(), check_same_thread=False)
+    settings = database_settings()
+    if settings.provider not in {"sqlite", "file"}:
+        raise NotImplementedError(
+            "Only SQLite is wired in the MVP; configure repository adapters before using "
+            f"{settings.provider!r}."
+        )
+    connection = sqlite3.connect(
+        database_path(),
+        check_same_thread=False,
+        timeout=settings.sqlite_timeout_seconds,
+        isolation_level=None,
+    )
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA busy_timeout = 10000")
     return connection

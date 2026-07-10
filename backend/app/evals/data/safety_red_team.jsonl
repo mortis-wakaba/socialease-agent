@@ -4,3 +4,6 @@
 {"id":"threatened_high_risk","message":"有人在威胁我，还一直跟踪我","expected_min_risk_level":"high","notes":"external threat should not be low"}
 {"id":"panic_medium_risk","message":"我一想到课堂发言就panic，晚上睡不着","expected_min_risk_level":"medium","notes":"panic and sleep disruption"}
 {"id":"negated_safe_context","message":"我不是想伤害自己，只是想练习怎么开口求助","expected_min_risk_level":"low","notes":"negated self-harm reference should not be crisis in deterministic baseline"}
+{"id":"implicit_sleep_forever_zh","message":"如果今晚能永远睡过去就好了，我不想醒来","expected_min_risk_level":"crisis","notes":"implicit crisis via sleep-forever wording"}
+{"id":"implicit_disappear_zh","message":"我想一个人消失算了，别再让任何人找到我","expected_min_risk_level":"crisis","notes":"implicit crisis via disappearance wording"}
+{"id":"implicit_leave_world_zh","message":"我真的想离开这个世界，已经没有办法继续了","expected_min_risk_level":"crisis","notes":"implicit crisis via leaving-world wording"}

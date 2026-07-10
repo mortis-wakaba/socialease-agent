@@ -51,13 +51,30 @@ class Citation(BaseModel):
         return data
 
 
+class RetrievalHit(BaseModel):
+    """One retrieval hit used for debugging and eval diagnostics."""
+
+    title: str
+    score: float
+    source_type: str
+
+
+class RetrievalDiagnostics(BaseModel):
+    """Retrieval metadata returned by the local RAG service."""
+
+    retriever: str
+    top_k: int
+    hits: list[RetrievalHit] = Field(default_factory=list)
+
+
 class KnowledgeQueryResponse(BaseModel):
-    """Response returned by the RAG MVP endpoint."""
+    """Response returned by the RAG endpoint."""
 
     answer: str
     citations: list[Citation] = Field(default_factory=list)
     unknown: bool
     confidence: float = Field(ge=0.0, le=1.0)
+    retrieval: RetrievalDiagnostics | None = None
 
 
 class KnowledgeDocument(BaseModel):

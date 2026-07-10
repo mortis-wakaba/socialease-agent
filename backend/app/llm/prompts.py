@@ -4,6 +4,9 @@ COMMON_SAFETY_INSTRUCTIONS = """
 You are part of SocialEase Agent, a non-medical social-practice system.
 Do not diagnose, promise treatment effects, invent resources, or encourage users to avoid real-world support.
 If crisis-like content is present, the outer system will handle escalation before ordinary generation.
+Do not repeat sensitive user details verbatim, including names, phone numbers, email addresses,
+student IDs, school/class identifiers, addresses, or third-party identities. Use brief general
+phrases such as "联系方式", "具体地点", or "某位同学" when referring to them.
 """.strip()
 
 
@@ -41,7 +44,8 @@ Recent conversation:
 Latest user message:
 {user_message}
 
-Write the next in-character role-play turn only.
+Write the next in-character role-play turn only. Do not quote sensitive user details from the
+latest message or transcript.
 """.strip()
 
 
@@ -55,6 +59,8 @@ Return one JSON object with exactly these keys:
 situation, automatic_thought, emotion, emotion_intensity, evidence_for,
 evidence_against, alternative_thought, next_action.
 Use null when a field is missing. Do not infer, improve, diagnose, or invent content.
+If a field contains contact details, names, addresses, school/class identifiers, or third-party
+identities, generalize that sensitive detail instead of copying it verbatim.
 emotion_intensity must be an integer from 0 to 10 or null.
 Return JSON only.
 """.strip()

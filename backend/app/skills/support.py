@@ -29,7 +29,7 @@ class SupportSkill:
     def __init__(self, support_agent: SupportAgent | None = None) -> None:
         self.support_agent = support_agent or SupportAgent()
 
-    def run(self, context: SkillContext) -> SkillResult:
+    async def run(self, context: SkillContext) -> SkillResult:
         """Run the existing support agent through the skill interface."""
         response, structured_data = self.support_agent.respond(
             message=context.message,

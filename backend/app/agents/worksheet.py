@@ -6,6 +6,7 @@ import re
 from pydantic import ValidationError
 
 from app.llm.base import BaseLLMClient
+from app.llm.retry import ProviderError
 from app.llm.prompts import (
     build_worksheet_system_prompt,
     build_worksheet_user_prompt,
@@ -77,11 +78,18 @@ class WorksheetAgent:
                 return self._rule_based_fields(message), LLMUsage(
                     used=False,
                     fallback_used=True,
+                    error_category="INVALID_JSON",
                 )
-            except Exception:
+            except Exception as exc:
+                category = (
+                    exc.category.value
+                    if isinstance(exc, ProviderError)
+                    else "TRANSIENT_PROVIDER_ERROR"
+                )
                 return self._rule_based_fields(message), LLMUsage(
                     used=False,
                     fallback_used=True,
+                    error_category=category,
                 )
         return self._rule_based_fields(message), LLMUsage()
 

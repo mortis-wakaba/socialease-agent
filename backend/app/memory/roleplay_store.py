@@ -10,9 +10,11 @@ from app.db.repositories import (
 from app.models_roleplay import (
     RoleplayGuidance,
     RoleplayMessage,
+    RoleplayMessageFeatures,
     RoleplayMessageRole,
     RoleplayScenario,
     RoleplaySession,
+    RoleplaySessionStatus,
 )
 
 
@@ -54,12 +56,17 @@ class RoleplaySessionStore:
         """Return a session only if it belongs to the user."""
         return self.repository.get_for_user(session_id, user_id)
 
+    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]:
+        """Return recent sessions for one user."""
+        return self.repository.list_for_user(user_id=user_id, limit=limit)
+
     def append_message(
         self,
         session_id: str,
         user_id: str,
         role: RoleplayMessageRole,
         content: str,
+        features: RoleplayMessageFeatures | None = None,
     ) -> RoleplaySession | None:
         """Append a message and return the updated session."""
         now = datetime.now(timezone.utc)
@@ -70,8 +77,32 @@ class RoleplaySessionStore:
             update={
                 "messages": [
                     *session.messages,
-                    RoleplayMessage(role=role, content=content, created_at=now),
+                    RoleplayMessage(
+                        role=role,
+                        content=content,
+                        created_at=now,
+                        features=features,
+                    ),
                 ],
+                "updated_at": now,
+            }
+        )
+        return self.repository.save(updated)
+
+    def update_status(
+        self,
+        session_id: str,
+        user_id: str,
+        status: RoleplaySessionStatus,
+    ) -> RoleplaySession | None:
+        """Update a role-play session lifecycle status."""
+        now = datetime.now(timezone.utc)
+        session = self.repository.get_for_user(session_id, user_id)
+        if session is None:
+            return None
+        updated = session.model_copy(
+            update={
+                "status": status,
                 "updated_at": now,
             }
         )

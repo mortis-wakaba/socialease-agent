@@ -29,6 +29,7 @@ class SupportAgent:
         )
         structured_data = {
             "agent": "support_agent",
+            "action": "general_support",
             "safety_boundary": (
                 "non_diagnostic_self_help_only; not a substitute for counseling"
             ),
@@ -58,14 +59,13 @@ class SupportAgent:
     @staticmethod
     def _intent_line(intent: Intent) -> str:
         if intent == Intent.ROLEPLAY_PRACTICE:
-            return "你像是想做社交情境模拟。MVP 先给出准备步骤，后续会接入多轮 role-play 节点。"
+            return "你像是想做社交情境模拟。你可以进入练习页选择场景，并在对话后查看结构化反馈。"
         if intent == Intent.CBT_WORKSHEET:
-            return "你像是想做 CBT 风格自助练习。后续会输出完整 worksheet 结构。"
+            return "你像是想做 CBT 风格自助反思。你可以使用反思表整理情境、想法、证据和下一步行动。"
         if intent == Intent.EXPOSURE_PLANNING:
-            return "你像是想做分级暴露计划。后续会生成由易到难的练习阶梯。"
+            return "你像是想做社交练习计划。你可以创建由易到难的练习阶梯，并根据反馈调整下一步。"
         if intent == Intent.CAMPUS_RESOURCE_QUERY:
-            return "你像是在找校园支持资源。后续会接入带引用的 demo RAG 知识库。"
+            return "你像是在找支持资源。资源回答会尽量给出来源引用；不知道时应说明不知道。"
         if intent == Intent.PROGRESS_REVIEW:
-            return "你像是想复盘练习进度。后续会接入练习记录和进度页。"
+            return "你像是想复盘练习进度。你可以在历史和进度页查看已保存的练习记录。"
         return "这一步先聚焦情绪支持和现实可执行的小行动。"
-

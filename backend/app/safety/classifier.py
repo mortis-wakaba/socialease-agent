@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.llm.base import BaseLLMClient
 from app.llm.factory import create_llm_client
+from app.llm.retry import ProviderError
 from app.llm.prompts import build_safety_system_prompt, build_safety_user_prompt
 from app.models import RiskLevel, SafetyResult
 from app.models_llm import LLMUsage
@@ -28,8 +29,18 @@ class RuleBasedSafetyClassifier:
         "轻生",
         "不想活",
         "不想再活",
+        "活着没意思",
+        "撑不下去",
+        "撑不住了",
+        "消失算了",
+        "永远睡过去",
+        "不想醒来",
         "结束生命",
+        "结束这一切",
+        "离开这个世界",
         "伤害自己",
+        "自残",
+        "弄死自己",
         "割腕",
         "跳楼",
         "服药自杀",
@@ -51,9 +62,12 @@ class RuleBasedSafetyClassifier:
         "威胁我",
         "霸凌",
         "跟踪我",
+        "尾随我",
         "恐吓",
         "想打人",
         "控制不住自己",
+        "未成年人被成年人约",
+        "被成年人约去见面",
         "panic attack",
         "can't breathe",
         "cannot breathe",
@@ -158,11 +172,26 @@ class HybridSafetyClassifier:
             llm_result = await self.llm_classifier.classify(message)
         except (ValueError, json.JSONDecodeError, ValidationError):
             return rule_result.model_copy(
-                update={"llm_usage": LLMUsage(fallback_used=True)}
+                update={
+                    "llm_usage": LLMUsage(
+                        fallback_used=True,
+                        error_category="INVALID_JSON",
+                    )
+                }
             )
-        except Exception:
+        except Exception as exc:
+            category = (
+                exc.category.value
+                if isinstance(exc, ProviderError)
+                else "TRANSIENT_PROVIDER_ERROR"
+            )
             return rule_result.model_copy(
-                update={"llm_usage": LLMUsage(fallback_used=True)}
+                update={
+                    "llm_usage": LLMUsage(
+                        fallback_used=True,
+                        error_category=category,
+                    )
+                }
             )
         if self.risk_rank[llm_result.risk_level] > self.risk_rank[rule_result.risk_level]:
             return llm_result

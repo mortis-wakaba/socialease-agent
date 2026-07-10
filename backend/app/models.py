@@ -55,18 +55,50 @@ class ChatRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class TraceFieldPolicy(BaseModel):
+    """Privacy policy outcome for one trace field."""
+
+    field: str
+    persistence_kind: str
+    minimized: bool = False
+    summarized: bool = False
+    policy: str = "default"
+    redacted_types: list[str] = Field(default_factory=list)
+    original_length: int = 0
+    persisted_length: int = 0
+
+
+class TracePrivacySummary(BaseModel):
+    """Product-safe trace privacy metadata."""
+
+    trace_layer: str = "product_safe"
+    raw_input_retained: bool = False
+    raw_output_retained: bool = False
+    fields: list[TraceFieldPolicy] = Field(default_factory=list)
+
+
 class TraceRecord(BaseModel):
     """Trace of one agent workflow run."""
 
     run_id: str
+    request_id: str | None = None
     user_id: str
+    session_id: str | None = None
+    intervention_plan_id: str | None = None
     input: str
     safety_result: SafetyResult
     intent_result: IntentResult
+    selected_skill: str | None = None
     selected_agent: str
+    action: str | None = None
+    permission_action: str | None = None
+    permission_reason: str | None = None
     output: str
+    product_safe: bool = True
+    privacy_summary: TracePrivacySummary = Field(default_factory=TracePrivacySummary)
     latency_ms: float
     errors: list[str] = Field(default_factory=list)
+    error_categories: list[str] = Field(default_factory=list)
     created_at: datetime
 
 
