@@ -1,0 +1,53 @@
+scripts/backup_database.sh
+  s_46966c272b0b84::t_3c5dd4d0df505f 1-33
+scripts/deployment_smoke_check.py
+  s_46966c272b0b84::t_3b415c774a5899 1-123
+scripts/restore_database.sh
+  s_46966c272b0b84::t_dad6e22c747d01 1-35
+scripts/restore_drill.sh
+  s_46966c272b0b84::t_daa151a305f246 1-51
+.env.example
+  s_46966c272b0b84::t_716f082a74fa57 1-79
+.env.production.example
+  s_46966c272b0b84::t_5fac32097d6736 1-71
+.env.staging.example
+  s_46966c272b0b84::t_c9f414b6409e5a 1-69
+.github/workflows/ci.yml
+  s_46966c272b0b84::t_7d0a5142dc4b76 1-158
+Dockerfile.backend
+  s_46966c272b0b84::t_f5a8706ff30a40 12-13,23
+Dockerfile.frontend
+  s_46966c272b0b84::t_62ad94745ddc45 6-10,12-16,29-33,35-39
+Makefile
+  s_46966c272b0b84::t_88b65cbd8a8667 1-70
+deploy/nginx/templates/socialease.conf.template
+  s_46966c272b0b84::t_68a7940b3b7d9e 1-59
+docker-compose.prod.yml
+  s_46966c272b0b84::t_c4228160767229 1-89
+docker-compose.yml
+  s_46966c272b0b84::t_d2780b8ccb17fc 2-18,31-32,38,66
+scripts/e2e_smoke.sh
+  s_46966c272b0b84::t_a3618514162a20 1-89
+scripts/monitor_alerts.py
+  s_46966c272b0b84::t_ce5258e00cf02e 1-173
+scripts/socialease-alerts.cron.example
+  s_46966c272b0b84::t_6a7638ebe636e5 1-15
+scripts/socialease-backup.cron.example
+  s_46966c272b0b84::t_b065837ab5b445 1-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9a3c0d0e8f3d557723799cb72dc03294636e66e9",
+  "prompts": {},
+  "sessions": {
+    "s_46966c272b0b84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de80a-ff90-7321-ab6c-a24ba9ec9924",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
