@@ -1,9 +1,16 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api";
-import { DEMO_USER_ID } from "@/lib/constants";
+import { currentUserId } from "@/lib/auth";
+import { showDiagnostics } from "@/lib/diagnostics";
+import { getOnboardingState } from "@/lib/onboarding";
+import { useRequireAuth } from "@/lib/use-require-auth";
 import type { ChatResponse } from "@/lib/types";
+import { AuthGuard } from "@/components/auth-guard";
+import { HarnessActionCard } from "@/components/harness-action-card";
+import { PausePracticePanel } from "@/components/pause-practice-panel";
 import {
   Badge,
   Button,
@@ -20,55 +27,177 @@ type ChatMessage = {
   role: "user" | "agent";
   content: string;
   result?: ChatResponse;
+  sourceRequest?: {
+    message: string;
+    context: Record<string, unknown>;
+  };
 };
 
+const SHOW_DIAGNOSTICS = showDiagnostics();
+
 export default function ChatPage() {
+  const auth = useRequireAuth();
   const [input, setInput] = useState("我想模拟课堂发言，怕自己说不清楚");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [latest, setLatest] = useState<ChatResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [approvingProtocolId, setApprovingProtocolId] = useState<string | null>(null);
+  const [onboardingDone, setOnboardingDone] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
+
+  useEffect(() => {
+    if (!auth.ready || !auth.authenticated || !auth.userId) {
+      return;
+    }
+    async function refreshOnboarding() {
+      try {
+        const result = await api.getOnboardingProfile(auth.userId as string);
+        setOnboardingDone(result.onboarding_profile.boundary_acknowledged);
+      } catch {
+        setOnboardingDone(Boolean(getOnboardingState()?.completed));
+      }
+    }
+    function handleOnboardingChanged() {
+      void refreshOnboarding();
+    }
+    void refreshOnboarding();
+    window.addEventListener("socialease:onboarding", handleOnboardingChanged);
+    return () =>
+      window.removeEventListener("socialease:onboarding", handleOnboardingChanged);
+  }, [auth.ready, auth.authenticated, auth.userId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = input.trim();
     if (!trimmed) {
-      setError("Please enter a message before sending.");
+      setError("发送前请先输入一段内容。");
       return;
     }
+    const sourceRequest = { message: trimmed, context: {} };
+    setMessages((items) => [...items, { role: "user", content: trimmed }]);
+    await sendChatRequest(sourceRequest);
+  }
+
+  async function sendChatRequest(sourceRequest: {
+    message: string;
+    context: Record<string, unknown>;
+  }) {
     setLoading(true);
     setError(null);
-    setMessages((items) => [...items, { role: "user", content: trimmed }]);
-
+    setRetryAction(null);
     try {
-      const result = await api.chat(DEMO_USER_ID, trimmed);
+      const result = await api.chat(currentUserId(), sourceRequest.message, sourceRequest.context);
       setLatest(result);
       setMessages((items) => [
         ...items,
-        { role: "agent", content: result.response, result }
+        { role: "agent", content: result.response, result, sourceRequest }
       ]);
       setInput("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed");
+      setError(err instanceof Error ? err.message : "请求失败");
+      setRetryAction({
+        label: "重试发送",
+        run: () => {
+          void sendChatRequest(sourceRequest);
+        }
+      });
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleApproveConsent(
+    protocolId: string,
+    sourceRequest: { message: string; context: Record<string, unknown> }
+  ) {
+    setApprovingProtocolId(protocolId);
+    setError(null);
+    setRetryAction(null);
+    try {
+      const userId = currentUserId();
+      await api.respondToProtocol(protocolId, userId, true);
+      setMessages((items) => [
+        ...items,
+        { role: "user", content: "同意继续这个练习。" }
+      ]);
+      const result = await api.chat(userId, sourceRequest.message, {
+        ...sourceRequest.context,
+        protocol_id: protocolId
+      });
+      setLatest(result);
+      setMessages((items) => [
+        ...items,
+        { role: "agent", content: result.response, result, sourceRequest }
+      ]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法批准同意");
+      setRetryAction({
+        label: "重试同意",
+        run: () => {
+          void handleApproveConsent(protocolId, sourceRequest);
+        }
+      });
+    } finally {
+      setApprovingProtocolId(null);
+    }
+  }
+
+  async function handleRejectConsent(protocolId: string) {
+    setApprovingProtocolId(protocolId);
+    setError(null);
+    setRetryAction(null);
+    try {
+      await api.respondToProtocol(protocolId, currentUserId(), false);
+      setMessages((items) => [
+        ...items,
+        {
+          role: "agent",
+          content: "已取消本次练习。你仍然可以继续做支持性整理或选择更低强度的练习。"
+        }
+      ]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法取消同意");
+      setRetryAction({
+        label: "重试取消",
+        run: () => {
+          void handleRejectConsent(protocolId);
+        }
+      });
+    } finally {
+      setApprovingProtocolId(null);
+    }
+  }
+
   return (
-    <>
+    <AuthGuard>
       <PageHeader
-        title="Chat"
-        description="Run the core Safety → Router → Agent → Trace workflow from a simple chat surface."
+        title="安全对话"
+        description="描述一个社交压力场景。系统会先做安全判断，再决定进入支持、练习、反思或资源导航。"
       />
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        <Panel title="Conversation">
+        <Panel title="对话">
           <div className="mb-4 min-h-[360px] space-y-3 rounded-md border border-line bg-panel p-3">
             {messages.length === 0 ? (
-              <EmptyState
-                title="No conversation yet"
-                description="Send a low-risk social-stress message to inspect safety, routing, agent output, and trace metadata."
-              />
+              onboardingDone ? (
+                <EmptyState
+                  title="还没有对话"
+                  description="发送一段社交压力描述后，这里会显示系统回复和下一步入口。"
+                />
+              ) : (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+                  <div className="font-medium">建议先完成开始前设置</div>
+                  <p className="mt-1">
+                    用一分钟选择练习目标、偏好场景和当前强度。你也可以跳过，直接发送消息。
+                  </p>
+                  <Link
+                    href="/onboarding"
+                    className="mt-3 inline-flex rounded-md border border-amber-300 bg-white px-3 py-2 font-medium text-amber-900 hover:border-brand"
+                  >
+                    去设置
+                  </Link>
+                </div>
+              )
             ) : (
               messages.map((message, index) => (
                 <div
@@ -80,11 +209,27 @@ export default function ChatPage() {
                   }`}
                 >
                   <div className="mb-1 text-xs font-medium uppercase text-slate-500">
-                    {message.role}
+                    {message.role === "user" ? "你" : "SocialEase"}
                   </div>
                   <p className="whitespace-pre-wrap text-sm leading-6 text-slate-800">
                     {message.content}
                   </p>
+                  {message.result ? (
+                    <HarnessActionCard
+                      result={message.result}
+                      approving={
+                        approvingProtocolId ===
+                        readString(message.result.structured_data.protocol_id)
+                      }
+                      onApproveConsent={
+                        message.sourceRequest
+                          ? (protocolId) =>
+                              handleApproveConsent(protocolId, message.sourceRequest!)
+                          : undefined
+                      }
+                      onRejectConsent={handleRejectConsent}
+                    />
+                  ) : null}
                 </div>
               ))
             )}
@@ -96,55 +241,121 @@ export default function ChatPage() {
               placeholder="输入一个社交压力场景..."
             />
             <div className="flex items-center justify-between gap-3">
-              <ErrorBox message={error} />
+              <ErrorBox
+                message={error}
+                onRetry={retryAction?.run}
+                retrying={loading || Boolean(approvingProtocolId)}
+                retryLabel={retryAction?.label}
+              />
               <Button type="submit" disabled={loading}>
-                {loading ? "Sending..." : "Send"}
+                {loading ? "发送中..." : "发送"}
               </Button>
             </div>
           </form>
         </Panel>
 
-        <Panel title="Run Status">
+        <Panel title={SHOW_DIAGNOSTICS ? "开发诊断" : "练习状态"}>
           {latest ? (
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <Badge tone={riskTone(latest.risk_level)}>
-                  risk: {latest.risk_level}
-                </Badge>
-                <Badge tone="info">intent: {latest.intent}</Badge>
-                <LLMUsageBadge usage={latest.trace.safety_result.llm_usage} />
-                <LLMUsageBadge usage={latest.trace.intent_result.llm_usage} />
-              </div>
-              <div>
-                <div className="text-xs font-medium uppercase text-slate-500">run_id</div>
-                <p className="break-all rounded-md border border-line bg-panel p-2 text-xs text-slate-700">
-                  {latest.run_id}
-                </p>
-              </div>
-              <div className="rounded-md border border-line p-3 text-sm">
-                <div className="font-medium text-ink">Safety reason</div>
-                <div className="mt-1 text-slate-700">{latest.trace.safety_result.reason}</div>
-              </div>
-              <div className="rounded-md border border-line p-3 text-sm">
-                <div className="font-medium text-ink">Router reason</div>
-                <div className="mt-1 text-slate-700">{latest.trace.intent_result.reason}</div>
-              </div>
-              <div className="rounded-md border border-line p-3 text-sm">
-                <div className="font-medium text-ink">Selected agent</div>
-                <div className="mt-1 text-slate-700">{latest.trace.selected_agent}</div>
-              </div>
-              <div className="rounded-md border border-line p-3 text-sm">
-                <div className="font-medium text-ink">Latency</div>
-                <div className="mt-1 text-slate-700">
-                  {latest.trace.latency_ms.toFixed(2)} ms
-                </div>
-              </div>
-            </div>
+            SHOW_DIAGNOSTICS ? (
+              <DeveloperDiagnosticsPanel latest={latest} />
+            ) : (
+              <ProductStatusPanel latest={latest} />
+            )
           ) : (
-            <p className="text-sm text-slate-500">No run yet.</p>
+            <p className="text-sm text-slate-500">还没有运行记录。</p>
           )}
         </Panel>
+        <PausePracticePanel interventionPlanId={latest?.trace.intervention_plan_id ?? null} />
       </div>
-    </>
+    </AuthGuard>
   );
 }
+
+function ProductStatusPanel({ latest }: { latest: ChatResponse }) {
+  const action = readString(latest.structured_data.action);
+  const isCrisis = latest.risk_level === "crisis" || action === "crisis_escalation";
+  const status = isCrisis
+    ? "已暂停普通练习"
+    : action === "consent_required"
+      ? "等待你确认是否继续"
+      : action === "roleplay_started"
+        ? "已准备好角色扮演练习"
+        : action === "worksheet_created"
+          ? "已生成结构化反思"
+          : action === "exposure_plan_created"
+            ? "已生成社交练习计划"
+            : "可以继续对话或选择一个低强度练习";
+
+  return (
+    <div className="space-y-3 text-sm leading-6 text-slate-700">
+      <div className="rounded-md border border-line bg-panel p-3">
+        <div className="font-medium text-ink">{status}</div>
+        <p className="mt-1">
+          如果你感觉不适，可以先暂停；需要现实支持时，优先联系可信任的人、学校心理中心或当地紧急服务。
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href="/history"
+          className="rounded-md border border-line px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand hover:text-brand"
+        >
+          查看历史
+        </Link>
+        <Link
+          href="/support"
+          className="rounded-md border border-line px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand hover:text-brand"
+        >
+          支持资源
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function DeveloperDiagnosticsPanel({ latest }: { latest: ChatResponse }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <Badge tone={riskTone(latest.risk_level)}>
+          风险: {latest.risk_level}
+        </Badge>
+        <Badge tone="info">意图: {latest.intent}</Badge>
+        <LLMUsageBadge usage={latest.trace.safety_result.llm_usage} />
+        <LLMUsageBadge usage={latest.trace.intent_result.llm_usage} />
+      </div>
+      <div>
+        <div className="text-xs font-medium uppercase text-slate-500">run_id</div>
+        <p className="break-all rounded-md border border-line bg-panel p-2 text-xs text-slate-700">
+          {latest.run_id}
+        </p>
+      </div>
+      <div className="rounded-md border border-line p-3 text-sm">
+        <div className="font-medium text-ink">安全判断原因</div>
+        <div className="mt-1 text-slate-700">{latest.trace.safety_result.reason}</div>
+      </div>
+      <div className="rounded-md border border-line p-3 text-sm">
+        <div className="font-medium text-ink">路由原因</div>
+        <div className="mt-1 text-slate-700">{latest.trace.intent_result.reason}</div>
+      </div>
+      <div className="rounded-md border border-line p-3 text-sm">
+        <div className="font-medium text-ink">选择的 Agent</div>
+        <div className="mt-1 text-slate-700">{latest.trace.selected_agent}</div>
+      </div>
+      <div className="rounded-md border border-line p-3 text-sm">
+        <div className="font-medium text-ink">延迟</div>
+        <div className="mt-1 text-slate-700">
+          {latest.trace.latency_ms.toFixed(2)} ms
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
+type RetryAction = {
+  label: string;
+  run: () => void;
+};

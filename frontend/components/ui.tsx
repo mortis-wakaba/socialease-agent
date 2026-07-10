@@ -133,13 +133,33 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
-export function ErrorBox({ message }: { message: string | null }) {
+export function ErrorBox({
+  message,
+  onRetry,
+  retrying,
+  retryLabel = "重试"
+}: {
+  message: string | null;
+  onRetry?: () => void;
+  retrying?: boolean;
+  retryLabel?: string;
+}) {
   if (!message) {
     return null;
   }
   return (
-    <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-      {message}
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+      <span>{message}</span>
+      {onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          className="rounded-md border border-rose-200 bg-white px-2 py-1 text-xs font-medium text-rose-700 hover:border-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {retrying ? "重试中..." : retryLabel}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -167,7 +187,11 @@ export function LLMUsageBadge({ usage }: { usage?: LLMUsage }) {
     return <Badge tone="good">LLM used</Badge>;
   }
   if (usage.fallback_used) {
-    return <Badge tone="warn">LLM fallback</Badge>;
+    return (
+      <Badge tone="warn">
+        LLM fallback{usage.error_category ? `: ${usage.error_category}` : ""}
+      </Badge>
+    );
   }
   return <Badge tone="neutral">deterministic</Badge>;
 }
@@ -223,13 +247,13 @@ function citationTone(sourceType: Citation["source_type"]) {
 
 function citationLabel(sourceType: Citation["source_type"]) {
   if (sourceType === "external_public") {
-    return "External public";
+    return "公开来源";
   }
   if (sourceType === "demo") {
-    return "Demo";
+    return "样例资料";
   }
   if (sourceType === "project_authored") {
-    return "Project authored";
+    return "项目编写资料";
   }
   return sourceType;
 }

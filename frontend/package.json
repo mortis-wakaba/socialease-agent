@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --config playwright.smoke.config.ts",
+    "test:e2e:production-auth": "playwright test --config playwright.production-auth.config.ts"
   },
   "dependencies": {
     "next": "^14.2.0",
@@ -14,6 +17,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^20.11.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
@@ -25,4 +29,3 @@
     "typescript": "^5.4.0"
   }
 }
-
