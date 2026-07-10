@@ -1,0 +1,299 @@
+backend/alembic.ini
+  s_46966c272b0b84::t_b4ac1909bb2abb 1-42
+backend/app/agents/roleplay.py
+  s_46966c272b0b84::t_4c9fecdb4a0b47 8,12-14,79,100-105,109,149-197,216,218-282,286-390
+backend/app/agents/support.py
+  s_46966c272b0b84::t_e9b08598434c77 32,62,64,66,68,70
+backend/app/agents/worksheet.py
+  s_46966c272b0b84::t_062e42c53e28ec 9,81-87,92
+backend/app/api/auth.py
+  s_46966c272b0b84::t_9ff63c40f3380a 1-206
+backend/app/api/exposure.py
+  s_46966c272b0b84::t_ee697c46f59b5a 3,5-11,19-26,34-35,38-39,41-45,47-54,60-61,64-84,87-97,102-105,107-108
+backend/app/api/harness.py
+  s_46966c272b0b84::t_4a5b7ef98f3ca3 5,7-8,17-18,24-26,28,51,54,57,64-65,83,85-87,90-113
+backend/app/api/intervention_plans.py
+  s_46966c272b0b84::t_07200e69c06540 1-64
+backend/app/api/knowledge.py
+  s_46966c272b0b84::t_1e880cd5733995 3,5-6,8,13-17,23,26-27
+backend/app/api/profile.py
+  s_46966c272b0b84::t_10897f7bda856f 3,5-39,42-43,47-50,52-232,234
+backend/app/api/protocols.py
+  s_46966c272b0b84::t_9d86339cbfd820 1-27
+backend/app/api/roleplay.py
+  s_46966c272b0b84::t_2eacb16d8bfd6c 3-10,16-20,24-31,34-59,63-67,69-70,72-76,78-82,84,90,93-98,100-101,104-115,117-118,121-135,141,144-149,151-152
+backend/app/api/routes.py
+  s_46966c272b0b84::t_0aa52fa991bf23 1,3,5,8,11,15-22,25,29-30,33,36,43-46,48-51,55-58,60,64
+backend/app/api/support.py
+  s_46966c272b0b84::t_96e0a544839de6 6,16
+backend/app/api/worksheet.py
+  s_46966c272b0b84::t_64885f6890da3e 3,5-10,16-17,23-26,28-29,31,35-38,40-44
+backend/app/auth/__init__.py
+  s_46966c272b0b84::t_c2701ec3daef94 1-2
+backend/app/auth/context.py
+  s_46966c272b0b84::t_2e3f21472b1573 1-22
+backend/app/auth/cookies.py
+  s_46966c272b0b84::t_10dc4380780646 1-84
+backend/app/auth/csrf.py
+  s_46966c272b0b84::t_c45a5868b8a1df 1-102
+backend/app/auth/dependencies.py
+  s_46966c272b0b84::t_41ec210dad2362 1-141
+backend/app/auth/rate_limit.py
+  s_46966c272b0b84::t_a4d8baa8da60c0 1-90
+backend/app/auth/tokens.py
+  s_46966c272b0b84::t_b2b039eeeb71d8 1-158
+backend/app/db/account_repositories.py
+  s_46966c272b0b84::t_1a1d37e6d44075 1-434
+backend/app/db/capabilities.py
+  s_46966c272b0b84::t_8de4782ed7390e 1-100
+backend/app/db/config.py
+  s_46966c272b0b84::t_4d4958ae5f8c7c 1-35
+backend/app/db/engine.py
+  s_46966c272b0b84::t_c22864fedc01a8 1,5,8,10,15-26,28-30
+backend/app/db/factory.py
+  s_46966c272b0b84::t_7e3ada9f7b2342 1-190
+backend/app/db/migration_check.py
+  s_46966c272b0b84::t_d6761d7e23d2ea 1-117
+backend/app/db/models.py
+  s_46966c272b0b84::t_7175f6f402d8a7 38-112,118-134
+backend/app/db/postgres/__init__.py
+  s_46966c272b0b84::t_1387d373565e96 1-7
+backend/app/db/postgres/exposure_repository.py
+  s_46966c272b0b84::t_97fd13908fab43 1-133
+backend/app/db/postgres/intervention_plan_repository.py
+  s_46966c272b0b84::t_0ee9a71ffc8975 1-145
+backend/app/db/postgres/memory_settings_repository.py
+  s_46966c272b0b84::t_fe1afdb69e8399 1-67
+backend/app/db/postgres/metrics_repository.py
+  s_46966c272b0b84::t_e38a6cab3d4c92 1-105
+backend/app/db/postgres/protocol_repository.py
+  s_46966c272b0b84::t_5a5ea32d8b5ac1 1-449
+backend/app/db/postgres/roleplay_repository.py
+  s_46966c272b0b84::t_5ee8eaaa93545f 1-73
+backend/app/db/postgres/session_review_repository.py
+  s_46966c272b0b84::t_39f7a27a3530f6 1-59
+backend/app/db/postgres/trace_repository.py
+  s_46966c272b0b84::t_24ed4a193b7c6e 1-84
+backend/app/db/postgres/user_profile_repository.py
+  s_46966c272b0b84::t_cce146da66d998 1-64
+backend/app/db/postgres/worksheet_repository.py
+  s_46966c272b0b84::t_c4fc890d52da64 1-48
+backend/app/db/providers.py
+  s_46966c272b0b84::t_ed159e159225e5 1-28
+backend/app/db/repositories.py
+  s_46966c272b0b84::t_56cb4c743d5183 5,7,12,17-22,36,51,61-67,72,101,120-131,137,157,178-185,203,245-279,300-302,317-319,323-339
+backend/app/db/session.py
+  s_46966c272b0b84::t_bd0c5b3dd87480 11-89
+backend/app/evals/data/e2e_workflow.jsonl
+  s_46966c272b0b84::t_6a7d9fa74d32eb 1-3
+backend/app/evals/data/product_boundaries.jsonl
+  s_46966c272b0b84::t_cac0b840b38fe0 1-113
+backend/app/evals/data/product_boundaries_phase6.jsonl
+  s_46966c272b0b84::t_89fc9bd8de4b20 1-97
+backend/app/evals/data/safety_red_team.jsonl
+  s_46966c272b0b84::t_686037100d6966 7-9
+backend/app/evals/gate.py
+  s_46966c272b0b84::t_3a4246fb427515 1-51
+backend/app/evals/loader.py
+  s_46966c272b0b84::t_0b22fa7286e525 12,66-73
+backend/app/evals/metrics.py
+  s_b59e6dc46421cc::t_54ab7cf5ea6235 10-27
+backend/app/evals/models.py
+  s_46966c272b0b84::t_a77a98f64afc41 7-8,80-88,93,105-106,111-148
+backend/app/evals/run.py
+  s_46966c272b0b84::t_d955da4049b100 3-10,17,24-31,34,36-39,51-52,56-60,67,70-90,92-111,114-134,139-160,165-166,171-172,174-180,182-220,253,259-295,308-342,349-350,356-361,363,369-407,409-437,443-444,449-487,499-500,505-530,542-857,874-877
+backend/app/jobs/__init__.py
+  s_46966c272b0b84::t_06bd358dc420b1 1
+backend/app/jobs/cleanup_scheduler.py
+  s_46966c272b0b84::t_49d024fbadef77 1-187
+backend/app/knowledge/chunker.py
+  s_b59e6dc46421cc::t_0a676a3585f216 1-3,8-26,28,30-33,39,41-43,47-48,51-66,69-89
+backend/app/knowledge/formatter.py
+  s_b59e6dc46421cc::t_ba4e79721b6ee0 1,3-5,13-31,38,47,57-58,60-61,63-81
+backend/app/knowledge/retriever.py
+  s_b59e6dc46421cc::t_62225057576ad6 1,3,5,10-11,13-21,29-32,34-45,47-57,63-74,87-88,90-91
+backend/app/knowledge/service.py
+  s_b59e6dc46421cc::t_86d6b7bd40103e 1,6,17,22,30-35,41
+backend/app/llm/factory.py
+  s_46966c272b0b84::t_e229684753ab26 8-11,24-29,42-56,74-85,87-103
+backend/app/llm/openai_compatible.py
+  s_46966c272b0b84::t_9a876c7aa0fce2 5-13,26-28,35-39,62-68,71-77,85-101,104,108
+backend/app/llm/prompts.py
+  s_46966c272b0b84::t_6a37423bbb9cf9 7-9,47-48,62-63
+backend/app/llm/retry.py
+  s_46966c272b0b84::t_050f333cbc5d81 1-205
+backend/app/main.py
+  s_46966c272b0b84::t_b052ad98a51749 3-7,10-19,31-34,38-43,53-73,78-84
+backend/app/memory/context_builder.py
+  s_46966c272b0b84::t_5e226f09a00446 1-100
+backend/app/memory/exposure_store.py
+  s_46966c272b0b84::t_f8556a05ed5c9d 50-53
+backend/app/memory/intervention_plan_store.py
+  s_46966c272b0b84::t_86bf00c6f7ff55 1-115
+backend/app/memory/roleplay_store.py
+  s_46966c272b0b84::t_b88d8e5e46892e 13,17,59-62,69,80-85,92-110
+backend/app/memory/settings_payload.py
+  s_46966c272b0b84::t_364bfd3ee47200 1-220
+backend/app/memory/settings_store.py
+  s_46966c272b0b84::t_524958a2dff189 1-104
+backend/app/middleware.py
+  s_46966c272b0b84::t_e060fba6d1bc20 1-24
+backend/app/models.py
+  s_46966c272b0b84::t_4905fe42fcedf6 58-79,84,86-87,91,93-95,97-98,101
+backend/app/models_auth.py
+  s_46966c272b0b84::t_6ff42b67adbe7a 1-90
+backend/app/models_exposure.py
+  s_46966c272b0b84::t_aa0aa602ef2d57 9,81-82,105-107,115-116
+backend/app/models_harness.py
+  s_46966c272b0b84::t_648286f138ab56 40-41,43-44,46,48-60
+backend/app/models_intervention.py
+  s_46966c272b0b84::t_ab73b4deb71c1a 1-83
+backend/app/models_knowledge.py
+  s_b59e6dc46421cc::t_45f95fa5e879a5 54-69,71,77
+backend/app/models_llm.py
+  s_46966c272b0b84::t_ce384c77f7314a 11
+backend/app/models_memory.py
+  s_46966c272b0b84::t_c28a627412e32c 3-4,7-8,11-12,27-145,151-152,154-165
+backend/app/models_protocols.py
+  s_46966c272b0b84::t_944b1220da1678 1-55
+backend/app/models_roleplay.py
+  s_46966c272b0b84::t_590d020a209520 35-68,75,96,118-124,143-170,185,192-209
+backend/app/models_session_review.py
+  s_46966c272b0b84::t_265924edb9b2ca 1-52
+backend/app/models_support.py
+  s_b59e6dc46421cc::t_70034767a54751 6,22
+backend/app/observability/__init__.py
+  s_46966c272b0b84::t_0748b854621c9b 1
+backend/app/observability/metrics.py
+  s_46966c272b0b84::t_d63460cd8bd1df 1-373
+backend/app/observability/readiness.py
+  s_46966c272b0b84::t_1c4eea4d741456 1-177
+backend/app/observability/request_logging.py
+  s_46966c272b0b84::t_4fb708dfd5b18b 1-85
+backend/app/observability/runtime_events.py
+  s_46966c272b0b84::t_9b8f897322b106 1-75
+backend/app/privacy/__init__.py
+  s_46966c272b0b84::t_a242cdf4ae9897 1-2
+backend/app/privacy/persistence_gate.py
+  s_46966c272b0b84::t_cab4f6ee944eea 1-135
+backend/app/privacy/policy.py
+  s_46966c272b0b84::t_7707220421d4f7 1-83
+backend/app/privacy/redaction.py
+  s_46966c272b0b84::t_f361cd843d6ddf 1-70
+backend/app/protocols/__init__.py
+  s_46966c272b0b84::t_763cfd17304d42 1-2
+backend/app/protocols/service.py
+  s_46966c272b0b84::t_8cc5f9ec495442 1-225
+backend/app/protocols/store.py
+  s_46966c272b0b84::t_89ec1267f4d662 1-173
+backend/app/rate_limit.py
+  s_46966c272b0b84::t_ccc91a1e9eafaf 1-141
+backend/app/request_context.py
+  s_46966c272b0b84::t_f5d8d628bd03ba 1-23
+backend/app/safety/actions.py
+  s_46966c272b0b84::t_76efcddd94be6d 1-16
+backend/app/safety/classifier.py
+  s_46966c272b0b84::t_65f39b93ae1829 10,32-37,39-40,42-43,65,69-70,175-186,189-194
+backend/app/safety/crisis.py
+  s_46966c272b0b84::t_023125e18f1450 1-21
+backend/app/safety/direct_actions.py
+  s_46966c272b0b84::t_bc4231d9329fe0 1-131
+backend/app/safety/permissions.py
+  s_46966c272b0b84::t_2abfba15bbd1eb 5-6,8,15-17,21-33,37-42,44-128
+backend/app/services/__init__.py
+  s_46966c272b0b84::t_85163e816d99e9 1-2
+backend/app/services/account_service.py
+  s_46966c272b0b84::t_46fc8bacc5abf3 1-288
+backend/app/services/errors.py
+  s_46966c272b0b84::t_bb4b98f64cb071 1-9
+backend/app/services/exposure_service.py
+  s_46966c272b0b84::t_6e6da63975ed73 1-236
+backend/app/services/intervention_plan_service.py
+  s_46966c272b0b84::t_475c909b90c57e 1-330
+backend/app/services/memory_privacy_service.py
+  s_46966c272b0b84::t_eef9873dac78a9 1-272
+backend/app/services/retention_service.py
+  s_46966c272b0b84::t_bf8933532c9f04 1-138
+backend/app/services/roleplay_service.py
+  s_46966c272b0b84::t_75aa5d5608810b 1-363
+backend/app/services/support_resource_service.py
+  s_46966c272b0b84::t_04a58b909ffb15 1-54
+backend/app/services/worksheet_service.py
+  s_46966c272b0b84::t_14e6bdbadd4b73 1-123
+backend/app/skills/base.py
+  s_46966c272b0b84::t_9f6a83ec8e2238 7-8,15-49,78
+backend/app/skills/crisis.py
+  s_46966c272b0b84::t_46121e3b454987 7,23,34,37
+backend/app/skills/exposure.py
+  s_46966c272b0b84::t_1b8d220bc51206 1-126
+backend/app/skills/registry.py
+  s_46966c272b0b84::t_2ed37ee84252ab 8-9,11-12,19-29,43-55
+backend/app/skills/roleplay.py
+  s_46966c272b0b84::t_2040b6e35011d9 1-129
+backend/app/skills/support.py
+  s_46966c272b0b84::t_7f6d1c4b6067d9 32
+backend/app/skills/support_rag.py
+  s_46966c272b0b84::t_09d409a23c12b8 1-46
+backend/app/skills/worksheet.py
+  s_46966c272b0b84::t_707b1455a34e92 1-52
+backend/app/tracing/logger.py
+  s_46966c272b0b84::t_5d6a25d1d73c8c 3-4,12
+backend/app/workflow/context.py
+  s_46966c272b0b84::t_27da1b7a6fa647 1-27
+backend/app/workflow/default_hooks.py
+  s_46966c272b0b84::t_6776e84a4c0ee3 1-87
+backend/app/workflow/engine.py
+  s_46966c272b0b84::t_3c404121af1762 5-6,11-13,20-22,26-27,30-43,58-60,68-73,80-97,100-102,104-115,117-119,121-125,133,136-173,176-196,198-199,201-226,228-238,240-242,247-336,339-356,359,361-363,366,368-373,376,381-384,391-395,407-726
+backend/app/workflow/hooks.py
+  s_46966c272b0b84::t_4376db5fb356fe 3,7-8,10-19,37-54,59-67,72-75,89-104,108-115,118-120
+backend/app/workflow/recovery.py
+  s_46966c272b0b84::t_093c56cfbcb7ed 1-60
+backend/app/workflow/router.py
+  s_46966c272b0b84::t_44b6d039da49bc 9,57-65,67-79,85-103,173-179,210-213
+backend/data/knowledge_base/product_rubrics/project_authored/roleplay_feedback_rubric.md
+  s_46966c272b0b84::t_b236d9284c3a25 21-27
+backend/migrations/env.py
+  s_46966c272b0b84::t_b368023bae4f09 1-52
+backend/migrations/script.py.mako
+  s_46966c272b0b84::t_19ce382944973c 1-24
+backend/migrations/versions/0001_initial_product_tables.py
+  s_46966c272b0b84::t_0a2ce0a52ce0cd 1-116
+backend/migrations/versions/0002_add_harness_metric_events.py
+  s_46966c272b0b84::t_7c7643b4ba407f 1-57
+backend/migrations/versions/0003_add_structured_query_fields.py
+  s_46966c272b0b84::t_0a18214d92287c 1-95
+backend/migrations/versions/0004_add_runtime_metric_events.py
+  s_46966c272b0b84::t_fc162fc0524b64 1-48
+backend/migrations/versions/0005_add_account_tables.py
+  s_46966c272b0b84::t_a1dab719afd97f 1-59
+backend/migrations/versions/0006_add_session_reviews.py
+  s_46966c272b0b84::t_a844b652d4a8c4 1-41
+backend/pytest.ini
+  s_46966c272b0b84::t_eaf89c1896adf1 4-5
+backend/requirements.txt
+  s_46966c272b0b84::t_aa4d5980209b2b 6-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "36356c3f20c441860a37ddd2e70186658e31685d",
+  "prompts": {},
+  "sessions": {
+    "s_46966c272b0b84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de80a-ff90-7321-ab6c-a24ba9ec9924",
+        "model": "unknown"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_b59e6dc46421cc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e39c9-72e1-7081-ad45-a8d32322a05f",
+        "model": "unknown"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
