@@ -1,0 +1,99 @@
+frontend/package-lock.json
+  s_46966c272b0b84::t_0e7e7815751e6e 16,459-474,4184-4229
+frontend/.eslintrc.json
+  s_46966c272b0b84::t_ba8a7f0b538598 1-3
+frontend/app/chat/page.tsx
+  s_46966c272b0b84::t_91ae2639bda37a 3-4,6-9,11-13,30-33,36-37,39,44-45,47-68,74,77,79-80,82-88,90,94,98-104,110-171,173,175-176,179,182-200,212,217-232,244-249,251,257,259-263,265,268,270,273-361
+frontend/app/dashboard/page.tsx
+  s_46966c272b0b84::t_a86fa7198b3344 1-377
+frontend/app/history/page.tsx
+  s_46966c272b0b84::t_2ae92ffb1327da 1-333
+frontend/app/layout.tsx
+  s_46966c272b0b84::t_fa29321a42fa8a 4-5,22,25,28
+frontend/app/login/page.tsx
+  s_46966c272b0b84::t_08a9f45a3031b0 1-193
+frontend/app/onboarding/page.tsx
+  s_46966c272b0b84::t_95a0269de160bc 1-339
+frontend/app/page.tsx
+  s_46966c272b0b84::t_0a797511e6c3b6 1-35,38-56,58-80
+frontend/app/practice/page.tsx
+  s_46966c272b0b84::t_3a323631924097 3-12,14,17,34-35,37,49-58,60-72,75,77,79-81,84-115,117-128,134-214,218-222,225-229,232,235-237,240,244-250,261,270-281,284,286-287,289,291-338,345,347-348,352,372,385,390,394-416,421-422,428-431,433-442,444-449,455,475-491,499-503,505-515,517-523,526,531-532,538-544,546-549,551-569,571-583,587-622,625-733
+frontend/app/privacy/page.tsx
+  s_46966c272b0b84::t_82f5eb7d93b046 1-114
+frontend/app/progress/page.tsx
+  s_46966c272b0b84::t_247abafa2b3c5b 4-16,31,36-37,44-46,49-130,135,140,142-152,154,156-167,173-192,195,199,204-214,216,218-229,235-315,317,319-320,324,327,335,349,357,360,364-377,379,383-387,391-414,417-420,439-440,446,455-462,464-502,504-512,514,525,534-535,541,543-544,550,553-596
+frontend/app/settings/page.tsx
+  s_46966c272b0b84::t_50533aa2946ad8 1-686
+frontend/app/support/page.tsx
+  s_46966c272b0b84::t_2c311d5554a079 6,9-10,12,16,22,25-28,31,35-36,45,47,51,53,56,58,65-66,69,74,77-81,83,89,93-104,117-118
+frontend/app/terms/page.tsx
+  s_46966c272b0b84::t_c8a481e5550522 1-80
+frontend/app/trace/page.tsx
+  s_46966c272b0b84::t_5b0f521aa6411a 3,5-12,26,29,31,33-35,37-38,41-61,64-66,68-72,76,80-104,138-147,158-182,184-185,200-207,209,211,214-319,321-323,325-381,384-421
+frontend/app/worksheet/page.tsx
+  s_46966c272b0b84::t_af692930d56880 3,5-10,25-32,35-36,38,43,46-79,84,87-90,93,95-96,98-104,111,113-114,117,126,130-135,140-168,171,173-186,190-195,203,211,221,225,238,242-248,251,253-254,260,263-267
+frontend/components/auth-bar.tsx
+  s_46966c272b0b84::t_99a9330410541e 1-191
+frontend/components/auth-guard.tsx
+  s_46966c272b0b84::t_73a4432493728d 1-46
+frontend/components/developer-guard.tsx
+  s_46966c272b0b84::t_da2f96c2075ec7 1-46
+frontend/components/direct-consent-card.tsx
+  s_46966c272b0b84::t_63c60f2e915b14 1-42
+frontend/components/harness-action-card.tsx
+  s_46966c272b0b84::t_6a2471b6e17845 1-307
+frontend/components/main-nav.tsx
+  s_46966c272b0b84::t_619423468a886d 1-43
+frontend/components/pause-practice-panel.tsx
+  s_46966c272b0b84::t_3259e6d15ca3c2 1-114
+frontend/components/session-review-panel.tsx
+  s_46966c272b0b84::t_7a69034ce93896 1-164
+frontend/components/ui.tsx
+  s_46966c272b0b84::t_59de9a9bb200fc 136-146,151-162,190-194,250,253,256
+frontend/e2e/product-flows.spec.ts
+  s_46966c272b0b84::t_0a55d0ed86fa3f 1-1121
+frontend/e2e/production-auth.spec.ts
+  s_46966c272b0b84::t_721272469da761 1-217
+frontend/e2e/real-smoke.spec.ts
+  s_46966c272b0b84::t_a9cfc8dc8608af 1-87
+frontend/lib/api.ts
+  s_46966c272b0b84::t_09b9c0e4d44f1f 1-534
+frontend/lib/auth.ts
+  s_46966c272b0b84::t_7284580121b5d1 1-185
+frontend/lib/constants.ts
+  s_46966c272b0b84::t_250226891f243a 1-53
+frontend/lib/diagnostics.ts
+  s_46966c272b0b84::t_4652cefbd5965c 1-12
+frontend/lib/onboarding.ts
+  s_46966c272b0b84::t_2989f056ed9d90 1-51
+frontend/lib/types.ts
+  s_46966c272b0b84::t_ecbf22a5bf5047 1-537
+frontend/lib/use-developer-access.ts
+  s_46966c272b0b84::t_01623288f4c182 1-72
+frontend/lib/use-require-auth.ts
+  s_46966c272b0b84::t_23049de0a6b666 1-42
+frontend/package.json
+  s_46966c272b0b84::t_fb70c15986c15c 9-12,20
+frontend/playwright.config.ts
+  s_46966c272b0b84::t_d24c02503aca26 1-28
+frontend/playwright.production-auth.config.ts
+  s_46966c272b0b84::t_d654842e017e86 1-30
+frontend/playwright.smoke.config.ts
+  s_46966c272b0b84::t_5e71422babcc0c 1-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d5fb7cc25c1a7c1d73b209694efbcdbbf50de329",
+  "prompts": {},
+  "sessions": {
+    "s_46966c272b0b84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019de80a-ff90-7321-ab6c-a24ba9ec9924",
+        "model": "gpt-5.5"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
