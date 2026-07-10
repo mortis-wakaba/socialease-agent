@@ -47,7 +47,6 @@ flowchart LR
 - Docs index：[`docs/README.md`](docs/README.md)
 - Architecture diagram：[`docs/architecture_diagram.md`](docs/architecture_diagram.md)
 - Agent Harness 设计：[`docs/agent_harness_design.md`](docs/agent_harness_design.md)
-- Demo walkthrough：[`docs/demo_walkthrough.md`](docs/demo_walkthrough.md)
 - Deployment runbook：[`docs/deployment_runbook.md`](docs/deployment_runbook.md)
 - Benchmark report：[`docs/benchmark_report.md`](docs/benchmark_report.md)
 - Production readiness gap analysis：[`docs/production_readiness.md`](docs/production_readiness.md)

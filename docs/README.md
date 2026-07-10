@@ -6,9 +6,8 @@
 
 1. [`architecture_diagram.md`](architecture_diagram.md)：系统架构图。
 2. [`agent_harness_design.md`](agent_harness_design.md)：Agent Harness、skills、permission、memory 和 trace 设计。
-3. [`demo_walkthrough.md`](demo_walkthrough.md)：10 分钟演示路线。
-4. [`benchmark_report.md`](benchmark_report.md)：评测目标和当前基线。
-5. [`production_readiness.md`](production_readiness.md)：生产化能力和剩余差距。
+3. [`benchmark_report.md`](benchmark_report.md)：评测目标和当前基线。
+4. [`production_readiness.md`](production_readiness.md)：生产化能力和剩余差距。
 
 ## 运行和部署
 
