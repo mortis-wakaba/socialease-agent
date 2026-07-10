@@ -15,6 +15,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!frontend/lib/
+!frontend/lib/**
 lib64/
 parts/
 sdist/
@@ -50,6 +52,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+frontend/test-results/
+backend/app/evals/reports/
+frontend/playwright-report/
 
 # Translations
 *.mo
@@ -150,6 +155,9 @@ activemq-data/
 # Environments
 .env
 .envrc
+.env.local
+.env.staging
+.env.production
 .venv
 env/
 venv/
@@ -248,11 +256,24 @@ frontend/.env.production.local
 # Local database files
 *.sqlite
 *.sqlite3
+*.db
 backend/*.sqlite
 backend/*.sqlite3
 backend/*.db
 backend/data/*.sqlite
 backend/data/*.sqlite3
+
+# LaTeX build outputs
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
 
 # OS files
 .DS_Store
@@ -260,3 +281,15 @@ Thumbs.db
 
 # Private local notes
 local_notes/
+
+# Local resume templates and generated resume files
+resume_templates/
+
+# Private career materials and local planning notes
+docs/resume_project_story_zh.md
+docs/socialease_agent_interview_qa_zh.md
+docs/interview_qa.md
+docs/pilot_review_log.md
+docs/socialease-next-product-hardening-plan.md
+personal/
+private/
