@@ -9,6 +9,7 @@ from app.models_knowledge import Citation
 from app.models_roleplay import (
     RoleplayGuidance,
     RoleplayMessage,
+    RoleplayMessageFeatures,
     RoleplayMessageRole,
     RoleplayScenario,
     RoleplaySession,
@@ -81,6 +82,100 @@ def make_session() -> RoleplaySession:
     )
 
 
+def test_feedback_uses_privacy_safe_features_when_content_is_minimized() -> None:
+    now = datetime.now(timezone.utc)
+    session = make_session().model_copy(
+        update={
+            "messages": [
+                RoleplayMessage(
+                    role=RoleplayMessageRole.AGENT,
+                    content="请先说出你的核心观点。",
+                    created_at=now,
+                ),
+                RoleplayMessage(
+                    role=RoleplayMessageRole.USER,
+                    content="[raw roleplay message minimized by privacy policy]",
+                    created_at=now,
+                    features=RoleplayMessageFeatures(
+                        char_count=32,
+                        has_reason=True,
+                        has_request=True,
+                        has_boundary_statement=True,
+                        has_empathy_marker=True,
+                        has_specific_time_or_place=True,
+                        sensitive_detected=["email"],
+                    ),
+                ),
+            ]
+        }
+    )
+
+    feedback = RoleplayAgent().feedback(session)
+
+    assert feedback.clarity_score == 5
+    assert feedback.naturalness_score == 3
+    assert feedback.assertiveness_score == 4
+    assert feedback.empathy_score == 3
+    assert {item.dimension for item in feedback.rubric_breakdown} == {
+        "clarity",
+        "naturalness",
+        "assertiveness",
+        "empathy",
+    }
+    assert all(item.signals for item in feedback.rubric_breakdown)
+
+
+def test_rubric_evaluator_distinguishes_rich_features_from_sparse_features() -> None:
+    now = datetime.now(timezone.utc)
+    base = make_session()
+    sparse_session = base.model_copy(
+        update={
+            "messages": [
+                RoleplayMessage(
+                    role=RoleplayMessageRole.USER,
+                    content="[raw roleplay message minimized by privacy policy]",
+                    created_at=now,
+                    features=RoleplayMessageFeatures(char_count=4),
+                )
+            ]
+        }
+    )
+    rich_session = base.model_copy(
+        update={
+            "messages": [
+                RoleplayMessage(
+                    role=RoleplayMessageRole.USER,
+                    content="[raw roleplay message minimized by privacy policy]",
+                    created_at=now,
+                    features=RoleplayMessageFeatures(
+                        char_count=46,
+                        sentence_count=2,
+                        question_count=1,
+                        first_person_count=2,
+                        reason_marker_count=1,
+                        request_marker_count=1,
+                        boundary_marker_count=1,
+                        empathy_marker_count=1,
+                        politeness_marker_count=1,
+                        specificity_marker_count=1,
+                        collaborative_marker_count=1,
+                        repair_marker_count=1,
+                    ),
+                )
+            ]
+        }
+    )
+
+    sparse_feedback = RoleplayAgent().feedback(sparse_session)
+    rich_feedback = RoleplayAgent().feedback(rich_session)
+
+    assert rich_feedback.clarity_score > sparse_feedback.clarity_score
+    assert rich_feedback.naturalness_score > sparse_feedback.naturalness_score
+    assert rich_feedback.assertiveness_score > sparse_feedback.assertiveness_score
+    assert rich_feedback.empathy_score > sparse_feedback.empathy_score
+    assert rich_feedback.rubric_breakdown[0].signals[0].present is True
+
+
 @pytest.mark.anyio
 async def test_next_turn_uses_llm_when_available() -> None:
     llm_client = FakeLLMClient(response="这很清楚。你能再补充一个理由吗？")
@@ -117,3 +212,4 @@ async def test_next_turn_falls_back_when_llm_fails() -> None:
     assert response == "我听到了。你能用一句话先说出你的核心观点吗？ 你也可以把句子说完整一点。"
     assert llm_usage.used is False
     assert llm_usage.fallback_used is True
+    assert llm_usage.error_category == "TRANSIENT_PROVIDER_ERROR"

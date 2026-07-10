@@ -82,6 +82,7 @@ async def test_create_fields_falls_back_on_invalid_llm_json() -> None:
     assert "automatic_thought" in missing
     assert llm_usage.used is False
     assert llm_usage.fallback_used is True
+    assert llm_usage.error_category == "INVALID_JSON"
 
 
 @pytest.mark.anyio
@@ -93,3 +94,4 @@ async def test_create_fields_falls_back_when_llm_fails() -> None:
     assert fields.emotion == "紧张"
     assert llm_usage.used is False
     assert llm_usage.fallback_used is True
+    assert llm_usage.error_category == "TRANSIENT_PROVIDER_ERROR"

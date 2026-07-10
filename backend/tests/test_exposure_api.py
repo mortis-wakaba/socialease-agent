@@ -1,9 +1,14 @@
 """API tests for graded exposure planning."""
 
+from uuid import uuid4
+
 import httpx
 import pytest
 
 from app.main import app
+
+
+MINIMIZED_TARGET_SCENARIO = "[raw exposure target scenario minimized by privacy policy]"
 
 
 @pytest.fixture
@@ -41,12 +46,27 @@ async def create_plan(client: httpx.AsyncClient, user_id: str) -> dict:
     return payload["plan"]
 
 
+async def create_plan_response(client: httpx.AsyncClient, user_id: str) -> dict:
+    """Create a plan and return the full response payload."""
+    response = await client.post(
+        "/api/exposure/plan",
+        json={
+            "user_id": user_id,
+            "target_scenario": "课堂发言",
+            "current_anxiety_level": 7,
+            "previous_attempts": ["写过开场白"],
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 @pytest.mark.anyio
 async def test_exposure_plan_creates_ladder(client: httpx.AsyncClient) -> None:
     plan = await create_plan(client, "exposure_plan_user")
 
     assert plan["user_id"] == "exposure_plan_user"
-    assert plan["target_scenario"] == "课堂发言"
+    assert plan["target_scenario"] == MINIMIZED_TARGET_SCENARIO
     assert len(plan["tasks"]) == 6
     difficulties = [task["difficulty"] for task in plan["tasks"]]
     assert difficulties == sorted(difficulties)
@@ -55,6 +75,44 @@ async def test_exposure_plan_creates_ladder(client: httpx.AsyncClient) -> None:
     assert "社交练习的分级计划" in plan["disclaimer"]
     assert "不用于判断疾病" in plan["disclaimer"]
     assert "不能替代专业心理支持" in plan["disclaimer"]
+
+
+@pytest.mark.anyio
+async def test_direct_exposure_plan_creates_linked_intervention_plan(
+    client: httpx.AsyncClient,
+) -> None:
+    payload = await create_plan_response(client, "exposure_intervention_user")
+
+    assert payload["plan"]["plan_id"]
+    assert payload["intervention_plan_id"]
+    intervention = payload["intervention_plan"]
+    assert intervention["plan_id"] == payload["intervention_plan_id"]
+    assert intervention["session_id"] == payload["plan"]["plan_id"]
+    assert intervention["status"] == "active"
+    assert any(step["title"] == "生成由易到难的社交练习阶梯" for step in intervention["timeline"])
+
+
+@pytest.mark.anyio
+async def test_direct_exposure_plan_pause_persists_as_intervention_state(
+    client: httpx.AsyncClient,
+) -> None:
+    user_id = "exposure_pause_intervention_user"
+    payload = await create_plan_response(client, user_id)
+    intervention_plan_id = payload["intervention_plan_id"]
+
+    pause_response = await client.post(
+        f"/api/intervention-plans/{intervention_plan_id}/pause",
+        params={"user_id": user_id},
+    )
+    restored_response = await client.get(f"/api/users/{user_id}/exposure")
+
+    assert pause_response.status_code == 200
+    assert pause_response.json()["plan"]["status"] == "paused"
+    assert restored_response.status_code == 200
+    restored = restored_response.json()
+    assert restored["plan"]["plan_id"] == payload["plan"]["plan_id"]
+    assert restored["intervention_plan_id"] == intervention_plan_id
+    assert restored["intervention_plan"]["status"] == "paused"
 
 
 @pytest.mark.anyio
@@ -70,6 +128,43 @@ async def test_exposure_plan_tasks_include_citations(
         for citation in task["citations"]
     }
     assert "Exposure Training Practice Guide" in titles
+
+
+@pytest.mark.anyio
+async def test_exposure_plan_uses_recent_session_review_summary(
+    client: httpx.AsyncClient,
+) -> None:
+    user_id = f"exposure_review_link_user_{uuid4().hex}"
+    await client.post(
+        f"/api/users/{user_id}/session-reviews",
+        json={
+            "source": "roleplay",
+            "source_id": "session_review_link",
+            "completed": "partial",
+            "anxiety_before": 7,
+            "anxiety_after": 5,
+            "next_step": "下次先练习一句短开场，不提手机号 13912345678。",
+            "save_record": True,
+        },
+    )
+
+    response = await client.post(
+        "/api/exposure/plan",
+        json={
+            "user_id": user_id,
+            "target_scenario": "课堂发言",
+            "current_anxiety_level": 7,
+            "previous_attempts": [],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    serialized_tasks = str(payload["plan"]["tasks"])
+    assert "已参考最近复盘" in payload["response"]
+    assert "最近复盘" in serialized_tasks
+    assert "一句短开场" in serialized_tasks
+    assert "13912345678" not in serialized_tasks
 
 
 @pytest.mark.anyio
@@ -155,7 +250,30 @@ async def test_get_user_exposure_returns_current_plan(
     assert response.status_code == 200
     payload = response.json()
     assert payload["user_id"] == "exposure_progress_user"
-    assert payload["plan"]["target_scenario"] == "课堂发言"
+    assert payload["plan"]["target_scenario"] == MINIMIZED_TARGET_SCENARIO
+
+
+@pytest.mark.anyio
+async def test_get_exposure_plan_by_id_requires_owner(
+    client: httpx.AsyncClient,
+) -> None:
+    plan = await create_plan(client, "exposure_plan_lookup_user")
+
+    response = await client.get(
+        f"/api/exposure/{plan['plan_id']}",
+        params={"user_id": "exposure_plan_lookup_user"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_id"] == "exposure_plan_lookup_user"
+    assert payload["plan"]["plan_id"] == plan["plan_id"]
+
+    wrong_user_response = await client.get(
+        f"/api/exposure/{plan['plan_id']}",
+        params={"user_id": "other_user"},
+    )
+    assert wrong_user_response.status_code == 404
 
 
 @pytest.mark.anyio
@@ -178,3 +296,34 @@ async def test_exposure_plan_crisis_input_is_blocked(
     assert payload["plan"] is None
     assert payload["safety_result"]["risk_level"] == "crisis"
     assert "暂停社交练习计划" in payload["response"]
+
+
+@pytest.mark.anyio
+async def test_exposure_complete_crisis_reflection_pauses_without_saving_attempt(
+    client: httpx.AsyncClient,
+) -> None:
+    plan = await create_plan(client, "exposure_complete_crisis_user")
+    original_next_task_id = plan["recommended_next_task_id"]
+    task = plan["tasks"][0]
+
+    response = await client.post(
+        "/api/exposure/complete",
+        json={
+            "user_id": "exposure_complete_crisis_user",
+            "task_id": task["task_id"],
+            "status": "completed",
+            "anxiety_before": 9,
+            "anxiety_after": 9,
+            "reflection": "我不想活了，可能会伤害自己。",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["blocked"] is True
+    assert payload["safety_result"]["risk_level"] == "crisis"
+    assert "暂停社交练习计划" in payload["response"]
+    assert payload["next_task"] is None
+    assert "no attempt was saved" in payload["adjustment_reason"]
+    assert payload["plan"]["attempts"] == []
+    assert payload["plan"]["recommended_next_task_id"] == original_next_task_id

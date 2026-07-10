@@ -77,3 +77,25 @@ async def test_router_defaults_to_emotional_support_for_unknown_safe_message() -
     result = await router.route("最近有点烦，但还没想好要做什么", safety)
 
     assert result.intent == Intent.EMOTIONAL_SUPPORT
+
+
+@pytest.mark.anyio
+async def test_router_routes_stop_practice_request_to_support() -> None:
+    router = IntentRouter()
+    safety = SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
+
+    result = await router.route("我不想继续角色扮演了，先暂停练习", safety)
+
+    assert result.intent == Intent.EMOTIONAL_SUPPORT
+    assert "pause or stop" in result.reason
+
+
+@pytest.mark.anyio
+async def test_router_routes_mixed_language_roleplay_stop_to_support() -> None:
+    router = IntentRouter()
+    safety = SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
+
+    result = await router.route("请停止 roleplay，我想先退出练习。", safety)
+
+    assert result.intent == Intent.EMOTIONAL_SUPPORT
+    assert "pause or stop" in result.reason

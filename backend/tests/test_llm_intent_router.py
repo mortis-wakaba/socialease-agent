@@ -57,6 +57,7 @@ async def test_llm_router_falls_back_on_invalid_output(low_safety: SafetyResult)
     assert result.intent == Intent.ROLEPLAY_PRACTICE
     assert result.llm_usage.used is False
     assert result.llm_usage.fallback_used is True
+    assert result.llm_usage.error_category == "INVALID_JSON"
 
 
 @pytest.mark.anyio
@@ -67,6 +68,7 @@ async def test_llm_router_falls_back_on_provider_failure(low_safety: SafetyResul
 
     assert result.intent == Intent.CBT_WORKSHEET
     assert result.llm_usage.fallback_used is True
+    assert result.llm_usage.error_category == "TRANSIENT_PROVIDER_ERROR"
 
 
 @pytest.mark.anyio

@@ -29,7 +29,7 @@ def test_skill_registry_resolves_crisis_skill_for_crisis_risk() -> None:
     assert skill.descriptor.name == "crisis_escalation_skill"
 
 
-def test_skill_registry_resolves_support_skill_for_non_crisis_chat() -> None:
+def test_skill_registry_resolves_specialized_skill_for_non_crisis_chat() -> None:
     registry = SkillRegistry()
     safety_result = SafetyResult(
         risk_level=RiskLevel.LOW,
@@ -38,7 +38,7 @@ def test_skill_registry_resolves_support_skill_for_non_crisis_chat() -> None:
 
     skill = registry.resolve_for_chat(Intent.ROLEPLAY_PRACTICE, safety_result)
 
-    assert skill.descriptor.name == "general_support_skill"
+    assert skill.descriptor.name == "roleplay_skill"
 
 
 def test_descriptor_for_intent_exposes_specialized_skill_metadata() -> None:

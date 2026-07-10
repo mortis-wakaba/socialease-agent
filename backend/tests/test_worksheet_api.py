@@ -49,7 +49,9 @@ async def test_worksheet_create_complete_input(client: httpx.AsyncClient) -> Non
     assert payload["worksheet"]["worksheet_id"]
     assert payload["worksheet"]["citations"]
     assert payload["worksheet"]["missing_fields"] == []
-    assert payload["llm_usage"] == {"used": False, "fallback_used": False}
+    assert payload["llm_usage"]["used"] is False
+    assert payload["llm_usage"]["fallback_used"] is False
+    assert payload["llm_usage"]["error_category"] is None
 
 
 @pytest.mark.anyio
@@ -93,7 +95,9 @@ async def test_worksheet_create_crisis_input_is_blocked(
     assert payload["worksheet"] is None
     assert payload["safety_result"]["risk_level"] == "crisis"
     assert "暂停自助练习" in payload["response"]
-    assert payload["llm_usage"] == {"used": False, "fallback_used": False}
+    assert payload["llm_usage"]["used"] is False
+    assert payload["llm_usage"]["fallback_used"] is False
+    assert payload["llm_usage"]["error_category"] is None
 
 
 @pytest.mark.anyio

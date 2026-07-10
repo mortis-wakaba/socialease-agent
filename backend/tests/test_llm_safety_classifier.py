@@ -77,3 +77,4 @@ async def test_hybrid_safety_falls_back_when_llm_fails() -> None:
     assert result.risk_level == RiskLevel.LOW
     assert result.llm_usage.used is False
     assert result.llm_usage.fallback_used is True
+    assert result.llm_usage.error_category == "TRANSIENT_PROVIDER_ERROR"
