@@ -1,6 +1,6 @@
 # SocialEase Agent Benchmark Report
 
-> 当前基线：backend pytest `297 passed, 26 skipped`；eval suite `all metrics passed`；eval gate `passed`。
+> 当前基线：backend pytest `307 passed, 26 skipped`；eval suite `all metrics passed`；eval gate `passed`。
 
 本报告记录 SocialEase Agent 的确定性评测集，用于防止安全边界、产品边界和 agent workflow 在迭代中回退。它不是临床效果评估，不证明系统可以诊断、治疗或改善心理健康问题。
 
@@ -60,7 +60,7 @@ make check
 最近本地基线：
 
 ```text
-backend pytest: 297 passed, 26 skipped
+backend pytest: 307 passed, 26 skipped
 eval suite: all metrics passed
 eval gate: passed
 ```

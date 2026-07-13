@@ -19,7 +19,7 @@ flowchart LR
     S --> P[Permission / Protocol Gate]
     P --> R[Intent Router]
     R --> K[Skill Registry]
-    K --> A[Support / Roleplay / Worksheet / Exposure / RAG / Crisis]
+    K --> A[Support / Roleplay / Worksheet / Exposure / Bounded RAG Loop / Crisis]
     A --> M[Privacy Gate + Memory]
     A --> T[Trace + Metrics + Eval Gate]
 ```
@@ -32,9 +32,11 @@ flowchart LR
 - **Hybrid Safety**：deterministic rules 提供不可降级安全底线，LLM 只能上调隐晦风险。
 - **Permission-gated Crisis Escalation**：crisis 输入跳过普通 routing 和 skills，直接进入安全升级流程。
 - **Skill Registry + Skill Manifests**：将 general support、role-play、worksheet、exposure planning、support RAG、crisis escalation 登记为 skills。
+- **Grounded CBT-style Support**：普通支持先检索 `social_skills`，再由 LLM 输出受 Pydantic 约束的微型 CBT 自助结构；输出经过非诊断、可暂停、无依赖和隐私 Guardrail，失败时回退确定性支持。
+- **Bounded Resource Agent Loop**：非危机资源请求可由模型在公开资源检索、练习指导检索和 finish 之间动态决策，最多 3 步且工具只读；最终答案仅从带 citations 的 observation 组装，失败时回退确定性 RAG。
 - **Grounded RAG**：BM25 本地检索 + 可配置 chunk size/overlap + citations；查不到时 `unknown=true`，不编造学校电话或资源。
 - **LLM Provider Abstraction**：支持 OpenAI-compatible provider，例如 DeepSeek；无 API key 时 deterministic fallback 仍可运行。
-- **Trace + Metrics + Eval Suite**：支持单次 run trace、harness capabilities、轻量 metrics、safety red-team eval 和 E2E workflow eval。
+- **Trace + Metrics + Eval Suite**：支持单次 run trace、harness capabilities、轻量 metrics、safety red-team、E2E workflow 和可选 DeepEval LLM-as-a-Judge。
 - **Consent Protocol + Privacy Gate**：主动练习动作支持同意协议、过期、请求绑定、一次性消费；隐私持久化 gate 和 memory export/delete 已具备 MVP。
 - **Traceable Intervention Plan**：主动练习会生成 session-level plan，支持按 plan_id 查询 timeline、当前步骤、consent 绑定和完成进度。
 - **Production-shaped Ops**：Alembic migration discipline、PostgreSQL runtime adapters、metrics backend、cleanup scheduler、heavier load regression tests。
@@ -127,6 +129,7 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 
 ```env
 LLM_ENABLED=false
+OUTPUT_GUARDRAIL_LLM_ENABLED=false
 ```
 
 系统会使用 deterministic fallback 跑通完整 demo。
@@ -147,6 +150,7 @@ cp .env.example .env
 
 ```env
 LLM_ENABLED=true
+OUTPUT_GUARDRAIL_LLM_ENABLED=true
 LLM_PROVIDER=openai_compatible
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=你的_api_key
@@ -156,6 +160,44 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 `.env` 不应提交到 Git。
+
+## 可选 DeepEval LLM 质量评测
+
+现有确定性 Eval 继续作为默认 CI Gate；DeepEval 仅使用标注为 demo 的合成案例，
+评测资源回答的 Faithfulness、Answer Relevancy 和 SocialEase 非医疗化产品边界。
+它会调用配置在根目录 `.env` 中的 LLM，并产生少量费用，因此不会随普通 `pytest` 自动运行。
+
+全局 Output Guardrail 另有 45 条 demo 红队/安全样本，覆盖同义改写、长文本夹带违规、
+多类别组合、安全负例和 Repair 二次复检失败。确定性 Eval gate 只回放已提交的语义候选
+以验证后端策略管线；真实模型的语义召回、误拦截、Repair 端到端成功率和二次复检拦截率需运行：
+
+运行时将诊断、治疗承诺、依赖、现实支持劝阻、强迫练习、危险淡化和虚构资源视为
+`hard_safety`；未得到用户输入支持的个人事实属于 `soft_factual`，保留检测与一次性 Repair，
+但真实 LLM Gate 只将其作为观察指标，不与高风险安全边界使用同一阻断阈值。
+
+```bash
+make eval-output-guardrail
+```
+
+首次安装评测依赖：
+
+```bash
+cd backend
+pip install -r requirements-eval.txt
+```
+
+确认根目录 `.env` 已填写 `LLM_API_KEY` 且 `LLM_ENABLED=true`，然后在项目根目录运行：
+
+```bash
+make eval-llm
+```
+
+普通确定性评测仍使用：
+
+```bash
+make eval
+make eval-gate
+```
 
 环境配置样例：
 
@@ -392,7 +434,7 @@ make e2e-smoke
 当前本地验证基线：
 
 ```text
-backend pytest: 297 passed, 26 skipped
+backend pytest: 307 passed, 26 skipped
 eval suite: all metrics passed
 eval gate: passed
 frontend typecheck: passed
@@ -632,7 +674,7 @@ SocialEase 明确遵守以下边界：
 - 不鼓励用户远离现实支持。
 - crisis 输入必须进入 escalation。
 - 支持资源必须 grounded；查不到时返回 unknown。
-- demo 校园资源不得冒充真实学校服务。
+- 当前不提供未经核验的学校专属资源，不编造学校、电话或联系人。
 
 ## 当前状态
 

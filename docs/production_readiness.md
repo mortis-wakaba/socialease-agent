@@ -7,7 +7,7 @@ SocialEase 是一个**产品化 Agent 原型**，不是医疗产品，也不是�
 最近一次产品化检查点：
 
 ```text
-backend pytest: 297 passed, 26 skipped
+backend pytest: 307 passed, 26 skipped
 eval suite: all metrics passed
 eval gate: passed
 frontend typecheck: passed
@@ -68,7 +68,7 @@ real frontend/backend smoke E2E: 1 passed
 - support-resource RAG 只使用 verified public resources；
 - citation metadata 包含 source type 和 URL；
 - 未检索到时返回 `unknown=true`，不编造资源；
-- 演示校园资源与真实公开资源隔离。
+- 未经核验的学校专属资源不进入当前知识库。
 
 真实试点前仍需：
 
@@ -154,6 +154,7 @@ real frontend/backend smoke E2E: 1 passed
 已实现：
 
 - pytest 覆盖 safety、routing、RAG、LLM fallback、skills、APIs、hooks、protocols、memory controls、harness behavior；
+- bounded resource agent-loop tests 覆盖双工具 observation、只读工具白名单、finish grounding、step budget、provider/tool failure 和 deterministic fallback；
 - eval suite 覆盖 safety、routing、citation、unknown handling、roleplay feedback、worksheet extraction、retrieval metrics、E2E workflow；
 - product-boundary eval gate with 210 bundled Chinese boundary cases;
 - heavier local load regression tests for concurrency and migration readiness;

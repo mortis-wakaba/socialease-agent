@@ -23,7 +23,7 @@ flowchart TD
     Registry --> Roleplay[Role-play Skill]
     Registry --> Worksheet[CBT 风格自助练习 Skill]
     Registry --> Exposure[社交练习阶梯 Skill]
-    Registry --> Resources[支持资源 RAG Skill]
+    Registry --> Resources[支持资源 Agent Loop Skill]
     Registry --> Crisis
 
     Direct --> DirectSafety[服务层 Safety Floor]
@@ -35,7 +35,10 @@ flowchart TD
     RoleplayService --> SocialRAG[Social Skills RAG]
     WorksheetService --> SocialRAG
     ExposureService --> SocialRAG
-    SupportResourceService --> ResourceRAG[已验证公开资源 RAG]
+    Resources --> ResourceLoop[最多 3 步只读 Loop<br/>资源检索 / 练习指导 / Finish]
+    ResourceLoop --> ResourceRAG[已验证公开资源 RAG]
+    ResourceLoop --> SocialRAG
+    SupportResourceService --> ResourceRAG
     Support --> PolicyRAG[Safety Policy / 产品 Rubric]
     Roleplay --> PolicyRAG
 

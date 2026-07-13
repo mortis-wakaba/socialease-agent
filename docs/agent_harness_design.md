@@ -36,7 +36,7 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 当前验证基线：
 
 ```text
-backend pytest: 297 passed, 26 skipped
+backend pytest: 307 passed, 26 skipped
 eval suite: all metrics passed
 eval gate: passed
 frontend typecheck: passed
@@ -160,6 +160,19 @@ backend/app/skills/manifests/<skill>/SKILL.md
 
 Manifest 描述使用时机、输入、输出契约、安全边界和 fallback。这样可以保留“技能说明”结构，但不引入复杂 plugin runtime。
 
+### Grounded CBT-style Support
+
+`general_support_skill` 不再通过场景关键词分支穷举回复。非高风险请求先从 `social_skills` 检索相关练习，再由 `SupportGenerationAgent` 生成严格 JSON：
+
+- 只在用户明确表达想法时保留 `automatic_thought`；
+- 可选地区分已知事实和尚未发生的预测；
+- 生成不过度积极的平衡想法；
+- 最多给出 3 个低强度步骤；
+- `pause_supported` 必须为 `true`；
+- 不允许诊断、疗效承诺、排斥现实支持、强迫练习或编造联系方式。
+
+Pydantic 校验和输出 Guardrail 通过后，由应用代码拼装最终回复并再次脱敏。LLM 未启用、Provider/JSON/Guardrail 失败或风险为 high 时，回退不做场景推断的确定性 `SupportAgent`。Crisis 仍在进入 skill 前由 Harness 截断。
+
 ## Hooks
 
 `backend/app/workflow/hooks.py` 定义 harness 生命周期 hook：
@@ -189,14 +202,35 @@ SocialEase 使用本地 markdown RAG、可配置 chunking 和 BM25 retrieval。�
 - `support_resources`
 - `safety_policy`
 - `product_rubrics`
-- `campus_resources_demo`
 
 约束：
 
 - skill 必须从正确知识层检索；
 - 需要 grounding 的回答必须返回 citation；
-- `campus_resources_demo` 只能作为演示数据形态，不能冒充真实学校资源；
+- 当前不导入未经核验的学校专属资源；
 - 不知道时返回 unknown，不编造学校、电话、热线或联系人。
+
+### Bounded Resource Agent Loop
+
+`support_resource_rag_skill` 在 LLM 可用时运行最多 3 步的只读工具循环：
+
+```text
+model decision
+  -> search_support_resources | search_practice_guidance | finish
+  -> validated Pydantic action
+  -> allow-listed BM25 retrieval
+  -> grounded observation
+  -> next model decision
+```
+
+约束：
+
+- crisis 在进入该 skill 前已由 harness 短路；
+- 工具只能读取 `support_resources` 或 `social_skills`，不能写 memory 或改变练习状态；
+- `finish` 必须选择至少一条公开支持资源 observation；
+- 最终文本由应用代码从选中的 observation 确定性组装，模型不能自由生成资源；
+- step metadata 会脱敏后写入 `structured_data`，包含 action、citation count、outcome 和 stop reason；
+- 未启用 LLM、非法 JSON/工具、provider/tool 失败或耗尽 step budget 时，回退原有确定性 Support RAG。
 
 ## Observation 与 Evals
 
@@ -257,6 +291,22 @@ Eval 是 harness contract 的一部分。Crisis 拦截、隐私最小化、conse
 - 广泛 plugin 安装系统。
 
 这些模式对 coding agent 有价值，但对当前安全敏感社交练习产品会增加复杂度。SocialEase 当前选择 lightweight skill registry，把精力放在安全、隐私、consent、memory、trace 和 eval。
+
+## Global Output Guardrail
+
+每个标准化 `SkillResult` 都会在 after-action hooks、memory write、隐私安全 Trace 和
+API 返回之前经过 Harness 统一的输出检查点。稳定的产品约束由确定性规则检查；可选的
+语义分类器只提交带有精确原文证据的候选违规，后端验证证据后决定 `allow`、一次性
+`repair` 或 `replace`。Repair 结果必须再次通过完整 Output Guardrail，二次违规时直接
+Replace，不进入循环。语义 Provider 失败时按风险分级降级，并记录脱敏错误类型，
+不持久化模型证据原文。45 条 demo 输出评测覆盖同义改写、长文本、多类别、安全负例及
+Repair 二次复检失败；真实模型评测将自然 Repair 与固定注入不安全 Repair 的对抗性复检
+分开统计，确保二次 Guardrail 检查的就是数据集标注的 Repair 文本。
+
+边界结果分为 `hard_safety` 与 `soft_factual`。前者覆盖诊断、治疗承诺、依赖鼓励、现实
+支持劝阻、强迫练习、现实危险淡化和虚构资源，作为真实 LLM 质量 Gate；后者用于发现
+代写回复中缺少用户依据的重要个人事实，优先进行一次性 Repair，但检测率和 Repair
+覆盖率作为 advisory quality metrics，不与高风险漏检使用同一发布阈值。
 
 ## 后续方向
 
