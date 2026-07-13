@@ -1,4 +1,4 @@
-.PHONY: dev-backend dev-frontend test-backend eval eval-gate typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
+.PHONY: dev-backend dev-frontend test-backend eval eval-gate eval-llm eval-output-guardrail typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
 
 dev-backend:
 	cd backend && uvicorn app.main:app --reload
@@ -14,6 +14,12 @@ eval:
 
 eval-gate:
 	cd backend && python -m app.evals.gate
+
+eval-llm:
+	cd backend && RUN_LLM_EVALS=true pytest -m llm_eval tests/test_deepeval_quality.py tests/test_output_guardrail_quality.py
+
+eval-output-guardrail:
+	cd backend && RUN_LLM_EVALS=true pytest -m llm_eval -s tests/test_output_guardrail_quality.py
 
 typecheck-frontend:
 	cd frontend && npm run typecheck

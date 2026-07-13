@@ -172,6 +172,20 @@ def test_redactor_detects_common_chinese_sensitive_identifiers() -> None:
         assert raw not in redacted
 
 
+def test_third_party_redactor_does_not_treat_scenario_words_as_a_name() -> None:
+    redacted, detected = redact_sensitive_identifiers("我想练习室友沟通晚上的关灯时间。")
+
+    assert redacted == "我想练习室友沟通晚上的关灯时间。"
+    assert "third_party_identity" not in detected
+
+
+def test_third_party_redactor_handles_explicit_name_introducer() -> None:
+    redacted, detected = redact_sensitive_identifiers("我的室友叫张三。")
+
+    assert "张三" not in redacted
+    assert "third_party_identity" in detected
+
+
 def test_trace_output_redacts_chinese_sensitive_identifiers_without_minimizing() -> None:
     gate = PersistenceGate()
     decision = gate.persist_text(

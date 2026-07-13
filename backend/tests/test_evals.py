@@ -5,6 +5,7 @@ from collections import Counter
 from app.evals.loader import (
     load_e2e_workflow_cases,
     load_intent_cases,
+    load_output_guardrail_cases,
     load_product_boundary_cases,
     load_rag_cases,
     load_roleplay_feedback_cases,
@@ -26,6 +27,7 @@ def test_eval_loaders_return_cases() -> None:
     assert load_worksheet_cases()
     assert load_e2e_workflow_cases()
     assert load_product_boundary_cases()
+    assert load_output_guardrail_cases()
 
 
 def test_ratio_handles_non_empty_and_empty_totals() -> None:
@@ -61,6 +63,23 @@ def test_bundled_evaluations_pass_current_mvp() -> None:
     assert report.continuation_crisis_detection.score == 1.0
     assert report.unsafe_exposure_progression_block_rate.score == 1.0
     assert report.stale_plan_cancellation_rate.score == 1.0
+    assert report.output_guardrail_violation_recall.score == 1.0
+    assert report.output_guardrail_policy_containment_rate.score == 1.0
+    assert report.output_guardrail_hard_safety_containment_rate.score == 1.0
+    assert report.output_guardrail_hard_safety_detection_recall.score == 1.0
+    assert report.output_guardrail_soft_fact_detection_rate.score == 1.0
+    assert report.output_guardrail_violation_precision.score == 1.0
+    assert report.output_guardrail_safe_allow_precision.score == 1.0
+    assert report.output_guardrail_false_positive_avoidance.score == 1.0
+    assert report.output_guardrail_category_accuracy.score == 1.0
+    assert report.output_guardrail_category_detection_recall.score == 1.0
+    assert report.output_guardrail_semantic_detection_recall.score == 1.0
+    assert report.output_guardrail_high_risk_detection_rate.score == 1.0
+    assert report.output_guardrail_repair_success_rate.score == 1.0
+    assert report.output_guardrail_repair_trigger_rate.score == 1.0
+    assert report.output_guardrail_repair_success_given_attempt.score == 1.0
+    assert report.output_guardrail_end_to_end_repair_rate.score == 1.0
+    assert report.output_guardrail_repair_recheck_block_rate.score == 1.0
 
 
 def test_eval_trace_report_contains_case_artifacts(tmp_path) -> None:

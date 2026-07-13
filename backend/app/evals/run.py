@@ -1,6 +1,7 @@
 """Run deterministic project evaluations from bundled JSONL datasets."""
 
 from datetime import datetime, timedelta, timezone
+import asyncio
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from app.agents.worksheet import WorksheetAgent
 from app.evals.loader import (
     load_e2e_workflow_cases,
     load_intent_cases,
+    load_output_guardrail_cases,
     load_product_boundary_cases,
     load_rag_cases,
     load_roleplay_feedback_cases,
@@ -22,6 +24,10 @@ from app.evals.loader import (
     load_worksheet_cases,
 )
 from app.evals.metrics import ratio, reciprocal_rank
+from app.evals.output_guardrail import (
+    evaluate_output_guardrail_cases,
+    replay_output_guardrail_factory,
+)
 from app.evals.models import (
     EvalCaseTrace,
     EvalReport,
@@ -433,6 +439,41 @@ def run_evaluations_with_traces() -> EvalTraceReport:
         for results in product_boundary_results_by_category.values()
         for passed in results
     ]
+    output_guardrail_evaluation = asyncio.run(
+        evaluate_output_guardrail_cases(
+            load_output_guardrail_cases(),
+            guardrail_factory=replay_output_guardrail_factory,
+        )
+    )
+    for case in output_guardrail_evaluation.cases:
+        _append_case_trace(
+            case_traces,
+            suite="output_guardrail_policy",
+            case_id=case.case_id,
+            passed=case.passed,
+            expected={
+                "action": case.expected_action,
+                "categories": case.expected_categories,
+            },
+            actual={
+                "action": case.actual_action,
+                "categories": case.actual_categories,
+            },
+            steps=[
+                _step_trace(
+                    "global_output_policy",
+                    expected={
+                        "action": case.expected_action,
+                        "categories": case.expected_categories,
+                    },
+                    actual={
+                        "action": case.actual_action,
+                        "categories": case.actual_categories,
+                    },
+                    passed=case.passed,
+                )
+            ],
+        )
 
     report = EvalReport(
         safety_accuracy=ratio(sum(safety_results), len(safety_results)),
@@ -473,6 +514,57 @@ def run_evaluations_with_traces() -> EvalTraceReport:
         stale_plan_cancellation_rate=_category_metric(
             product_boundary_results_by_category,
             "stale_plan_cancellation",
+        ),
+        output_guardrail_violation_recall=(
+            output_guardrail_evaluation.violation_recall
+        ),
+        output_guardrail_policy_containment_rate=(
+            output_guardrail_evaluation.policy_containment_rate
+        ),
+        output_guardrail_hard_safety_containment_rate=(
+            output_guardrail_evaluation.hard_safety_containment_rate
+        ),
+        output_guardrail_hard_safety_detection_recall=(
+            output_guardrail_evaluation.hard_safety_detection_recall
+        ),
+        output_guardrail_soft_fact_detection_rate=(
+            output_guardrail_evaluation.soft_fact_detection_rate
+        ),
+        output_guardrail_violation_precision=(
+            output_guardrail_evaluation.violation_precision
+        ),
+        output_guardrail_safe_allow_precision=(
+            output_guardrail_evaluation.safe_allow_precision
+        ),
+        output_guardrail_false_positive_avoidance=(
+            output_guardrail_evaluation.false_positive_avoidance
+        ),
+        output_guardrail_category_accuracy=(
+            output_guardrail_evaluation.category_accuracy
+        ),
+        output_guardrail_category_detection_recall=(
+            output_guardrail_evaluation.category_detection_recall
+        ),
+        output_guardrail_semantic_detection_recall=(
+            output_guardrail_evaluation.semantic_detection_recall
+        ),
+        output_guardrail_high_risk_detection_rate=(
+            output_guardrail_evaluation.high_risk_detection_rate
+        ),
+        output_guardrail_repair_success_rate=(
+            output_guardrail_evaluation.repair_success_rate
+        ),
+        output_guardrail_repair_trigger_rate=(
+            output_guardrail_evaluation.repair_trigger_rate
+        ),
+        output_guardrail_repair_success_given_attempt=(
+            output_guardrail_evaluation.repair_success_given_attempt
+        ),
+        output_guardrail_end_to_end_repair_rate=(
+            output_guardrail_evaluation.end_to_end_repair_rate
+        ),
+        output_guardrail_repair_recheck_block_rate=(
+            output_guardrail_evaluation.repair_recheck_block_rate
         ),
     )
     passed_cases = sum(1 for case in case_traces if case.passed)

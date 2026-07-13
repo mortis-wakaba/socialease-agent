@@ -16,10 +16,12 @@ class BM25Retriever:
         k1: float = 1.5,
         b: float = 0.75,
         min_score: float = 0.1,
+        relative_score_threshold: float = 0.5,
     ) -> None:
         self.k1 = k1
         self.b = b
         self.min_score = min_score
+        self.relative_score_threshold = max(0.0, min(relative_score_threshold, 1.0))
 
     def retrieve(
         self,
@@ -58,7 +60,11 @@ class BM25Retriever:
             if score >= self.min_score:
                 scored.append((chunk, score))
 
-        return sorted(scored, key=lambda item: item[1], reverse=True)[:limit]
+        ranked = sorted(scored, key=lambda item: item[1], reverse=True)
+        if not ranked:
+            return []
+        relative_floor = ranked[0][1] * self.relative_score_threshold
+        return [item for item in ranked if item[1] >= relative_floor][:limit]
 
     @staticmethod
     def _document_frequencies(documents: list[list[str]]) -> dict[str, int]:
@@ -83,7 +89,10 @@ class BM25Retriever:
                 term[index : index + 2] for index in range(max(0, len(term) - 1))
             )
         terms = [*ascii_terms, *cjk_terms, *cjk_bigrams]
-        stop_terms = {"我想", "可以", "怎么", "一个", "一下", "什么", "如果"}
+        stop_terms = {
+            "我想", "可以", "怎么", "一个", "一下", "什么", "如果",
+            "不知道", "不知", "知道", "先做", "比较", "合适", "练习",
+        }
         return [term for term in terms if term not in stop_terms]
 
 

@@ -93,6 +93,21 @@ class TraceRecord(BaseModel):
     action: str | None = None
     permission_action: str | None = None
     permission_reason: str | None = None
+    agent_loop_used: bool = False
+    agent_loop_stop_reason: str | None = None
+    agent_loop_steps: list[dict[str, Any]] = Field(default_factory=list)
+    output_guardrail_action: str | None = None
+    output_guardrail_categories: list[str] = Field(default_factory=list)
+    output_guardrail_semantic_checked: bool = False
+    output_guardrail_semantic_failed: bool = False
+    output_guardrail_semantic_error_type: str | None = None
+    output_guardrail_semantic_schema_error_code: str | None = None
+    output_guardrail_semantic_schema_error_field: str | None = None
+    output_guardrail_semantic_retry_attempted: bool = False
+    output_guardrail_violation_tier: str | None = None
+    output_guardrail_repair_attempted: bool = False
+    output_guardrail_repair_succeeded: bool = False
+    output_guardrail_recheck_action: str | None = None
     output: str
     product_safe: bool = True
     privacy_summary: TracePrivacySummary = Field(default_factory=TracePrivacySummary)

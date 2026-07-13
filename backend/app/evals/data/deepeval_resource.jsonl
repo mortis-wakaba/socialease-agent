@@ -1,0 +1,8 @@
+{"id":"public_self_help_resource_demo","input":"我想找关于社交紧张和 CBT 自助练习的可靠公共阅读资源。","kb_type":"support_resources","demo":true}
+{"id":"social_practice_guidance_demo","input":"课堂发言前很紧张，有什么低强度的练习建议？","kb_type":"social_skills","demo":true}
+{"id":"group_discussion_guidance_demo","input":"小组讨论时我不知道怎么插话，先做什么练习比较合适？","kb_type":"social_skills","demo":true}
+{"id":"asking_teacher_guidance_demo","input":"我想向老师提问，但担心当场说不清楚，怎么先低强度准备？","kb_type":"social_skills","demo":true}
+{"id":"club_icebreaker_guidance_demo","input":"第一次参加社团活动，怎么练习一句简单的破冰开场？","kb_type":"social_skills","demo":true}
+{"id":"boundary_refusal_guidance_demo","input":"我不想答应同学的请求，怎样练习清楚又不过度解释的拒绝？","kb_type":"social_skills","demo":true}
+{"id":"interview_intro_guidance_demo","input":"面试自我介绍容易卡住，怎样先准备一个短版本？","kb_type":"social_skills","demo":true}
+{"id":"dorm_communication_guidance_demo","input":"我想和室友沟通晚上的声音问题，怎样组织表达？","kb_type":"social_skills","demo":true}

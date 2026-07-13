@@ -70,18 +70,8 @@ def _dedupe(values: list[str], *, limit: int) -> list[str]:
 
 
 def _redact_preferences(preferences: PracticePreferences) -> PracticePreferences:
-    """Return preferences safe for runtime context injection."""
-    return PracticePreferences(
-        preferred_roleplay_difficulty=preferences.preferred_roleplay_difficulty,
-        preferred_feedback_style=(
-            _redact_text(preferences.preferred_feedback_style)
-            if preferences.preferred_feedback_style is not None
-            else None
-        ),
-        preferred_practice_scenarios=[
-            _redact_text(value) for value in preferences.preferred_practice_scenarios
-        ],
-    )
+    """Copy validated, enum-backed preferences into the runtime context."""
+    return preferences.model_copy(deep=True)
 
 
 def _redact_text(text: str) -> str:

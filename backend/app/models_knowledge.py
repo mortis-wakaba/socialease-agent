@@ -14,7 +14,6 @@ class KnowledgeBaseType(str, Enum):
     SUPPORT_RESOURCES = "support_resources"
     SAFETY_POLICY = "safety_policy"
     PRODUCT_RUBRICS = "product_rubrics"
-    CAMPUS_RESOURCES_DEMO = "campus_resources_demo"
 
 
 class KnowledgeQueryRequest(BaseModel):

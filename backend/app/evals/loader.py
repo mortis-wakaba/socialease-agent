@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.evals.models import (
     E2EWorkflowEvalCase,
     IntentEvalCase,
+    OutputGuardrailEvalCase,
     ProductBoundaryEvalCase,
     RagEvalCase,
     RoleplayFeedbackEvalCase,
@@ -71,3 +72,11 @@ def load_product_boundary_cases() -> list[ProductBoundaryEvalCase]:
         *load_jsonl(DATA_DIR / "product_boundaries.jsonl", ProductBoundaryEvalCase),
         *load_jsonl(DATA_DIR / "product_boundaries_phase6.jsonl", ProductBoundaryEvalCase),
     ]
+
+
+def load_output_guardrail_cases() -> list[OutputGuardrailEvalCase]:
+    """Load demo-only global output policy cases."""
+    return load_jsonl(
+        DATA_DIR / "output_guardrail_cases.jsonl",
+        OutputGuardrailEvalCase,
+    )

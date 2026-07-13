@@ -48,18 +48,18 @@ class CitationFormatter:
             )
             for chunk, _score in results
         ]
-        answer_lines = [
-            "根据当前 markdown 知识库，可以参考以下内容：",
-            *[f"- {citation.snippet}" for citation in citations],
-            "以上内容仅来自已收录文档；如果知识库没有具体资源，系统不会编造联系方式。",
+        answer_sections = [
+            f"{citation.snippet}\n来源：{citation.title}"
+            for citation in citations
         ]
         top_score = results[0][1]
         confidence = min(1.0, top_score / (top_score + 3.0))
-        return "\n".join(answer_lines), citations, False, confidence, diagnostics
+        return "\n\n".join(answer_sections), citations, False, confidence, diagnostics
 
     @classmethod
     def _snippet(cls, text: str, *, query: str = "", max_chars: int = 180) -> str:
-        compact = " ".join(text.split())
+        without_headings = re.sub(r"(?m)^\s*#{1,6}\s+.*$", "", text)
+        compact = " ".join(without_headings.split())
         focused = cls._focused_excerpt(compact, query) if query else compact
         if len(focused) <= max_chars:
             return focused
@@ -70,7 +70,10 @@ class CitationFormatter:
         terms = [
             term
             for term in re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]{2,}", query.casefold())
-            if term not in {"我想", "可以", "怎么", "一个", "一下", "什么", "如果"}
+            if term not in {
+                "我想", "可以", "怎么", "一个", "一下", "什么", "如果",
+                "不知道", "比较", "合适", "练习",
+            }
         ]
         if not terms:
             return text

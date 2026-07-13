@@ -24,6 +24,23 @@ class KnowledgeService:
 
     def query(self, query: str, kb_type: KnowledgeBaseType) -> KnowledgeQueryResponse:
         """Query a selected knowledge base and return cited results."""
+        if (
+            kb_type == KnowledgeBaseType.SUPPORT_RESOURCES
+            and _requests_unavailable_campus_resource(query)
+        ):
+            answer, citations, unknown, confidence, retrieval = self.formatter.format(
+                [],
+                retriever_name=self.retriever.__class__.__name__,
+                top_k=3,
+                query=query,
+            )
+            return KnowledgeQueryResponse(
+                answer=answer,
+                citations=citations,
+                unknown=unknown,
+                confidence=confidence,
+                retrieval=retrieval,
+            )
         documents = self.loader.load(kb_type)
         chunks = self.chunker.chunk(documents)
         results = self.retriever.retrieve(query=query, chunks=chunks)
@@ -41,3 +58,21 @@ class KnowledgeService:
             retrieval=retrieval,
         )
 
+
+def _requests_unavailable_campus_resource(query: str) -> bool:
+    """Return whether a query requires school-specific data not currently stored."""
+    normalized = query.casefold()
+    campus_terms = (
+        "学校心理中心",
+        "校心理中心",
+        "校园心理中心",
+        "学校咨询中心",
+        "校内心理中心",
+        "校内咨询中心",
+        "学校资源",
+        "校内资源",
+        "辅导员联系方式",
+        "campus counseling center",
+        "campus support office",
+    )
+    return any(term in normalized for term in campus_terms)

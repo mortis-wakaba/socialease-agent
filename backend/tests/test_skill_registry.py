@@ -2,6 +2,7 @@
 
 from app.models import Intent, RiskLevel, SafetyResult
 from app.skills.registry import SkillRegistry
+from app.skills.support_rag import SupportRagSkill
 
 
 def test_skill_registry_lists_core_agent_skills() -> None:
@@ -39,6 +40,16 @@ def test_skill_registry_resolves_specialized_skill_for_non_crisis_chat() -> None
     skill = registry.resolve_for_chat(Intent.ROLEPLAY_PRACTICE, safety_result)
 
     assert skill.descriptor.name == "roleplay_skill"
+
+
+def test_partial_registry_resolves_registered_skill_without_general_fallback() -> None:
+    """Injected targeted registries should not eagerly require a fallback skill."""
+    registry = SkillRegistry(executable_skills=[SupportRagSkill()])
+    safety_result = SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
+
+    skill = registry.resolve_for_chat(Intent.CAMPUS_RESOURCE_QUERY, safety_result)
+
+    assert skill.descriptor.name == "support_resource_rag_skill"
 
 
 def test_descriptor_for_intent_exposes_specialized_skill_metadata() -> None:

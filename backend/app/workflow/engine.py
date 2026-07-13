@@ -8,6 +8,13 @@ from time import perf_counter
 from uuid import uuid4
 
 from app.llm.factory import create_llm_client
+from app.guardrails.output import (
+    GroundingMetadata,
+    OutputGuardrail,
+    OutputGuardrailAction,
+    OutputGuardrailResult,
+    create_output_guardrail,
+)
 from app.db.factory import repository_factory
 from app.db.repositories import ExposureRepository, UserProfileRepository
 from app.memory.settings_store import UserMemorySettingsRepository
@@ -22,10 +29,11 @@ from app.models import (
     TracePrivacySummary,
     TraceRecord,
 )
+from app.models_intervention import InterventionPlan
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.actions import HarnessAction
 from app.safety.permissions import PermissionAction, PermissionDecision, SafetyPermissionGate
-from app.skills import SkillContext, SkillRegistry
+from app.skills import SkillContext, SkillRegistry, SkillResult
 from app.tracing.logger import TraceLogger
 from app.memory.context_builder import build_memory_context
 from app.protocols.service import protocol_service
@@ -58,12 +66,14 @@ class AgentHarness:
         user_profile_repository: UserProfileRepository | None = None,
         exposure_repository: ExposureRepository | None = None,
         memory_settings_repository: UserMemorySettingsRepository | None = None,
+        output_guardrail: OutputGuardrail | None = None,
     ) -> None:
         self.trace_logger = trace_logger
         self.safety_classifier = safety_classifier or create_safety_classifier()
         self.intent_router = intent_router or self._default_intent_router()
         self.skill_registry = skill_registry or SkillRegistry()
         self.permission_gate = permission_gate or SafetyPermissionGate()
+        self.output_guardrail = output_guardrail or create_output_guardrail()
         self.hooks = tuple(hooks or ())
         factory = repository_factory()
         self.user_profile_repository = user_profile_repository or factory.user_profile_repository()
@@ -225,6 +235,37 @@ class AgentHarness:
                     category=category,
                 )
 
+        output_guardrail_result = await self.output_guardrail.evaluate(
+            user_message=request.message,
+            response=skill_result.response,
+            intent=intent_result.intent,
+            risk_level=safety_result.risk_level,
+            selected_skill=skill.descriptor.name,
+            selected_agent=skill_result.selected_agent,
+            grounding_metadata=_grounding_metadata(skill_result.structured_data),
+        )
+        skill_result = _apply_output_guardrail_result(
+            skill_result=skill_result,
+            result=output_guardrail_result,
+        )
+        if output_guardrail_result.semantic_check_failed:
+            semantic_error = (
+                output_guardrail_result.semantic_error_type.value
+                if output_guardrail_result.semantic_error_type is not None
+                else "unknown"
+            )
+            if output_guardrail_result.semantic_schema_error_code is not None:
+                semantic_error = (
+                    f"{semantic_error}:"
+                    f"{output_guardrail_result.semantic_schema_error_code.value}"
+                )
+            if output_guardrail_result.semantic_schema_error_field is not None:
+                semantic_error = (
+                    f"{semantic_error}:"
+                    f"{output_guardrail_result.semantic_schema_error_field}"
+                )
+            errors.append(f"OUTPUT_GUARDRAIL_SEMANTIC_FAILURE:{semantic_error}")
+
         _run_after_action_hooks(
             hooks=self.hooks,
             run_context=run_context,
@@ -267,7 +308,7 @@ class AgentHarness:
             protocol_id=protocol_to_consume,
             user_id=request.user_id,
         )
-        memory_payload = {
+        memory_payload: dict[str, object] = {
             "memory_kind": "intervention_plan",
             "harness_action": harness_action.value,
             "selected_skill": selected_skill,
@@ -368,6 +409,51 @@ class AgentHarness:
             action=action,
             permission_action=permission_decision.action.value,
             permission_reason=permission_decision.reason,
+            agent_loop_used=skill_result.structured_data.get("agent_loop_used") is True,
+            agent_loop_stop_reason=_optional_string(
+                skill_result.structured_data.get("agent_loop_stop_reason")
+            ),
+            agent_loop_steps=_agent_loop_steps(skill_result.structured_data),
+            output_guardrail_action=output_guardrail_result.action.value,
+            output_guardrail_categories=[
+                category.value for category in output_guardrail_result.categories
+            ],
+            output_guardrail_semantic_checked=output_guardrail_result.semantic_checked,
+            output_guardrail_semantic_failed=(
+                output_guardrail_result.semantic_check_failed
+            ),
+            output_guardrail_semantic_error_type=(
+                output_guardrail_result.semantic_error_type.value
+                if output_guardrail_result.semantic_error_type is not None
+                else None
+            ),
+            output_guardrail_semantic_schema_error_code=(
+                output_guardrail_result.semantic_schema_error_code.value
+                if output_guardrail_result.semantic_schema_error_code is not None
+                else None
+            ),
+            output_guardrail_semantic_schema_error_field=(
+                output_guardrail_result.semantic_schema_error_field
+            ),
+            output_guardrail_semantic_retry_attempted=(
+                output_guardrail_result.semantic_retry_attempted
+            ),
+            output_guardrail_violation_tier=(
+                output_guardrail_result.violation_tier.value
+                if output_guardrail_result.violation_tier is not None
+                else None
+            ),
+            output_guardrail_repair_attempted=(
+                output_guardrail_result.repair_attempted
+            ),
+            output_guardrail_repair_succeeded=(
+                output_guardrail_result.repair_succeeded
+            ),
+            output_guardrail_recheck_action=(
+                output_guardrail_result.repair_recheck_action.value
+                if output_guardrail_result.repair_recheck_action is not None
+                else None
+            ),
             output=output_decision.persisted_text,
             product_safe=True,
             privacy_summary=privacy_summary,
@@ -409,6 +495,110 @@ def _optional_string(value: object) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _grounding_metadata(
+    structured_data: dict[str, object],
+) -> GroundingMetadata | None:
+    """Extract only bounded retrieval facts from one SkillResult."""
+    nested = structured_data.get("grounding_metadata")
+    if isinstance(nested, dict):
+        try:
+            return GroundingMetadata.model_validate(nested)
+        except ValueError:
+            return None
+
+    citations = structured_data.get("citations")
+    if not isinstance(citations, list):
+        return None
+    citation_titles = [
+        str(item["title"])[:160]
+        for item in citations[:10]
+        if isinstance(item, dict) and isinstance(item.get("title"), str)
+    ]
+    unknown = structured_data.get("retrieval_unknown", structured_data.get("unknown"))
+    return GroundingMetadata(
+        retrieval_unknown=unknown if isinstance(unknown, bool) else None,
+        citation_count=len(citations),
+        citation_titles=citation_titles,
+        resource_contact_verified=(
+            structured_data.get("resource_contact_verified") is True
+        ),
+    )
+
+
+def _apply_output_guardrail_result(
+    *,
+    skill_result: SkillResult,
+    result: OutputGuardrailResult,
+) -> SkillResult:
+    """Return a normalized SkillResult annotated with the global decision."""
+    structured_data = {
+        **skill_result.structured_data,
+        "output_guardrail": {
+            "action": result.action.value,
+            "categories": [category.value for category in result.categories],
+            "sources": result.sources,
+            "semantic_checked": result.semantic_checked,
+            "semantic_check_failed": result.semantic_check_failed,
+            "semantic_error_type": (
+                result.semantic_error_type.value
+                if result.semantic_error_type is not None
+                else None
+            ),
+            "semantic_schema_error_code": (
+                result.semantic_schema_error_code.value
+                if result.semantic_schema_error_code is not None
+                else None
+            ),
+            "semantic_schema_error_field": result.semantic_schema_error_field,
+            "semantic_retry_attempted": result.semantic_retry_attempted,
+            "violation_tier": (
+                result.violation_tier.value
+                if result.violation_tier is not None
+                else None
+            ),
+            "repair_attempted": result.repair_attempted,
+            "repair_succeeded": result.repair_succeeded,
+            "repair_recheck_action": (
+                result.repair_recheck_action.value
+                if result.repair_recheck_action is not None
+                else None
+            ),
+        },
+    }
+    if result.action in {
+        OutputGuardrailAction.REPAIR,
+        OutputGuardrailAction.REPLACE,
+    }:
+        structured_data.update(
+            {
+                "output_guardrail_replaced": (
+                    result.action == OutputGuardrailAction.REPLACE
+                ),
+                "original_selected_agent": skill_result.selected_agent,
+            }
+        )
+        selected_agent = (
+            "output_guardrail_repair"
+            if result.action == OutputGuardrailAction.REPAIR
+            else "output_guardrail"
+        )
+    else:
+        selected_agent = skill_result.selected_agent
+    return SkillResult(
+        response=result.response,
+        structured_data=structured_data,
+        selected_agent=selected_agent,
+    )
+
+
+def _agent_loop_steps(structured_data: dict[str, object]) -> list[dict[str, object]]:
+    """Return at most three already-redacted loop step summaries for tracing."""
+    value = structured_data.get("agent_loop_steps")
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value[:3] if isinstance(item, dict)]
 
 
 def _error_categories(errors: list[str]) -> list[str]:
@@ -512,10 +702,8 @@ def _permission_limited_result(
     user_id: str,
     session_id: str | None,
     request_hash: str,
-) -> "SkillResult":
+) -> SkillResult:
     """Return a bounded response when an action cannot run immediately."""
-    from app.skills.base import SkillResult
-
     if decision.action == PermissionAction.ASK_CONSENT:
         protocol = protocol_service.create_consent_request(
             user_id=user_id,
@@ -592,10 +780,8 @@ def _hook_limited_result(
     *,
     hook_decision: HookDecision,
     harness_action: HarnessAction,
-) -> "SkillResult":
+) -> SkillResult:
     """Return a bounded response when a hook blocks an action."""
-    from app.skills.base import SkillResult
-
     structured_data = {
         "agent": "lead_harness",
         "action": "action_blocked",
@@ -621,13 +807,10 @@ def _create_intervention_plan(
     selected_skill: str,
     permission_decision: PermissionDecision,
     skill_result_data: dict[str, object],
-    safety_result: "SafetyResult",
+    safety_result: SafetyResult,
     protocol_id: str | None,
-) -> "InterventionPlan | None":
+) -> InterventionPlan | None:
     """Create a session-level plan for non-crisis harness actions."""
-    from app.models import SafetyResult
-    from app.models_intervention import InterventionPlan
-
     if safety_result.risk_level == RiskLevel.CRISIS:
         return None
     if permission_decision.action == PermissionAction.BLOCK:
@@ -685,7 +868,7 @@ def _run_after_action_hooks(
     hooks: tuple[AgentHarnessHook, ...],
     run_context: RunContext,
     harness_action: HarnessAction,
-    skill_result: "SkillResult",
+    skill_result: SkillResult,
 ) -> None:
     """Run after-action hooks."""
     for hook in hooks:

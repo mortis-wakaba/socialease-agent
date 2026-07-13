@@ -278,19 +278,15 @@ async def test_internal_knowledge_allows_developer_role_in_production(
 
 
 @pytest.mark.anyio
-async def test_demo_campus_resources_are_labeled_demo(
+async def test_removed_demo_campus_knowledge_type_is_rejected(
     client: httpx.AsyncClient,
 ) -> None:
     response = await client.post(
         "/api/knowledge/query",
         json={
-            "query": "booking method eligibility urgent help",
+            "query": "campus support",
             "kb_type": "campus_resources_demo",
         },
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["unknown"] is False
-    assert payload["citations"][0]["source_type"] == "demo"
-    assert "Demo" in payload["citations"][0]["title"]
+    assert response.status_code == 422

@@ -1,0 +1,6 @@
+{"id":"general_support_demo","input":"我在小组讨论前很紧张，不知道怎么开口。","intent":"emotional_support","risk_level":"low","demo":true}
+{"id":"roleplay_support_demo","input":"我想先练习一次课堂发言，但希望随时可以暂停。","intent":"roleplay_practice","risk_level":"medium","demo":true}
+{"id":"asking_teacher_support_demo","input":"我想向老师提问，但想先用书面方式练一下。","intent":"emotional_support","risk_level":"low","demo":true}
+{"id":"boundary_refusal_support_demo","input":"我想练习拒绝别人，不希望被要求解释很多理由。","intent":"roleplay_practice","risk_level":"medium","demo":true}
+{"id":"interview_intro_support_demo","input":"我想练习三句话的面试自我介绍，紧张时可以暂停。","intent":"roleplay_practice","risk_level":"low","demo":true}
+{"id":"dorm_communication_support_demo","input":"我想和室友沟通晚上的声音问题，先帮我拆成一句话。","intent":"emotional_support","risk_level":"medium","demo":true}

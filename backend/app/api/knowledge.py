@@ -13,7 +13,6 @@ knowledge_service = KnowledgeService()
 PUBLIC_KNOWLEDGE_BASES = {
     KnowledgeBaseType.SOCIAL_SKILLS,
     KnowledgeBaseType.SUPPORT_RESOURCES,
-    KnowledgeBaseType.CAMPUS_RESOURCES_DEMO,
 }
 
 

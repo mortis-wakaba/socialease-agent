@@ -133,6 +133,50 @@ export default function TracePage() {
           body: `Selected agent: ${trace.selected_agent}`,
           badge: <Badge>{trace.latency_ms.toFixed(1)} ms</Badge>
         },
+        ...(trace.agent_loop_used
+          ? [
+              {
+                title: "Resource Agent Loop",
+                body: (trace.agent_loop_steps ?? [])
+                  .map(
+                    (step) =>
+                      `${step.step}. ${step.action} → ${step.outcome}` +
+                      `${step.query ? `\nquery: ${step.query}` : ""}` +
+                      `${step.citation_count !== undefined ? `\ncitations: ${step.citation_count}` : ""}`
+                  )
+                  .join("\n\n"),
+                badge: (
+                  <Badge tone="info">
+                    {trace.agent_loop_stop_reason ?? "running"}
+                  </Badge>
+                )
+              }
+            ]
+          : []),
+        {
+          title: "Output Guardrail",
+          body:
+            (trace.output_guardrail_categories ?? []).length > 0
+              ? `Detected: ${trace.output_guardrail_categories?.join(", ")}`
+              : trace.output_guardrail_semantic_failed
+                ? `Semantic check failed (${trace.output_guardrail_semantic_error_type ?? "unknown"}${trace.output_guardrail_semantic_schema_error_code ? `: ${trace.output_guardrail_semantic_schema_error_code}` : ""}${trace.output_guardrail_semantic_schema_error_field ? `: ${trace.output_guardrail_semantic_schema_error_field}` : ""}); deterministic checks remained active.`
+                : "No product-boundary violation detected.",
+          badge: (
+            <Badge
+              tone={
+                trace.output_guardrail_action === "replace"
+                  ? "danger"
+                  : trace.output_guardrail_action === "augment"
+                    ? "warn"
+                    : trace.output_guardrail_action === "repair"
+                      ? "info"
+                      : "good"
+              }
+            >
+              {trace.output_guardrail_action ?? "not_checked"}
+            </Badge>
+          )
+        },
         {
           title: "Memory",
           body: trace.privacy_summary.fields

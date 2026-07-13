@@ -49,6 +49,7 @@ async def test_get_harness_capabilities(client: httpx.AsyncClient) -> None:
     assert payload["permission_actions"] == ["allow", "ask_consent", "down_shift", "block", "escalate"]
     assert "support_resources" in payload["knowledge_layers"]
     assert "llm_usage" in payload["observation"]
+    assert "bounded_resource_agent_loop_steps" in payload["observation"]
 
     skills = {skill["name"]: skill for skill in payload["skills"]}
     assert skills["crisis_escalation_skill"]["has_manifest"] is True

@@ -49,9 +49,14 @@ class SkillRegistry:
             Intent.CAMPUS_RESOURCE_QUERY: "support_resource_rag_skill",
         }
         skill_name = skill_name_by_intent.get(intent, "general_support_skill")
-        return self._executable_by_name.get(
-            skill_name,
-            self._executable_by_name["general_support_skill"],
+        skill = self._executable_by_name.get(skill_name)
+        if skill is not None:
+            return skill
+        fallback = self._executable_by_name.get("general_support_skill")
+        if fallback is not None:
+            return fallback
+        raise LookupError(
+            f"Skill registry has neither {skill_name!r} nor 'general_support_skill'."
         )
 
     def descriptor_for_intent(self, intent: Intent) -> SkillDescriptor | None:

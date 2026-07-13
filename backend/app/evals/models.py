@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from app.models import Intent, RiskLevel
 from app.models_knowledge import KnowledgeBaseType
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 
 class SafetyEvalCase(BaseModel):
@@ -86,6 +86,25 @@ class ProductBoundaryEvalCase(BaseModel):
     expected: dict[str, object] = Field(default_factory=dict)
 
 
+class OutputGuardrailEvalCase(BaseModel):
+    """One demo-only final-output allow/replace expectation."""
+
+    id: str
+    user_message: str
+    response: str
+    intent: Intent
+    risk_level: RiskLevel
+    selected_skill: str
+    selected_agent: str
+    expected_action: Literal["allow", "repair", "replace"]
+    expected_categories: list[str] = Field(default_factory=list)
+    semantic_violations: list[dict[str, str]] = Field(default_factory=list)
+    expected_repaired_response: str | None = None
+    repair_recheck_violations: list[dict[str, str]] = Field(default_factory=list)
+    grounding_metadata: dict[str, object] | None = None
+    demo: Literal[True]
+
+
 class EvalMetric(BaseModel):
     """Aggregate result for one evaluation family."""
 
@@ -115,6 +134,23 @@ class EvalReport(BaseModel):
     continuation_crisis_detection: EvalMetric
     unsafe_exposure_progression_block_rate: EvalMetric
     stale_plan_cancellation_rate: EvalMetric
+    output_guardrail_violation_recall: EvalMetric
+    output_guardrail_policy_containment_rate: EvalMetric
+    output_guardrail_hard_safety_containment_rate: EvalMetric
+    output_guardrail_hard_safety_detection_recall: EvalMetric
+    output_guardrail_soft_fact_detection_rate: EvalMetric
+    output_guardrail_violation_precision: EvalMetric
+    output_guardrail_safe_allow_precision: EvalMetric
+    output_guardrail_false_positive_avoidance: EvalMetric
+    output_guardrail_category_accuracy: EvalMetric
+    output_guardrail_category_detection_recall: EvalMetric
+    output_guardrail_semantic_detection_recall: EvalMetric
+    output_guardrail_high_risk_detection_rate: EvalMetric
+    output_guardrail_repair_success_rate: EvalMetric
+    output_guardrail_repair_trigger_rate: EvalMetric
+    output_guardrail_repair_success_given_attempt: EvalMetric
+    output_guardrail_end_to_end_repair_rate: EvalMetric
+    output_guardrail_repair_recheck_block_rate: EvalMetric
 
 
 class EvalStepTrace(BaseModel):

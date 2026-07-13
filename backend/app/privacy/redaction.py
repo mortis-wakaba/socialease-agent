@@ -49,7 +49,11 @@ REDACTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "third_party_identity",
-        re.compile(r"(?:室友|同学|老师|辅导员|朋友|男朋友|女朋友)[:：\s]*[\u4e00-\u9fff]{2,4}"),
+        re.compile(
+            r"(?:室友|同学|老师|辅导员|朋友|男朋友|女朋友)"
+            r"(?:[:：\s]+|(?:叫|名叫|是))"
+            r"[\u4e00-\u9fff·]{2,8}"
+        ),
     ),
 )
 
@@ -68,3 +72,26 @@ def redact_sensitive_identifiers(text: str) -> tuple[str, list[str]]:
 def detect_sensitive_categories(text: str) -> list[str]:
     """Return deterministic sensitive identifier categories without redacting text."""
     return [label for label, pattern in REDACTION_PATTERNS if pattern.search(text)]
+
+
+def redact_validated_candidates(
+    text: str,
+    candidates: list[tuple[str, str]],
+) -> tuple[str, list[str]]:
+    """Redact model-proposed exact spans after deterministic validation."""
+    redacted = text
+    detected: list[str] = []
+    allowed_labels = {label for label, _ in REDACTION_PATTERNS}
+    for raw_span, label in candidates[:8]:
+        span = raw_span.strip()
+        if (
+            label not in allowed_labels
+            or not 2 <= len(span) <= 80
+            or span not in redacted
+            or span.startswith("[redacted:")
+        ):
+            continue
+        redacted = redacted.replace(span, f"[redacted:{label}]")
+        if label not in detected:
+            detected.append(label)
+    return redacted, detected

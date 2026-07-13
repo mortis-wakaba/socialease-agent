@@ -65,6 +65,7 @@ async def get_harness_capabilities(
             "PrivacyGuardHook",
             "GET /api/runs/{run_id}",
             "llm_usage",
+            "bounded_resource_agent_loop_steps",
             "backend/app/evals",
         ],
         safety_boundaries=[

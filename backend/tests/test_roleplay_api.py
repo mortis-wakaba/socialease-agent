@@ -50,7 +50,7 @@ async def test_roleplay_start_creates_session(client: httpx.AsyncClient) -> None
 
 
 @pytest.mark.anyio
-async def test_roleplay_start_falls_back_without_guidance(
+async def test_roleplay_start_uses_reviewed_club_guidance(
     client: httpx.AsyncClient,
 ) -> None:
     response = await client.post(
@@ -65,9 +65,10 @@ async def test_roleplay_start_falls_back_without_guidance(
     assert response.status_code == 200
     payload = response.json()
     guidance = payload["session"]["retrieved_guidance"]
-    assert guidance["no_guidance_found"] is True
-    assert guidance["citations"] == []
-    assert "通用、安全的练习脚手架" in payload["opening_message"]
+    assert guidance["no_guidance_found"] is False
+    assert guidance["citations"]
+    assert guidance["citations"][0]["title"] == "Club Icebreaker Practice Guide"
+    assert "社交技巧知识库" in payload["opening_message"]
 
 
 @pytest.mark.anyio
