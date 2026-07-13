@@ -1,0 +1,316 @@
+backend/data/knowledge_base/social_skills/project_authored/club_icebreaker.md
+  s_f8dae88ec33b77::t_0a48855e4a7b2d 1-22
+backend/app/evals/models.py
+  s_f8dae88ec33b77::t_15fd8e54df72e9 99,102-103,149
+  s_f8dae88ec33b77::t_ea51f9d8749297 138,146-147,150-152
+  s_f8dae88ec33b77::t_2a832c13e69c37 139-141
+  s_f8dae88ec33b77::t_8c314cd8db1c76 153
+  s_f8dae88ec33b77::t_1707969e218af0 104
+  s_f8dae88ec33b77::t_40c61a55f0780b 8,89-98,100-101,105-107,137,142-145,148
+backend/tests/test_skill_registry.py
+  s_f8dae88ec33b77::t_b24021f3b762b6 5,45-52
+  s_f8dae88ec33b77::t_3758522bd06c59 53-54
+Makefile
+  s_f8dae88ec33b77::t_09b57e4235aa4b 1,19-22
+  s_f8dae88ec33b77::t_d5a3325ddbd4fa 18
+  s_f8dae88ec33b77::t_9386b5dcb93016 23
+backend/app/guardrails/__init__.py
+  s_f8dae88ec33b77::t_5a398245b00b07 1-5
+backend/tests/test_resource_guidance_loop.py
+  s_f8dae88ec33b77::t_3c19f916a89541 1-8,11-12,14,16,18,20-57,73-203,205-234
+  s_f8dae88ec33b77::t_1cf2cb66113d43 204,235
+  s_f8dae88ec33b77::t_cdcd77319b702d 267-271
+  s_f8dae88ec33b77::t_7b4d3ad90d040a 9-10,13,15,17,19,58-72,236-266
+backend/app/evals/run.py
+  s_f8dae88ec33b77::t_40c61a55f0780b 4,18,27-30,442-476,518-520,533-543,550-552
+  s_f8dae88ec33b77::t_8c314cd8db1c76 553,566-568
+  s_f8dae88ec33b77::t_ea51f9d8749297 521-523,544-549,556-564
+  s_f8dae88ec33b77::t_2a832c13e69c37 524-532
+  s_f8dae88ec33b77::t_15fd8e54df72e9 554-555,565
+backend/app/evals/data/deepeval_boundary_negative.jsonl
+  s_f8dae88ec33b77::t_b4006fbf3f4db9 1-4
+backend/app/knowledge/retriever.py
+  s_f8dae88ec33b77::t_9c4af0b71b7d2d 19,24,63-67
+  s_f8dae88ec33b77::t_0473e3933347a5 92-95
+backend/tests/test_output_guardrail_quality.py
+  s_f8dae88ec33b77::t_827de7388cbe64 71
+  s_f8dae88ec33b77::t_ea51f9d8749297 58,66,70,73-75
+  s_f8dae88ec33b77::t_ce52f435df48e8 29-30
+  s_f8dae88ec33b77::t_bb3b25182fd057 79
+  s_f8dae88ec33b77::t_c8661c696cc1f2 59-65,98-99
+  s_f8dae88ec33b77::t_f957d1bf701445 80-86
+  s_f8dae88ec33b77::t_09b57e4235aa4b 1-11,16-28,31-37,41-43,45-47,57,67-69,72,87-88,94-97,100-102
+  s_f8dae88ec33b77::t_f325a6436f8ba2 12-15,38-40,44,48-56,76-78,89-93,103
+backend/app/skills/support_rag.py
+  s_f8dae88ec33b77::t_1cf2cb66113d43 9,63,77-90
+  s_f8dae88ec33b77::t_1707969e218af0 65-70
+  s_f8dae88ec33b77::t_34163212c20ad1 6-7,18,22-25,28-31,35-39,41-46,49-50,59-62,64
+backend/tests/test_deepeval_quality.py
+  s_f8dae88ec33b77::t_eece1fcbfcc6c6 23,26
+  s_f8dae88ec33b77::t_ee50c129daf9a0 157-160
+  s_f8dae88ec33b77::t_b4ccdeea1a2aa2 5,28,32,75-83,180,185,189-190
+  s_f8dae88ec33b77::t_d5a3325ddbd4fa 1-4,6-22,24-25,27,30-31,34,39-59,67-74,146-156,161-175,178-179,181-184,186-188,283
+  s_f8dae88ec33b77::t_63ee25918b552e 60,84-87,89-94,102-105,112-121,143-145,242,259-282
+  s_f8dae88ec33b77::t_7e66c19fa0c017 177
+  s_f8dae88ec33b77::t_6830a67a0e30dd 191-201,209,217-221
+  s_f8dae88ec33b77::t_0ea69ce6cbc79b 29,33,35-38,61-66,88,95-101,106-111,122-142,176,202-208,210-216,222-241,243-258
+backend/data/knowledge_base/social_skills/project_authored/boundary_refusal.md
+  s_f8dae88ec33b77::t_0a48855e4a7b2d 1-23
+backend/app/evals/data/deepeval_boundary.jsonl
+  s_f8dae88ec33b77::t_d5a3325ddbd4fa 1-2
+  s_f8dae88ec33b77::t_b4006fbf3f4db9 3-6
+backend/.env.example
+  s_f8dae88ec33b77::t_963a93a4a17d04 3
+backend/app/llm/prompts.py
+  s_f8dae88ec33b77::t_1707969e218af0 251,258-259
+  s_f8dae88ec33b77::t_c6c0053b8cf9ed 237-239
+  s_f8dae88ec33b77::t_9b76d34c3c6d2d 127-128
+  s_f8dae88ec33b77::t_376acefe838a65 164-168
+  s_f8dae88ec33b77::t_cf302ac4cfe62b 118-119,292-333
+  s_f8dae88ec33b77::t_8b139f8a471670 197-201,214-215
+  s_f8dae88ec33b77::t_7039ee7f77d975 208-213,216,222,229-230,233
+  s_f8dae88ec33b77::t_be4725f541c80b 223-228
+  s_f8dae88ec33b77::t_5a398245b00b07 190-196,231,234-236,240-250,252-257,260,289-291
+  s_f8dae88ec33b77::t_e111f61693a921 141-142,145,152-154,158-160
+  s_f8dae88ec33b77::t_5a4fbfe3534052 202-207,217-221
+  s_f8dae88ec33b77::t_0473e3933347a5 146-150
+  s_f8dae88ec33b77::t_34163212c20ad1 1-3
+  s_f8dae88ec33b77::t_20076f0e3b84c6 155-157
+  s_f8dae88ec33b77::t_c419c7f66f13b3 232,261-288
+  s_f8dae88ec33b77::t_e2a11cd3bc4f75 120-126,129-140,143-144,151,161-163,169-189
+backend/tests/test_deepeval_fixtures.py
+  s_f8dae88ec33b77::t_f15309ea75d8c3 1-22,24-38
+  s_f8dae88ec33b77::t_63ee25918b552e 23
+backend/app/knowledge/formatter.py
+  s_f8dae88ec33b77::t_dd050c71fc20f5 51-53,57,61-62
+  s_f8dae88ec33b77::t_0473e3933347a5 73-76
+backend/app/skills/support.py
+  s_f8dae88ec33b77::t_6f78e93043311f 1,6-7,26-30,34-38,40-43,46-47,55
+.env.example
+  s_f8dae88ec33b77::t_963a93a4a17d04 8
+backend/tests/test_output_guardrail_evals.py
+  s_f8dae88ec33b77::t_0b5bb772694ada 10,30-45,47-51,132-157
+  s_f8dae88ec33b77::t_2a832c13e69c37 92-94
+  s_f8dae88ec33b77::t_7249433b25478d 13,16-29,110-131
+  s_f8dae88ec33b77::t_6af4e83f5ab275 65,68
+  s_f8dae88ec33b77::t_09b57e4235aa4b 1-3,5-9,11-12,14-15,52-59,70-90,95-98,101,107-109
+  s_f8dae88ec33b77::t_de9387fd5e85d1 4,46
+  s_f8dae88ec33b77::t_8c314cd8db1c76 106
+  s_f8dae88ec33b77::t_15fd8e54df72e9 102
+  s_f8dae88ec33b77::t_ea51f9d8749297 91,99-100,103-105
+  s_f8dae88ec33b77::t_d9629c2cc807ec 60-64,66-67,69
+backend/app/memory/context_builder.py
+  s_f8dae88ec33b77::t_33cacb381fc417 73-74
+backend/data/knowledge_base/support_resources/external/nhs_cbt_self_help.md
+  s_f8dae88ec33b77::t_0a48855e4a7b2d 18-23
+frontend/app/privacy/page.tsx
+  s_f8dae88ec33b77::t_f46eed2e0366a3 40
+backend/app/agents/support_generation.py
+  s_f8dae88ec33b77::t_c9ca370961956d 309-310
+  s_f8dae88ec33b77::t_376acefe838a65 18-21,136-143,146-155,171-174
+  s_f8dae88ec33b77::t_9b76d34c3c6d2d 82-86,89,217-220,227-230,232,246-253,255
+  s_f8dae88ec33b77::t_94f47008d2bca1 15
+  s_f8dae88ec33b77::t_6830a67a0e30dd 144-145,156,164
+  s_f8dae88ec33b77::t_e111f61693a921 17,131-135,161,275-279,281-289,311-312,334-360,362-375
+  s_f8dae88ec33b77::t_0473e3933347a5 80-81,87-88,90,95-97,99-116,188,191,200-202,221-224,231,256-261,313-333
+  s_f8dae88ec33b77::t_1ef611f9be6648 159
+  s_f8dae88ec33b77::t_365476806c4f78 1-14,16,22-79,91-94,98,117-130,157-158,160,162-163,165-170,175-187,189-190,192-199,203-216,225-226,233-245,254,262-274,280,290-308,361
+.gitignore
+  s_f8dae88ec33b77::t_8592b6120ca5b9 54
+backend/app/skills/registry.py
+  s_f8dae88ec33b77::t_b24021f3b762b6 52-59
+backend/tests/test_evals.py
+  s_f8dae88ec33b77::t_40c61a55f0780b 8,30,66,71-74,77
+  s_f8dae88ec33b77::t_8c314cd8db1c76 82
+  s_f8dae88ec33b77::t_ea51f9d8749297 67,75-76,79-81
+  s_f8dae88ec33b77::t_2a832c13e69c37 68-70
+  s_f8dae88ec33b77::t_15fd8e54df72e9 78
+frontend/lib/types.ts
+  s_f8dae88ec33b77::t_0f589f3af145c3 38-50
+  s_f8dae88ec33b77::t_463c679a28e2ae 56,58
+  s_f8dae88ec33b77::t_8c63c86363705b 51,60-62
+  s_f8dae88ec33b77::t_d2ef5b9bf6e16c 57,59
+  s_f8dae88ec33b77::t_1eb2b813290294 52-54
+  s_f8dae88ec33b77::t_c6c0053b8cf9ed 55
+backend/pytest.ini
+  s_f8dae88ec33b77::t_d5a3325ddbd4fa 6
+backend/data/knowledge_base/social_skills/project_authored/asking_teacher.md
+  s_f8dae88ec33b77::t_0a48855e4a7b2d 2,4-6,9,12,14,16-22
+backend/requirements-eval.txt
+  s_f8dae88ec33b77::t_d5a3325ddbd4fa 1,3
+  s_f8dae88ec33b77::t_eece1fcbfcc6c6 2
+backend/data/knowledge_base/safety_policy/project_authored/support_resource_policy.md
+  s_f8dae88ec33b77::t_2f6cd5340263e0 19
+backend/data/knowledge_base/social_skills/project_authored/group_discussion.md
+  s_f8dae88ec33b77::t_0a48855e4a7b2d 2,4-6,9,12,14,16-22
+frontend/app/trace/page.tsx
+  s_f8dae88ec33b77::t_0f589f3af145c3 136-155
+  s_f8dae88ec33b77::t_ac4852ff2e72f6 167-170
+  s_f8dae88ec33b77::t_8c63c86363705b 171-173
+  s_f8dae88ec33b77::t_1eb2b813290294 157-161,163-166,174-179
+  s_f8dae88ec33b77::t_d2ef5b9bf6e16c 162
+  s_f8dae88ec33b77::t_079025337060f8 156
+backend/tests/test_output_guardrail.py
+  s_f8dae88ec33b77::t_02071f00322520 48-69,237-277,279-350
+  s_f8dae88ec33b77::t_7005cd9e84792e 14,16,32,42,377-380,382,413,416-417,429,431-458,491-495
+  s_f8dae88ec33b77::t_3061e0b32e9789 516,550-590
+  s_f8dae88ec33b77::t_763c03e1675437 278
+  s_f8dae88ec33b77::t_195450797bfeac 13,235-236,368-373,375,408-412,415,418-426,428
+  s_f8dae88ec33b77::t_6071431a480179 90-103,616-651
+  s_f8dae88ec33b77::t_d62e990caf7ca8 383-386,388-392,394-398,400-404,406
+  s_f8dae88ec33b77::t_505e2988201b0e 393
+  s_f8dae88ec33b77::t_ac4852ff2e72f6 517-549
+  s_f8dae88ec33b77::t_08384fdb73ac0a 8-9,11-12,15,121-177
+  s_f8dae88ec33b77::t_789f425f277583 603
+  s_f8dae88ec33b77::t_f737e277a51468 1-7,17-31,33-41,43-47,70-89,104-118,120,178-234,351-367,427,496-497,515,591-602,604-615
+  s_f8dae88ec33b77::t_902ff304e2883b 10,119,374,376,381,387,399,405,407,414,430,459-490,505-512
+  s_f8dae88ec33b77::t_8b139f8a471670 498-504,513-514
+backend/app/agents/resource_guidance.py
+  s_f8dae88ec33b77::t_34163212c20ad1 297
+  s_f8dae88ec33b77::t_88ad858acd611a 215
+  s_f8dae88ec33b77::t_cf302ac4cfe62b 1-214,216-295,298-303
+  s_f8dae88ec33b77::t_1cf2cb66113d43 296
+backend/app/knowledge/service.py
+  s_f8dae88ec33b77::t_635404192c710e 27-43,61-78
+backend/tests/test_rag_retrieval.py
+  s_f8dae88ec33b77::t_9c4af0b71b7d2d 57-93
+  s_f8dae88ec33b77::t_dd050c71fc20f5 4,94-107
+  s_f8dae88ec33b77::t_0ea69ce6cbc79b 110-121
+  s_f8dae88ec33b77::t_635404192c710e 108-109,122-131
+backend/app/workflow/engine.py
+  s_f8dae88ec33b77::t_963a93a4a17d04 11,13-17,69,76,238-244,246-251,417-424,528-543,568-569,574-575,579-581,587-593
+  s_f8dae88ec33b77::t_463c679a28e2ae 257-261,428-432,438-439,445,547-551,555
+  s_f8dae88ec33b77::t_d2ef5b9bf6e16c 262-266,435-437,440-444,554,556-560
+  s_f8dae88ec33b77::t_d0cc42253c79f0 252-256,267
+  s_f8dae88ec33b77::t_0f589f3af145c3 412-416,594-601
+  s_f8dae88ec33b77::t_139ab169730772 32,36,311,705,783,810,812,871
+  s_f8dae88ec33b77::t_8c63c86363705b 446-456,561-567,570-573,576-578,582-586
+  s_f8dae88ec33b77::t_1707969e218af0 12,245,500-527
+  s_f8dae88ec33b77::t_c6c0053b8cf9ed 425-427,433-434,544-546,552-553
+  s_f8dae88ec33b77::t_5d08ca75349873 268
+  s_f8dae88ec33b77::t_59ba1459b67376 602-603
+backend/tests/test_privacy_persistence_gate.py
+  s_f8dae88ec33b77::t_376acefe838a65 175-188
+backend/data/knowledge_base/safety_policy/project_authored/non_medical_boundary.md
+  s_f8dae88ec33b77::t_d5fded71f3e12f 14
+backend/tests/test_knowledge_api.py
+  s_f8dae88ec33b77::t_2f6cd5340263e0 281,287,292
+backend/app/models.py
+  s_f8dae88ec33b77::t_c6c0053b8cf9ed 103
+  s_f8dae88ec33b77::t_d2ef5b9bf6e16c 105,107
+  s_f8dae88ec33b77::t_8c63c86363705b 108-110
+  s_f8dae88ec33b77::t_0f589f3af145c3 96-98
+  s_f8dae88ec33b77::t_963a93a4a17d04 99-102
+  s_f8dae88ec33b77::t_463c679a28e2ae 104,106
+backend/app/evals/output_guardrail.py
+  s_f8dae88ec33b77::t_8c314cd8db1c76 59,160,239-241,244-250,328-331
+  s_f8dae88ec33b77::t_40c61a55f0780b 1-11,13-23,36-42,47-50,54,60-67,71-79,90-91,147-154,156,163-172,178,181-190,208,227-230,252-258,290-305,316-319,323,332-341,343
+  s_f8dae88ec33b77::t_463c679a28e2ae 29,31,275-279,281
+  s_f8dae88ec33b77::t_1707969e218af0 12,173-177
+  s_f8dae88ec33b77::t_f325a6436f8ba2 92-146
+  s_f8dae88ec33b77::t_15fd8e54df72e9 34-35,55,68-70,80-89,157,179-180,288-289,324,342
+  s_f8dae88ec33b77::t_2a832c13e69c37 32-33,44-46,161-162,193-200,211-226,282-287,307-315
+  s_f8dae88ec33b77::t_7249433b25478d 233
+  s_f8dae88ec33b77::t_827de7388cbe64 24-26,53,155,191-192,201-207,209-210,251,259-268,322
+  s_f8dae88ec33b77::t_c6c0053b8cf9ed 27-28,43,51-52,56-58,158-159,231-232,234-238,242-243,269-274,306,320-321,325-327
+  s_f8dae88ec33b77::t_d2ef5b9bf6e16c 30,280
+backend/tests/test_support_agent.py
+  s_f8dae88ec33b77::t_f16120ef2fe331 2,7,9-11,57-60,62-63,86-87,89,91-95,99,103,105-110
+  s_f8dae88ec33b77::t_9b76d34c3c6d2d 35,85
+  s_f8dae88ec33b77::t_1d2c0d0afe3d7b 119
+  s_f8dae88ec33b77::t_376acefe838a65 113-118,120-139
+  s_f8dae88ec33b77::t_708e86c0b3a1ed 111
+  s_f8dae88ec33b77::t_b4ccdeea1a2aa2 1,3-6,8,12-34,36-56,61,64-84,88,90,96-98,100-102,104,112
+  s_f8dae88ec33b77::t_0473e3933347a5 202-230,232-245,247-251,254-278
+  s_f8dae88ec33b77::t_20076f0e3b84c6 231,246,252-253
+  s_f8dae88ec33b77::t_e111f61693a921 140-201
+backend/app/evals/data/deepeval_resource.jsonl
+  s_f8dae88ec33b77::t_d5a3325ddbd4fa 2
+  s_f8dae88ec33b77::t_2f6cd5340263e0 1
+  s_f8dae88ec33b77::t_b4006fbf3f4db9 3-8
+backend/app/evals/loader.py
+  s_f8dae88ec33b77::t_40c61a55f0780b 12,75-82
+backend/app/models_resource_loop.py
+  s_f8dae88ec33b77::t_cf302ac4cfe62b 1-88,90-94
+  s_f8dae88ec33b77::t_34163212c20ad1 89
+backend/app/models_support_generation.py
+  s_f8dae88ec33b77::t_365476806c4f78 1-4,6-7,40-44,47-51,53-56
+  s_f8dae88ec33b77::t_e111f61693a921 5,8-18,45-46,52,57-59,61-75
+  s_f8dae88ec33b77::t_376acefe838a65 19-39,60
+backend/data/knowledge_base/support_resources/external/nimh_social_anxiety.md
+  s_f8dae88ec33b77::t_0a48855e4a7b2d 18-23
+backend/app/api/harness.py
+  s_f8dae88ec33b77::t_8badfaffa15d2c 68
+backend/app/skills/manifests/general_support/SKILL.md
+  s_f8dae88ec33b77::t_6f78e93043311f 17-19,31-32
+backend/tests/test_roleplay_api.py
+  s_f8dae88ec33b77::t_24e9f09ac670bb 53,68-71
+backend/app/evals/data/output_guardrail_cases.jsonl
+  s_f8dae88ec33b77::t_79b251932ae822 14-16
+  s_f8dae88ec33b77::t_76144c861a71bf 43
+  s_f8dae88ec33b77::t_bb3b25182fd057 45
+  s_f8dae88ec33b77::t_d94a29ef6333c6 17,26-27
+  s_f8dae88ec33b77::t_650d2fa3f23015 9,21
+  s_f8dae88ec33b77::t_a13cbaafa19dd8 1-8,11-13,18-20,22-25,28-29
+  s_f8dae88ec33b77::t_ae66962fde44e4 30-42,44
+  s_f8dae88ec33b77::t_0ec8806bf6e1d8 10
+backend/app/evals/deepeval_judge.py
+  s_f8dae88ec33b77::t_d5a3325ddbd4fa 1-133
+backend/data/knowledge_base/support_resources/external/nhs_inform_social_anxiety_self_help.md
+  s_f8dae88ec33b77::t_0a48855e4a7b2d 18-23
+backend/app/evals/gate.py
+  s_f8dae88ec33b77::t_40c61a55f0780b 28,32-35,38
+  s_f8dae88ec33b77::t_15fd8e54df72e9 39
+  s_f8dae88ec33b77::t_ea51f9d8749297 29,36-37,40-42
+  s_f8dae88ec33b77::t_8c314cd8db1c76 43
+  s_f8dae88ec33b77::t_2a832c13e69c37 30-31
+backend/app/skills/manifests/support_rag/SKILL.md
+  s_f8dae88ec33b77::t_34163212c20ad1 5,10,19-26,33,37
+backend/data/knowledge_base/social_skills/project_authored/interview_self_intro.md
+  s_f8dae88ec33b77::t_0a48855e4a7b2d 1-22
+backend/app/agents/support.py
+  s_f8dae88ec33b77::t_76df6cf9f3df15 19,27,29,31,70-71
+  s_f8dae88ec33b77::t_2136679f9e2d69 1,9,17-18,20-23,26,28,30,32,34,39-41,52,54-55,60,62,64,66,68-69,72-74
+  s_f8dae88ec33b77::t_c9ca370961956d 24-25
+  s_f8dae88ec33b77::t_685444e22359d0 75
+backend/tests/test_harness_api.py
+  s_f8dae88ec33b77::t_8badfaffa15d2c 52
+backend/app/privacy/redaction.py
+  s_f8dae88ec33b77::t_376acefe838a65 52-56,75-97
+backend/app/guardrails/output.py
+  s_f8dae88ec33b77::t_5a398245b00b07 1-16,19-36,48-51,54-56,85-102,111-119,132-169,174-191,194,196,203-217,274,278-279,281-282,293-294,311-315,318-322,418-436,459-470,472,587-588,590-592,595-597,601-608,611-628,632
+  s_f8dae88ec33b77::t_827de7388cbe64 128-131,280,283,291-292,316,589,593-594,598-600,609,631
+  s_f8dae88ec33b77::t_8a0cf2c883d757 345,365,488-489,495-496,498,500-503,521-545,567-568,610,629,640,642,653,655,669,671,682,684,696,698,712,714
+  s_f8dae88ec33b77::t_e75cf0790bcec1 505,507-513,576-586,630,641,654,670,683,697,713
+  s_f8dae88ec33b77::t_1dab4546f118a5 74-84,121,123,218-250,256-268,270-272,277,289,309,317,323,337,393-395,412,414-416
+  s_f8dae88ec33b77::t_b51effae0190eb 57-63,122,124,170-173
+  s_f8dae88ec33b77::t_a33e6291350ff4 390-392
+  s_f8dae88ec33b77::t_ac4852ff2e72f6 52,273,275,633-638,643-651,656-667,672-677
+  s_f8dae88ec33b77::t_1707969e218af0 37-47,192,197-200,202,437-458
+  s_f8dae88ec33b77::t_c6c0053b8cf9ed 64-73,120,276,284-288,290,411,639,652,668,678-681,685-686,695,711
+  s_f8dae88ec33b77::t_505e2988201b0e 515-520
+  s_f8dae88ec33b77::t_a551af866b52d7 17-18,53,103-110,125-127,193,195,295-308,310,324-336,338-344,346-364,366-389,396-410,417,473-487,569-575,687-694,699-710,715-719
+  s_f8dae88ec33b77::t_995bac1dbc9308 201
+  s_f8dae88ec33b77::t_ceb291fda37693 251-255,269,413,471,490-494,497,499,504,506,514,546-566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.13",
+  "base_commit_sha": "9bd6c3eaa7b9d4e3195893458d5efbe3d638aa1f",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
