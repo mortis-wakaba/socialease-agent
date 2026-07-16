@@ -12,6 +12,7 @@ from app.llm.base import BaseLLMClient
 from app.llm.prompts import build_support_system_prompt, build_support_user_prompt
 from app.llm.retry import ProviderError
 from app.models import Intent, RiskLevel, SafetyResult
+from app.models_context import SupportGenerationContext
 from app.models_knowledge import KnowledgeBaseType
 from app.models_llm import LLMUsage
 from app.models_support_generation import PresentationConstraints, SupportGeneration
@@ -41,6 +42,7 @@ class SupportGenerationAgent:
         message: str,
         intent: Intent,
         safety_result: SafetyResult,
+        support_context: SupportGenerationContext | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Return validated LLM support or a deterministic safe fallback."""
         if self.llm_client is None:
@@ -73,6 +75,7 @@ class SupportGenerationAgent:
                         }
                         for citation in guidance.citations
                     ],
+                    application_context=_support_context_payload(support_context),
                 ),
                 temperature=0.1,
             )
@@ -168,6 +171,9 @@ class SupportGenerationAgent:
             "retrieval_unknown": guidance.unknown,
             "llm_usage": LLMUsage(used=True).model_dump(mode="json"),
             "fallback_used": False,
+            "support_context_fields": sorted(
+                _support_context_payload(support_context)
+            ),
             "privacy_redaction": {
                 "deterministic_categories": deterministic_categories,
                 "semantic_categories": semantic_categories,
@@ -214,6 +220,15 @@ def _parse_support_generation(raw_output: str) -> SupportGeneration:
     if not isinstance(payload, dict):
         raise ValueError("Support generation response must be a JSON object.")
     return SupportGeneration.model_validate(payload)
+
+
+def _support_context_payload(
+    support_context: SupportGenerationContext | None,
+) -> dict[str, object]:
+    """Return only validated non-null preference fields for prompt injection."""
+    if support_context is None:
+        return {}
+    return support_context.model_dump(mode="json", exclude_none=True)
 
 
 class SupportGuardrailError(ValueError):

@@ -36,6 +36,7 @@ from app.safety.permissions import PermissionAction, PermissionDecision, SafetyP
 from app.skills import SkillContext, SkillRegistry, SkillResult
 from app.tracing.logger import TraceLogger
 from app.memory.context_builder import build_memory_context
+from app.memory.context_selector import select_skill_context
 from app.protocols.service import protocol_service
 from app.privacy.persistence_gate import persistence_gate
 from app.privacy.policy import PersistenceKind
@@ -183,6 +184,11 @@ class AgentHarness:
             )
 
         skill = self.skill_registry.resolve_for_chat(intent_result.intent, safety_result)
+        run_context.skill_context = select_skill_context(
+            skill_name=skill.descriptor.name,
+            request_context=run_context.request_context,
+            memory_context=run_context.memory_context,
+        )
         hook_decision = None
         if permission_decision.action != PermissionAction.ESCALATE:
             hook_decision = _run_before_action_hooks(
@@ -274,6 +280,10 @@ class AgentHarness:
         )
         if safety_result.risk_level != RiskLevel.CRISIS:
             _annotate_memory_context(
+                run_context=run_context,
+                skill_result_data=skill_result.structured_data,
+            )
+            _annotate_context_selection(
                 run_context=run_context,
                 skill_result_data=skill_result.structured_data,
             )
@@ -409,6 +419,24 @@ class AgentHarness:
             action=action,
             permission_action=permission_decision.action.value,
             permission_reason=permission_decision.reason,
+            context_selected_fields=(
+                run_context.skill_context.selected_fields
+                if run_context.skill_context is not None
+                else []
+            ),
+            context_field_sources=(
+                {
+                    field: [source.value for source in metadata.sources]
+                    for field, metadata in run_context.skill_context.field_metadata.items()
+                }
+                if run_context.skill_context is not None
+                else {}
+            ),
+            context_dropped_fields=(
+                run_context.skill_context.dropped_fields
+                if run_context.skill_context is not None
+                else []
+            ),
             agent_loop_used=skill_result.structured_data.get("agent_loop_used") is True,
             agent_loop_stop_reason=_optional_string(
                 skill_result.structured_data.get("agent_loop_stop_reason")
@@ -684,14 +712,42 @@ def _annotate_memory_context(
     run_context: RunContext,
     skill_result_data: dict[str, object],
 ) -> None:
-    """Expose privacy-safe memory context used by the current run."""
-    if run_context.memory_context is None:
+    """Expose value-free memory diagnostics for the current run."""
+    if run_context.memory_context is None or run_context.skill_context is None:
         return
-    memory_context = run_context.memory_context
-    skill_result_data.setdefault("memory_context_used", bool(memory_context.context_notes))
+    projection = run_context.skill_context
+    skill_result_data.setdefault("memory_context_used", bool(projection.selected_fields))
     skill_result_data.setdefault(
         "memory_context",
-        memory_context.model_dump(mode="json"),
+        {
+            "selected_fields": projection.selected_fields,
+            "dropped_fields": projection.dropped_fields,
+            "drop_reasons": projection.drop_reasons,
+        },
+    )
+
+
+def _annotate_context_selection(
+    *,
+    run_context: RunContext,
+    skill_result_data: dict[str, object],
+) -> None:
+    """Expose trace-safe field names and provenance without duplicating values."""
+    projection = run_context.skill_context
+    if projection is None:
+        return
+    skill_result_data.setdefault(
+        "context_selection",
+        {
+            "skill_name": projection.skill_name,
+            "selected_fields": projection.selected_fields,
+            "field_metadata": {
+                field: metadata.model_dump(mode="json")
+                for field, metadata in projection.field_metadata.items()
+            },
+            "dropped_fields": projection.dropped_fields,
+            "drop_reasons": projection.drop_reasons,
+        },
     )
 
 

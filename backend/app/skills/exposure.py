@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models import Intent
-from app.models_memory import MemoryContext
+from app.models_context import SkillContextProjection
 from app.models_exposure import ExposurePlanRequest
 from app.services.exposure_service import ExposureService, exposure_service
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
@@ -27,17 +27,10 @@ class ExposurePlanningSkill:
 
     async def run(self, context: SkillContext) -> SkillResult:
         """Create a graded practice plan with conservative defaults."""
-        anxiety_level = _int_from_context(
-            context.request_context,
-            "current_anxiety_level",
-            default=_default_anxiety_level(context.memory_context),
-            minimum=1,
-            maximum=10,
-        )
+        anxiety_level = _anxiety_from_context(context.selected_context)
         target_scenario = _target_scenario_from_context(
-            context.request_context,
+            context.selected_context,
             context.message,
-            context.memory_context,
         )
         previous_attempts = _previous_attempts_from_context(context.request_context)
         result = await self.service.create_plan(
@@ -72,19 +65,22 @@ class ExposurePlanningSkill:
 
 
 def _target_scenario_from_context(
-    request_context: dict[str, Any],
+    selected_context: SkillContextProjection | None,
     message: str,
-    memory_context: MemoryContext | None,
 ) -> str:
-    raw = request_context.get("target_scenario")
+    values = selected_context.values if selected_context is not None else {}
+    raw = values.get("target_scenario")
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
-    if _looks_like_generic_plan_request(message) and memory_context is not None:
-        for scenario in memory_context.recent_scenarios:
-            if scenario.strip():
-                return scenario.strip()
-        if memory_context.onboarding_profile.preferred_scenario:
-            return memory_context.onboarding_profile.preferred_scenario
+    if _looks_like_generic_plan_request(message):
+        recent_scenarios = values.get("recent_scenarios")
+        if isinstance(recent_scenarios, list):
+            for scenario in recent_scenarios:
+                if isinstance(scenario, str) and scenario.strip():
+                    return scenario.strip()
+        preferred_scenario = values.get("preferred_scenario")
+        if isinstance(preferred_scenario, str) and preferred_scenario.strip():
+            return preferred_scenario.strip()
     return message
 
 
@@ -98,10 +94,13 @@ def _looks_like_generic_plan_request(message: str) -> bool:
     )
 
 
-def _default_anxiety_level(memory_context: MemoryContext | None) -> int:
-    """Prefer recent anxiety memory over a generic baseline."""
-    if memory_context is not None and memory_context.latest_anxiety_level is not None:
-        return memory_context.latest_anxiety_level
+def _anxiety_from_context(selected_context: SkillContextProjection | None) -> int:
+    """Return selected current anxiety or the conservative baseline."""
+    if selected_context is None:
+        return 5
+    value = selected_context.values.get("current_anxiety_level")
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10:
+        return value
     return 5
 
 
@@ -110,17 +109,3 @@ def _previous_attempts_from_context(request_context: dict[str, Any]) -> list[str
     if not isinstance(raw, list):
         return []
     return [item for item in raw if isinstance(item, str) and item.strip()]
-
-
-def _int_from_context(
-    request_context: dict[str, Any],
-    key: str,
-    *,
-    default: int,
-    minimum: int,
-    maximum: int,
-) -> int:
-    value = request_context.get(key, default)
-    if not isinstance(value, int):
-        return default
-    return max(minimum, min(maximum, value))

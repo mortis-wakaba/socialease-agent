@@ -1,5 +1,6 @@
 """Pydantic models for privacy-minimized user memory summaries."""
 
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -22,6 +23,7 @@ class UserPracticeSummary(BaseModel):
     exposure_attempt_count: int = 0
     latest_anxiety_level: int | None = Field(default=None, ge=1, le=10)
     preferred_difficulty: int | None = Field(default=None, ge=1, le=5)
+    latest_practice_at: datetime | None = Field(default=None, exclude=True)
 
 
 class UserConsentState(BaseModel):
@@ -89,6 +91,11 @@ class MemoryContext(BaseModel):
     practice_preferences: PracticePreferences = Field(default_factory=PracticePreferences)
     onboarding_profile: UserOnboardingProfile = Field(default_factory=UserOnboardingProfile)
     context_notes: list[str] = Field(default_factory=list, max_length=8)
+    practice_summary_observed_at: datetime | None = None
+    practice_summary_expires_at: datetime | None = None
+    active_exposure_plan_updated_at: datetime | None = None
+    active_exposure_plan_expires_at: datetime | None = None
+    dropped_context: list[str] = Field(default_factory=list, max_length=8)
 
 
 class UserMemorySettings(BaseModel):

@@ -93,6 +93,9 @@ class TraceRecord(BaseModel):
     action: str | None = None
     permission_action: str | None = None
     permission_reason: str | None = None
+    context_selected_fields: list[str] = Field(default_factory=list)
+    context_field_sources: dict[str, list[str]] = Field(default_factory=dict)
+    context_dropped_fields: list[str] = Field(default_factory=list)
     agent_loop_used: bool = False
     agent_loop_stop_reason: str | None = None
     agent_loop_steps: list[dict[str, Any]] = Field(default_factory=list)

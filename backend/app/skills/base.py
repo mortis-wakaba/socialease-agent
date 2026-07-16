@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from app.models import Intent, SafetyResult
+from app.models_context import SkillContextProjection
 from app.models_memory import MemoryContext
 from app.workflow.context import RunContext
 
@@ -47,6 +48,11 @@ class SkillContext:
     def memory_context(self) -> MemoryContext | None:
         """Return privacy-safe memory context for this run."""
         return self.run.memory_context
+
+    @property
+    def selected_context(self) -> SkillContextProjection | None:
+        """Return the task-specific context projection selected by the harness."""
+        return self.run.skill_context
 
 
 @dataclass(frozen=True)

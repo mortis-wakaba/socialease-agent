@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models import Intent
-from app.models_memory import MemoryContext
+from app.models_context import SkillContextProjection
 from app.models_roleplay import RoleplayScenario, RoleplayStartRequest
 from app.services.roleplay_service import RoleplayService, roleplay_service
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
@@ -41,17 +41,10 @@ class RoleplaySkill:
     async def run(self, context: SkillContext) -> SkillResult:
         """Create a role-play session using context slots or conservative defaults."""
         scenario = _scenario_from_context(
-            context.request_context,
+            context.selected_context,
             context.message,
-            context.memory_context,
         )
-        difficulty = _int_from_context(
-            context.request_context,
-            "difficulty",
-            default=_default_difficulty(context.memory_context),
-            minimum=1,
-            maximum=5,
-        )
+        difficulty = _difficulty_from_context(context.selected_context)
         result = self.service.start_session(
             RoleplayStartRequest(
                 user_id=context.user_id,
@@ -81,11 +74,11 @@ class RoleplaySkill:
 
 
 def _scenario_from_context(
-    request_context: dict[str, Any],
+    selected_context: SkillContextProjection | None,
     message: str,
-    memory_context: MemoryContext | None,
 ) -> RoleplayScenario:
-    raw = request_context.get("scenario")
+    values = selected_context.values if selected_context is not None else {}
+    raw = values.get("scenario")
     if isinstance(raw, str):
         try:
             return RoleplayScenario(raw)
@@ -96,8 +89,11 @@ def _scenario_from_context(
     for scenario, keywords in SCENARIO_KEYWORDS.items():
         if any(keyword.casefold() in lowered for keyword in keywords):
             return scenario
-    if memory_context is not None:
-        for recent in memory_context.recent_scenarios:
+    recent_scenarios = values.get("recent_scenarios")
+    if isinstance(recent_scenarios, list):
+        for recent in recent_scenarios:
+            if not isinstance(recent, str):
+                continue
             try:
                 return RoleplayScenario(recent)
             except ValueError:
@@ -108,22 +104,11 @@ def _scenario_from_context(
     return RoleplayScenario.CLASSROOM_SPEECH
 
 
-def _default_difficulty(memory_context: MemoryContext | None) -> int:
-    """Prefer privacy-safe memory defaults over a generic baseline."""
-    if memory_context is not None and memory_context.preferred_difficulty is not None:
-        return memory_context.preferred_difficulty
+def _difficulty_from_context(selected_context: SkillContextProjection | None) -> int:
+    """Return a validated selected difficulty or the conservative baseline."""
+    if selected_context is None:
+        return 2
+    value = selected_context.values.get("preferred_difficulty")
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5:
+        return value
     return 2
-
-
-def _int_from_context(
-    request_context: dict[str, Any],
-    key: str,
-    *,
-    default: int,
-    minimum: int,
-    maximum: int,
-) -> int:
-    value = request_context.get(key, default)
-    if not isinstance(value, int):
-        return default
-    return max(minimum, min(maximum, value))

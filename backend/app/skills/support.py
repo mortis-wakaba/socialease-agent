@@ -6,6 +6,7 @@ from app.agents.support import SupportAgent
 from app.agents.support_generation import SupportGenerationAgent
 from app.llm.factory import create_llm_client
 from app.models import Intent
+from app.models_context import SupportGenerationContext
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
 
 
@@ -44,10 +45,19 @@ class SupportSkill:
 
     async def run(self, context: SkillContext) -> SkillResult:
         """Run grounded generation and fall back safely on provider or guardrail errors."""
+        support_context = None
+        if (
+            context.selected_context is not None
+            and context.selected_context.skill_name == self.descriptor.name
+        ):
+            support_context = SupportGenerationContext.model_validate(
+                context.selected_context.values
+            )
         response, structured_data = await self.generation_agent.respond(
             message=context.message,
             intent=context.intent,
             safety_result=context.safety_result,
+            support_context=support_context,
         )
         return SkillResult(
             response=response,
