@@ -1,0 +1,27 @@
+backend/tests/test_context_engineering.py
+  s_f8dae88ec33b77::t_98beca37a2fb37 47
+  s_f8dae88ec33b77::t_9ff442cd2f2db3 1-46,48-264
+backend/tests/test_harness_architecture.py
+  s_f8dae88ec33b77::t_8ae41957112073 329-332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "2b7a083ae6fdd7d311f62f6f7d096857c4bfd21e",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
