@@ -326,7 +326,10 @@ async def test_roleplay_skill_uses_memory_context_after_consent() -> None:
     assert response.structured_data["difficulty"] == 4
     assert response.structured_data["scenario"] == "dorm_conflict"
     assert response.structured_data["memory_context_used"] is True
-    assert response.structured_data["memory_context"]["preferred_difficulty"] == 4
+    assert "preferred_difficulty" in response.structured_data["memory_context"][
+        "selected_fields"
+    ]
+    assert "dorm_conflict" not in str(response.structured_data["memory_context"])
 
 
 @pytest.mark.anyio
