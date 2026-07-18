@@ -1,0 +1,74 @@
+backend/app/workflow/context.py
+  s_f8dae88ec33b77::t_3355884c7162e8 11,31-33
+backend/app/workflow/router.py
+  s_f8dae88ec33b77::t_9ce3eb6d2c566a 54-66,117-153,230-236,252-261,281-292
+  s_f8dae88ec33b77::t_ac274a6e69b70d 293
+backend/app/models_support_generation.py
+  s_f8dae88ec33b77::t_3355884c7162e8 17-18
+backend/app/evals/run.py
+  s_f8dae88ec33b77::t_d626b1455d1e64 606-607,621-622
+backend/app/skills/boundary.py
+  s_f8dae88ec33b77::t_d626b1455d1e64 1-74
+backend/tests/test_llm_intent_router.py
+  s_f8dae88ec33b77::t_03dcb7701d5c66 87-102
+backend/app/workflow/response_constraints.py
+  s_f8dae88ec33b77::t_25ddc426953489 60-61
+  s_f8dae88ec33b77::t_3355884c7162e8 1-59
+backend/tests/test_intent_router.py
+  s_f8dae88ec33b77::t_03dcb7701d5c66 73,79-88,92-99
+  s_f8dae88ec33b77::t_d68095b8b71f9c 100-101
+backend/app/skills/support.py
+  s_f8dae88ec33b77::t_3355884c7162e8 61
+backend/app/safety/actions.py
+  s_f8dae88ec33b77::t_d626b1455d1e64 15-16
+backend/app/skills/base.py
+  s_f8dae88ec33b77::t_3355884c7162e8 9,58-61
+  s_f8dae88ec33b77::t_2fa1e8d0cb9736 62
+backend/tests/test_skill_registry.py
+  s_f8dae88ec33b77::t_03dcb7701d5c66 19-20,65-78
+backend/app/agents/support_generation.py
+  s_f8dae88ec33b77::t_25ddc426953489 46,55,63,82-86,100,110,120,130,144,150,209,212-217,226,337-339,341,380,383-384,389-393,399-403,410-412
+backend/app/models.py
+  s_f8dae88ec33b77::t_d626b1455d1e64 30-31
+backend/tests/test_support_agent.py
+  s_f8dae88ec33b77::t_03dcb7701d5c66 10,178-181,183-199
+  s_f8dae88ec33b77::t_61ae157507129e 182
+  s_f8dae88ec33b77::t_05c8fe2fcd7f0a 200-201
+frontend/app/chat/page.tsx
+  s_f8dae88ec33b77::t_c4c1112246169f 287-290
+backend/tests/test_harness_architecture.py
+  s_f8dae88ec33b77::t_7ffd967dd72034 243-282
+backend/app/llm/prompts.py
+  s_f8dae88ec33b77::t_3355884c7162e8 176-179,199,208-209
+  s_f8dae88ec33b77::t_b47339b7af2f12 35,38-39,45-47,54-56
+  s_f8dae88ec33b77::t_d626b1455d1e64 92-100
+backend/tests/test_response_constraints.py
+  s_f8dae88ec33b77::t_03dcb7701d5c66 1-23
+backend/app/skills/registry.py
+  s_f8dae88ec33b77::t_d626b1455d1e64 7,29-30,53-54
+backend/app/workflow/engine.py
+  s_f8dae88ec33b77::t_d626b1455d1e64 676-677
+  s_f8dae88ec33b77::t_f94eb9f10bd4f2 332-336
+  s_f8dae88ec33b77::t_3355884c7162e8 54,109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "e04878609c55bf76c70960ae74c97aa85cc88f56",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
