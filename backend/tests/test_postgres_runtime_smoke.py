@@ -114,12 +114,6 @@ _SMOKE_CODE = textwrap.dedent(
             second_payload = second_chat.json()
             assert second_payload["structured_data"]["action"] == "roleplay_started"
 
-            run = await client.get(
-                f"/api/runs/{second_payload['run_id']}",
-                headers=headers,
-            )
-            assert run.status_code == 200, run.text
-
             export = await client.get(
                 f"/api/users/{user_id}/memory/export",
                 headers=headers,

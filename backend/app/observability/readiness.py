@@ -51,7 +51,10 @@ def _database_check() -> dict[str, object]:
                 "database": _safe_database_label(settings.database_url),
             }
         if provider == DatabaseProvider.POSTGRES:
-            with psycopg.connect(settings.database_url, connect_timeout=3) as connection:
+            with psycopg.connect(
+                _psycopg_dsn(settings.database_url),
+                connect_timeout=3,
+            ) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT 1")
                     cursor.fetchone()
@@ -164,6 +167,13 @@ def _safe_database_label(database_url: str) -> str:
     if provider == DatabaseProvider.POSTGRES:
         return "postgres"
     return "unknown"
+
+
+def _psycopg_dsn(database_url: str) -> str:
+    """Convert the SQLAlchemy PostgreSQL URL into a psycopg-native DSN."""
+    if database_url.startswith("postgresql+psycopg://"):
+        return "postgresql://" + database_url.removeprefix("postgresql+psycopg://")
+    return database_url
 
 
 def _int_env(name: str) -> int | None:
