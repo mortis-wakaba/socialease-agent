@@ -1,0 +1,33 @@
+docs/environment_config.md
+  s_f8dae88ec33b77::t_f0d780a8e1951a 91,95-102,108
+  s_f8dae88ec33b77::t_b5c522cf421a05 92
+  s_f8dae88ec33b77::t_920356aa1c3259 93-94
+  s_f8dae88ec33b77::t_a3fe86f19661e2 103-104
+README.md
+  s_f8dae88ec33b77::t_9c014d83f4c37d 65,189-191,193
+  s_f8dae88ec33b77::t_c7a32b3eb98938 3,5,7,11-26,30-37,39,42-55,58,60,62,68,70-72,74,76,79-80,82-86,89,92,95,97,100,103,105-106,109,111,113,116,119,123-127,130,134-135,138,141,144,146,148,150-155,157-158,161,163,165,169,172,179,182-183,186,196-197,200,203-206,209,213-216,219,221,223-230,232,234,236-244,246,248
+docs/architecture_diagram.md
+  s_f8dae88ec33b77::t_920356aa1c3259 39-40,80
+  s_f8dae88ec33b77::t_b54ece3f551336 27-28,38,77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "89588db164427c4e88cc085b577241f25297ecd3",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
