@@ -1,0 +1,153 @@
+backend/app/skills/roleplay.py
+  s_f8dae88ec33b77::t_1f23d98fdfafde 48
+frontend/app/support/page.tsx
+  s_f8dae88ec33b77::t_7e9fb7294d2674 17,34-36
+backend/app/memory/session_context_store.py
+  s_f8dae88ec33b77::t_d6fa8b9fbc9931 15-18,280-281,283-285,309-313,335-343,345-347,364-373,383,404-411,424-427,436,442,448,453
+  s_f8dae88ec33b77::t_ccfb8df3512123 308,314-321
+  s_f8dae88ec33b77::t_a7a4b6d57dcdc4 8,282
+  s_f8dae88ec33b77::t_d74a6fcd0ecae7 1-7,9-14,19-279,286-307,322-334,344,348-363,374-382,384-403,412-423,428-435,437-441,443-447,449-452
+.env.production.example
+  s_f8dae88ec33b77::t_f0d780a8e1951a 52-59
+  s_f8dae88ec33b77::t_c1d478fe1bc71e 62-63
+  s_f8dae88ec33b77::t_a3fe86f19661e2 60-61
+.env.example
+  s_f8dae88ec33b77::t_b5c522cf421a05 50-51
+  s_f8dae88ec33b77::t_c1d478fe1bc71e 63-64
+  s_f8dae88ec33b77::t_a3fe86f19661e2 61-62
+  s_f8dae88ec33b77::t_f0d780a8e1951a 52-60
+backend/pytest.ini
+  s_f8dae88ec33b77::t_8b3df3b717c9e4 7
+backend/app/services/roleplay_service.py
+  s_f8dae88ec33b77::t_a3fe86f19661e2 17,71-74,89,91
+  s_f8dae88ec33b77::t_cb852da0244739 86-88,90
+  s_f8dae88ec33b77::t_1f23d98fdfafde 9-10,12-16,37,61,69-70,75-85,92-93,95,126-130,149-152,199-215,219,233-238,246-248,251,269-272,281-284,287,298-301,313-316,322,333-336,348-351,372-382
+  s_f8dae88ec33b77::t_01771fa6e616c7 192-197
+  s_f8dae88ec33b77::t_d65dc35e8d1788 383
+backend/app/api/worksheet.py
+  s_f8dae88ec33b77::t_fdac7f66427544 15,35-47
+  s_f8dae88ec33b77::t_b21c46b1f82997 48-49
+backend/app/memory/roleplay_compactor.py
+  s_f8dae88ec33b77::t_1f68daeba06db4 1-11,16-27,35,38-65,80-81,83-179,221-268
+  s_f8dae88ec33b77::t_679b94d306be5d 66-73,78,82,187,191-193
+  s_f8dae88ec33b77::t_cb852da0244739 28-32,34,36,74-76,79,180-185,188-190,194-220
+  s_f8dae88ec33b77::t_a3fe86f19661e2 12-15,33,37,77,186
+backend/requirements.txt
+  s_f8dae88ec33b77::t_a3fe86f19661e2 10
+  s_f8dae88ec33b77::t_f0d780a8e1951a 9
+Makefile
+  s_f8dae88ec33b77::t_6c464bd53d5b4a 1,12
+  s_f8dae88ec33b77::t_76ed1c77bc4baa 13
+  s_f8dae88ec33b77::t_c2f244bc9068a5 14
+backend/app/memory/session_context_settings.py
+  s_f8dae88ec33b77::t_27e5e8573295dc 1-20,23-57,64-87
+  s_f8dae88ec33b77::t_a3fe86f19661e2 21-22,58-63
+frontend/lib/api.ts
+  s_f8dae88ec33b77::t_c658ae46b7d108 42
+  s_f8dae88ec33b77::t_7e9fb7294d2674 275,278-282,374-382
+  s_f8dae88ec33b77::t_68ebf359fb79e1 383-384
+backend/app/api/support.py
+  s_f8dae88ec33b77::t_cd564dc71f058d 3-5,17,20,22-23
+  s_f8dae88ec33b77::t_7b53fafc58f833 6,21
+backend/app/models_roleplay.py
+  s_f8dae88ec33b77::t_1f23d98fdfafde 5,142
+backend/app/models_session_context.py
+  s_f8dae88ec33b77::t_27e5e8573295dc 1-66,69-100
+  s_f8dae88ec33b77::t_a3fe86f19661e2 67-68
+backend/app/api/profile.py
+  s_f8dae88ec33b77::t_542b19e37e0030 40,79
+  s_f8dae88ec33b77::t_daefc83a81973d 41-42,80-81
+backend/tests/test_roleplay_session_context.py
+  s_f8dae88ec33b77::t_8b3df3b717c9e4 1-13,15-17,22-28,30-61,89-150,174-223,336-361,449-503,542-605
+  s_f8dae88ec33b77::t_5df56a61a71299 14,224-272,311,313,315-335,504-541
+  s_f8dae88ec33b77::t_6c464bd53d5b4a 151-173
+  s_f8dae88ec33b77::t_e7f905cab4a7eb 18-21,29,62-88,273-310,312,314,362-448
+backend/app/models_worksheet.py
+  s_f8dae88ec33b77::t_fdac7f66427544 44-45,66-86
+backend/app/memory/task_session_settings.py
+  s_f8dae88ec33b77::t_c1d478fe1bc71e 1-21
+backend/app/memory/task_state_store.py
+  s_f8dae88ec33b77::t_320d1fa9a28536 105-110,118-124,126
+  s_f8dae88ec33b77::t_61ae0dfa76004d 1-38,75-104,111-117,125,127-259
+  s_f8dae88ec33b77::t_cd564dc71f058d 39-74
+backend/app/services/support_resource_service.py
+  s_f8dae88ec33b77::t_cd564dc71f058d 3-6,11-12,14-19,34,39-49,55-56,58,67-110,117-128,137,140-152,198,201-220
+  s_f8dae88ec33b77::t_c3a0170a8ee612 156-157,185,187-188,191-192
+  s_f8dae88ec33b77::t_c1d478fe1bc71e 13,35,50
+  s_f8dae88ec33b77::t_18eaa45cd0dec0 153-155,158-184,186,189-190,193-197
+backend/app/api/auth.py
+  s_f8dae88ec33b77::t_157e088f19bf79 41-43,188-190
+frontend/lib/types.ts
+  s_f8dae88ec33b77::t_7e9fb7294d2674 399-400
+  s_f8dae88ec33b77::t_c4c1112246169f 10-11,433-434
+  s_f8dae88ec33b77::t_c658ae46b7d108 269-270
+backend/app/models_support.py
+  s_f8dae88ec33b77::t_cd564dc71f058d 3-4,15-16,29-43
+backend/app/memory/worksheet_store.py
+  s_f8dae88ec33b77::t_fdac7f66427544 41-42,50-57
+  s_f8dae88ec33b77::t_1941faead6b160 58
+backend/app/services/worksheet_service.py
+  s_f8dae88ec33b77::t_c013da387ca2f1 145-149,153,296,303,306-317
+  s_f8dae88ec33b77::t_18eaa45cd0dec0 206-208,212-243,250-254
+  s_f8dae88ec33b77::t_c1d478fe1bc71e 12,50,67
+  s_f8dae88ec33b77::t_cd564dc71f058d 14,65
+  s_f8dae88ec33b77::t_fdac7f66427544 3-5,11,13,15-18,25,28,49,56-64,66,126-144,150-152,154-205,255-262,290-295,297-302,304-305
+  s_f8dae88ec33b77::t_1bfd9649f4a542 102-103
+  s_f8dae88ec33b77::t_c3a0170a8ee612 209-211,244-249
+backend/tests/test_worksheet_api.py
+  s_f8dae88ec33b77::t_c55f73d9907fd2 181-203
+docker-compose.yml
+  s_f8dae88ec33b77::t_b5c522cf421a05 53
+  s_f8dae88ec33b77::t_c1d478fe1bc71e 62-63
+  s_f8dae88ec33b77::t_f0d780a8e1951a 2-21,54-61,68-70
+backend/tests/test_task_sessions.py
+  s_f8dae88ec33b77::t_76ed1c77bc4baa 4-5,11,269-308
+  s_f8dae88ec33b77::t_1bfd9649f4a542 20,177,185-207
+  s_f8dae88ec33b77::t_19a549d003fb5d 1-3,6-10,12-19,21-33,67-137,161,166,168-176,178-184,208-239
+  s_f8dae88ec33b77::t_e7f905cab4a7eb 34-66,138-160,162-165,167,240-268
+backend/app/memory/token_estimator.py
+  s_f8dae88ec33b77::t_a3fe86f19661e2 1-66
+docker-compose.prod.yml
+  s_f8dae88ec33b77::t_f0d780a8e1951a 23-31
+  s_f8dae88ec33b77::t_c1d478fe1bc71e 32-33
+backend/app/api/roleplay.py
+  s_f8dae88ec33b77::t_1f23d98fdfafde 78,114,131,148
+backend/app/main.py
+  s_f8dae88ec33b77::t_daefc83a81973d 24-25,33-34
+  s_f8dae88ec33b77::t_542b19e37e0030 3,18,23,27-32,43,99-111
+  s_f8dae88ec33b77::t_7b720a9c055811 26
+backend/app/memory/roleplay_context_manager.py
+  s_f8dae88ec33b77::t_1f68daeba06db4 1-14,16-20,22-33,35-38,43-139,151-154,162-194,197-245,247-258,260-264,266-273,275-277,284-295,297-309,312-338,346,349-351,353-355
+  s_f8dae88ec33b77::t_6c464bd53d5b4a 21,259
+  s_f8dae88ec33b77::t_ccfb8df3512123 140-150,155-161,347,356
+  s_f8dae88ec33b77::t_a3fe86f19661e2 15,34,39-42,195-196,246,265,274,278-283,296,310-311,339-345,348,352
+backend/app/agents/roleplay.py
+  s_f8dae88ec33b77::t_b47339b7af2f12 19,93,98-102,119-125,127-134,148-153
+.env.staging.example
+  s_f8dae88ec33b77::t_c1d478fe1bc71e 60-61
+  s_f8dae88ec33b77::t_a3fe86f19661e2 58-59
+  s_f8dae88ec33b77::t_f0d780a8e1951a 50-57
+frontend/app/worksheet/page.tsx
+  s_f8dae88ec33b77::t_4dea45b826e34d 47,111-134,283-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "cb19d2c340c7c5f571dd0896ab72d7f096542e42",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
