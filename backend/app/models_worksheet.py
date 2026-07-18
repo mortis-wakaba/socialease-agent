@@ -41,6 +41,8 @@ class WorksheetRecord(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     gentle_followup_questions: list[str] = Field(default_factory=list)
     created_at: datetime
+    updated_at: datetime | None = None
+    completed: bool = False
 
 
 class WorksheetCreateRequest(BaseModel):
@@ -61,3 +63,24 @@ class WorksheetCreateResponse(BaseModel):
     blocked: bool = False
     response: str
     llm_usage: LLMUsage = LLMUsage()
+
+
+class WorksheetSupplementRequest(BaseModel):
+    """Add one clarification or correction to an existing worksheet."""
+
+    worksheet_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+
+
+class WorksheetDraftContext(BaseModel):
+    """TTL-bound raw clarification state outside durable persistence."""
+
+    user_id: str
+    worksheet_id: str
+    fields: WorksheetFields
+    missing_fields: list[str] = Field(default_factory=list)
+    last_question: str | None = None
+    recent_supplements: list[str] = Field(default_factory=list, max_length=8)
+    version: int = Field(default=1, ge=1)
+    updated_at: datetime

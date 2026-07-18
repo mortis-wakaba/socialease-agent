@@ -7,6 +7,8 @@ export type Intent =
   | "exposure_planning"
   | "campus_resource_query"
   | "progress_review"
+  | "clarification_needed"
+  | "out_of_scope"
   | "crisis";
 
 export type SafetyResult = {
@@ -264,6 +266,8 @@ export type SupportQueryResponse = {
   retrieval?: RetrievalDiagnostics | null;
   safety_result: SafetyResult;
   blocked: boolean;
+  search_session_id?: string | null;
+  resolved_reference_index?: number | null;
 };
 
 export type Citation = {
@@ -392,6 +396,8 @@ export type WorksheetRecord = {
   missing_fields: string[];
   gentle_followup_questions: string[];
   created_at: string;
+  updated_at?: string | null;
+  completed?: boolean;
 };
 
 export type WorksheetCreateResponse = {
@@ -424,6 +430,8 @@ export type HarnessAction =
   | "worksheet_created"
   | "exposure_plan_created"
   | "support_resources_queried"
+  | "clarification_requested"
+  | "out_of_scope"
   | "crisis_escalation"
   | string;
 

@@ -1,5 +1,6 @@
 """FastAPI entrypoint for the SocialEase Agent backend."""
 
+from contextlib import asynccontextmanager
 import os
 
 from fastapi import FastAPI, Request
@@ -14,10 +15,23 @@ from app.observability.readiness import readiness_snapshot
 from app.observability.request_logging import StructuredRequestLoggingMiddleware
 from app.rate_limit import RateLimitMiddleware
 from app.request_context import REQUEST_ID_HEADER, get_request_id
+from app.memory.session_context_settings import roleplay_session_context_settings
 
 validate_runtime_database_support()
 
 from app.api.routes import router as api_router
+from app.services.roleplay_service import roleplay_service
+from app.services.support_resource_service import support_resource_service
+from app.services.worksheet_service import worksheet_service
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Release the shared async Redis client on application shutdown."""
+    yield
+    await roleplay_service.close()
+    await worksheet_service.close()
+    await support_resource_service.close()
 
 app = FastAPI(
     title="SocialEase Agent API",
@@ -26,6 +40,7 @@ app = FastAPI(
         "practice. This API is not a medical or diagnostic product."
     ),
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(RateLimitMiddleware)
@@ -81,4 +96,17 @@ async def health_check() -> dict[str, str]:
 async def readiness_check() -> JSONResponse:
     """Return deployment readiness checks without exposing secrets."""
     status_code, payload = readiness_snapshot()
+    context_settings = roleplay_session_context_settings()
+    redis_configured = context_settings.redis_url is not None
+    redis_available = (
+        await roleplay_service.context_health() if redis_configured else False
+    )
+    payload["checks"]["roleplay_session_context"] = {
+        "ok": redis_available if redis_configured else True,
+        "configured": redis_configured,
+        "backend": "redis" if redis_configured else "disabled",
+    }
+    if redis_configured and not redis_available:
+        status_code = 503
+        payload["status"] = "not_ready"
     return JSONResponse(status_code=status_code, content=payload)

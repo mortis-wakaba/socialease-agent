@@ -178,4 +178,27 @@ async def test_worksheet_get_returns_saved_record(client: httpx.AsyncClient) -> 
     assert payload["user_id"] == "demo_user"
     assert "citations" in payload
     assert "missing_fields" in payload
+
+
+@pytest.mark.anyio
+async def test_worksheet_supplement_updates_same_record(client: httpx.AsyncClient) -> None:
+    created = await client.post(
+        "/api/worksheet/create",
+        json={"user_id": "supplement_user", "message": "情境：课堂发言。情绪：焦虑。"},
+    )
+    worksheet_id = created.json()["worksheet"]["worksheet_id"]
+
+    response = await client.post(
+        "/api/worksheet/supplement",
+        json={
+            "worksheet_id": worksheet_id,
+            "user_id": "supplement_user",
+            "message": "反对证据：上次发言时同学认真听完了。",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["worksheet"]["worksheet_id"] == worksheet_id
+    assert "认真听完" in payload["worksheet"]["fields"]["evidence_against"]
     assert "gentle_followup_questions" in payload

@@ -37,6 +37,9 @@ from app.safety.direct_actions import (
     require_direct_action_consent,
 )
 from app.services.memory_privacy_service import memory_privacy_service
+from app.services.roleplay_service import roleplay_service
+from app.services.support_resource_service import support_resource_service
+from app.services.worksheet_service import worksheet_service
 
 router = APIRouter(tags=["profile"])
 session_review_repository = repository_factory().session_review_repository()
@@ -73,6 +76,9 @@ async def delete_user_memory(
     """Delete user-owned memory records."""
     require_owner_path_user(user_id, current_user)
     response = memory_privacy_service.delete(user_id)
+    await roleplay_service.delete_user_context(user_id)
+    await worksheet_service.delete_user_context(user_id)
+    await support_resource_service.delete_user_context(user_id)
     record_memory_delete()
     return response
 

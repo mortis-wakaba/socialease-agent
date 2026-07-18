@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -138,6 +139,7 @@ class RoleplayMessageResponse(BaseModel):
     safety_result: SafetyResult
     blocked: bool = False
     llm_usage: LLMUsage = LLMUsage()
+    context_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class RoleplayPauseRequest(BaseModel):

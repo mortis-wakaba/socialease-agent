@@ -6,7 +6,15 @@ from app.agents.roleplay import RoleplayAgent
 from app.db.factory import repository_factory
 from app.knowledge.service import KnowledgeService
 from app.llm.factory import create_llm_client
+from app.memory.roleplay_compactor import RoleplayCompactor
+from app.memory.roleplay_context_manager import RoleplayContextManager
 from app.memory.roleplay_store import RoleplaySessionStore
+from app.memory.session_context_settings import roleplay_session_context_settings
+from app.memory.session_context_store import (
+    DisabledSessionContextStore,
+    RedisSessionContextStore,
+)
+from app.memory.token_estimator import create_token_estimator
 from app.models import RiskLevel
 from app.models_knowledge import KnowledgeBaseType
 from app.models_roleplay import (
@@ -26,6 +34,7 @@ from app.models_roleplay import (
     RoleplayStartResponse,
     RoleplaySessionStatus,
 )
+from app.models_session_context import context_diagnostics_payload
 from app.privacy.persistence_gate import persistence_gate
 from app.privacy.redaction import detect_sensitive_categories
 from app.privacy.policy import PersistenceKind
@@ -49,6 +58,7 @@ class RoleplayService:
         store: RoleplaySessionStore | None = None,
         knowledge: KnowledgeService | None = None,
         safety_classifier: BaseSafetyClassifier | None = None,
+        context_manager: RoleplayContextManager | None = None,
     ) -> None:
         self.agent = agent or RoleplayAgent(llm_client=create_llm_client())
         self.store = store or RoleplaySessionStore(
@@ -56,8 +66,33 @@ class RoleplayService:
         )
         self.knowledge = knowledge or KnowledgeService()
         self.safety_classifier = safety_classifier or create_safety_classifier()
+        if context_manager is None:
+            settings = roleplay_session_context_settings()
+            token_estimator = create_token_estimator(
+                backend=settings.tokenizer_backend,
+                model_name=settings.tokenizer_model,
+            )
+            context_store = (
+                RedisSessionContextStore(
+                    redis_url=settings.redis_url,
+                    socket_timeout_seconds=settings.redis_socket_timeout_seconds,
+                )
+                if settings.redis_url is not None
+                else DisabledSessionContextStore()
+            )
+            context_manager = RoleplayContextManager(
+                store=context_store,
+                settings=settings,
+                compactor=RoleplayCompactor(
+                    llm_client=self.agent.llm_client,
+                    target_tokens=settings.compact_target_tokens,
+                    token_estimator=token_estimator,
+                ),
+                token_estimator=token_estimator,
+            )
+        self.context_manager = context_manager
 
-    def start_session(self, request: RoleplayStartRequest) -> RoleplayStartResponse:
+    async def start_session(self, request: RoleplayStartRequest) -> RoleplayStartResponse:
         """Create a grounded role-play session for one supported scenario."""
         guidance_query = self.agent.guidance_query(request.scenario)
         rag_response = self.knowledge.query(
@@ -88,6 +123,11 @@ class RoleplayService:
             opening_message=persisted_opening_message,
             retrieved_guidance=retrieved_guidance,
         )
+        await self.context_manager.initialize(
+            user_id=request.user_id,
+            session_id=session.session_id,
+            opening_message=persisted_opening_message,
+        )
         return RoleplayStartResponse(
             session=session,
             opening_message=persisted_opening_message,
@@ -106,6 +146,10 @@ class RoleplayService:
 
         safety_result = await self.safety_classifier.classify(request.message)
         if safety_result.risk_level == RiskLevel.CRISIS:
+            await self.context_manager.delete(
+                user_id=request.user_id,
+                session_id=request.session_id,
+            )
             persisted_crisis_response = _persist_roleplay_agent_message(
                 request.user_id,
                 ROLEPLAY_CRISIS_RESPONSE,
@@ -145,10 +189,34 @@ class RoleplayService:
         )
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
+        await self.context_manager.append(
+            user_id=request.user_id,
+            session_id=request.session_id,
+            role=RoleplayMessageRole.USER,
+            content=request.message[:8000],
+        )
 
+        guidance = (
+            session.retrieved_guidance.answer
+            if not session.retrieved_guidance.no_guidance_found
+            else "No specific guidance found; use general safe role-play scaffolding."
+        )
+        prompt_context = await self.context_manager.build_prompt_context(
+            user_id=request.user_id,
+            session_id=request.session_id,
+            scenario=session.scenario.value,
+            difficulty=session.difficulty,
+            guidance=guidance,
+            current_user_message=request.message,
+            fallback_recent_messages=[
+                f"{message.role.value}: {message.content}"
+                for message in session.messages
+            ],
+        )
         agent_response, llm_usage = await self.agent.next_turn(
             session=session,
             user_message=request.message,
+            prompt_context=prompt_context,
         )
         persisted_agent_response = _persist_roleplay_agent_message(
             request.user_id,
@@ -162,6 +230,12 @@ class RoleplayService:
         )
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
+        await self.context_manager.append(
+            user_id=request.user_id,
+            session_id=request.session_id,
+            role=RoleplayMessageRole.AGENT,
+            content=persisted_agent_response[:8000],
+        )
 
         return RoleplayMessageResponse(
             session=session,
@@ -169,9 +243,12 @@ class RoleplayService:
             safety_result=safety_result,
             blocked=False,
             llm_usage=llm_usage,
+            context_diagnostics=context_diagnostics_payload(
+                prompt_context.diagnostics
+            ),
         )
 
-    def get_feedback(self, request: RoleplayFeedbackRequest) -> RoleplayFeedbackResponse:
+    async def get_feedback(self, request: RoleplayFeedbackRequest) -> RoleplayFeedbackResponse:
         """Return structured feedback for a role-play session."""
         session = self.store.get_for_user(
             session_id=request.session_id,
@@ -189,6 +266,10 @@ class RoleplayService:
             )
         feedback = self.agent.feedback(session)
         if session.status == RoleplaySessionStatus.COMPLETED:
+            await self.context_manager.delete(
+                user_id=request.user_id,
+                session_id=request.session_id,
+            )
             return RoleplayFeedbackResponse(session=session, feedback=feedback)
         updated_session = self.store.update_status(
             session_id=request.session_id,
@@ -197,9 +278,13 @@ class RoleplayService:
         )
         if updated_session is None:
             raise ServiceNotFoundError("Role-play session not found")
+        await self.context_manager.delete(
+            user_id=request.user_id,
+            session_id=request.session_id,
+        )
         return RoleplayFeedbackResponse(session=updated_session, feedback=feedback)
 
-    def pause_session(self, request: RoleplayPauseRequest) -> RoleplayPauseResponse:
+    async def pause_session(self, request: RoleplayPauseRequest) -> RoleplayPauseResponse:
         """Pause a role-play session without deleting its messages."""
         session = self.store.get_for_user(
             session_id=request.session_id,
@@ -210,6 +295,10 @@ class RoleplayService:
         if session.status == RoleplaySessionStatus.COMPLETED:
             raise ServiceStateError("Completed role-play sessions cannot be paused.")
         if session.status == RoleplaySessionStatus.PAUSED:
+            await self.context_manager.pause(
+                user_id=request.user_id,
+                session_id=request.session_id,
+            )
             return RoleplayPauseResponse(
                 session=session,
                 message="角色扮演已经处于暂停状态。",
@@ -221,12 +310,16 @@ class RoleplayService:
         )
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
+        await self.context_manager.pause(
+            user_id=request.user_id,
+            session_id=request.session_id,
+        )
         return RoleplayPauseResponse(
             session=session,
             message="已保存角色扮演暂停状态。你可以稍后从历史记录继续查看。",
         )
 
-    def resume_session(self, request: RoleplayResumeRequest) -> RoleplayResumeResponse:
+    async def resume_session(self, request: RoleplayResumeRequest) -> RoleplayResumeResponse:
         """Resume a paused role-play session so the user can continue practice."""
         session = self.store.get_for_user(
             session_id=request.session_id,
@@ -237,6 +330,10 @@ class RoleplayService:
         if session.status == RoleplaySessionStatus.COMPLETED:
             raise ServiceStateError("Completed role-play sessions cannot be resumed.")
         if session.status == RoleplaySessionStatus.ACTIVE:
+            await self.context_manager.resume(
+                user_id=request.user_id,
+                session_id=request.session_id,
+            )
             return RoleplayResumeResponse(
                 session=session,
                 message="角色扮演已经处于可继续练习状态。",
@@ -248,6 +345,10 @@ class RoleplayService:
         )
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
+        await self.context_manager.resume(
+            user_id=request.user_id,
+            session_id=request.session_id,
+        )
         return RoleplayResumeResponse(
             session=session,
             message="已恢复角色扮演。请先发送一轮练习回复，再获取反馈。",
@@ -267,6 +368,18 @@ class RoleplayService:
             user_id=user_id,
             sessions=self.store.list_for_user(user_id=user_id, limit=limit),
         )
+
+    async def delete_user_context(self, user_id: str) -> int:
+        """Delete all TTL-bound role-play context for one user."""
+        return await self.context_manager.delete_user(user_id=user_id)
+
+    async def context_health(self) -> bool:
+        """Return whether the configured session-context backend responds."""
+        return await self.context_manager.ping()
+
+    async def close(self) -> None:
+        """Close the shared Redis client during application shutdown."""
+        await self.context_manager.close()
 
 
 roleplay_service = RoleplayService()

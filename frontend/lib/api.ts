@@ -39,6 +39,7 @@ import {
   authHeaders,
   clearAccountSession,
   csrfToken,
+  currentUserId,
   getAuthState,
   saveAccountSession,
   tokenStorageMode
@@ -271,10 +272,14 @@ export const api = {
     );
   },
 
-  querySupportResources(query: string) {
+  querySupportResources(query: string, searchSessionId?: string | null) {
     return request<SupportQueryResponse>("/api/support/query", {
       method: "POST",
-      body: JSON.stringify({ query })
+      body: JSON.stringify({
+        query,
+        user_id: currentUserId(),
+        search_session_id: searchSessionId ?? null
+      })
     });
   },
 
@@ -364,6 +369,17 @@ export const api = {
     return request<WorksheetRecord>(
       `/api/worksheet/${encodeURIComponent(worksheetId)}`
     );
+  },
+
+  supplementWorksheet(worksheetId: string, userId: string, message: string) {
+    return request<WorksheetCreateResponse>("/api/worksheet/supplement", {
+      method: "POST",
+      body: JSON.stringify({
+        worksheet_id: worksheetId,
+        user_id: userId,
+        message
+      })
+    });
   },
 
   createExposurePlan(

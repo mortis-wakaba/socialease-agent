@@ -1,4 +1,4 @@
-.PHONY: dev-backend dev-frontend test-backend eval eval-gate eval-llm eval-output-guardrail typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
+.PHONY: dev-backend dev-frontend test-backend test-redis-context eval eval-gate eval-llm eval-output-guardrail typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
 
 dev-backend:
 	cd backend && uvicorn app.main:app --reload
@@ -8,6 +8,9 @@ dev-frontend:
 
 test-backend:
 	cd backend && pytest
+
+test-redis-context:
+	cd backend && SOCIALEASE_TEST_REDIS_URL=$${SOCIALEASE_TEST_REDIS_URL:-redis://localhost:6379/0} pytest -p no:rerunfailures -m redis_integration -s tests/test_roleplay_session_context.py tests/test_task_sessions.py
 
 eval:
 	cd backend && python -m app.evals.run

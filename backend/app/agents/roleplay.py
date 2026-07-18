@@ -16,6 +16,7 @@ from app.models_roleplay import (
     RoleplaySession,
 )
 from app.models_llm import LLMUsage
+from app.models_session_context import RoleplayPromptContext
 
 
 class RoleplayAgent:
@@ -89,11 +90,16 @@ class RoleplayAgent:
         self,
         session: RoleplaySession,
         user_message: str,
+        prompt_context: RoleplayPromptContext | None = None,
     ) -> tuple[str, LLMUsage]:
         """Return a next turn plus compact LLM execution metadata."""
         if self.llm_client is not None:
             try:
-                return await self._llm_next_turn(session, user_message), LLMUsage(
+                return await self._llm_next_turn(
+                    session,
+                    user_message,
+                    prompt_context=prompt_context,
+                ), LLMUsage(
                     used=True,
                     fallback_used=False,
                 )
@@ -110,12 +116,22 @@ class RoleplayAgent:
                 )
         return self._deterministic_next_turn(session, user_message), LLMUsage()
 
-    async def _llm_next_turn(self, session: RoleplaySession, user_message: str) -> str:
+    async def _llm_next_turn(
+        self,
+        session: RoleplaySession,
+        user_message: str,
+        *,
+        prompt_context: RoleplayPromptContext | None = None,
+    ) -> str:
         """Generate one grounded role-play turn through the configured LLM."""
-        recent_messages = [
-            f"{message.role.value}: {message.content}"
-            for message in session.messages
-        ]
+        recent_messages = (
+            prompt_context.recent_messages
+            if prompt_context is not None
+            else [
+                f"{message.role.value}: {message.content}"
+                for message in session.messages
+            ]
+        )
         guidance = (
             session.retrieved_guidance.answer
             if not session.retrieved_guidance.no_guidance_found
@@ -129,6 +145,12 @@ class RoleplayAgent:
                 guidance=guidance,
                 recent_messages=recent_messages,
                 user_message=user_message,
+                compact_state=(
+                    prompt_context.compact_state.model_dump(mode="json")
+                    if prompt_context is not None
+                    and prompt_context.compact_state is not None
+                    else None
+                ),
             ),
         )
 

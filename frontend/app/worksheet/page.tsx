@@ -44,6 +44,7 @@ export default function WorksheetPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
+  const [supplement, setSupplement] = useState("");
 
   useEffect(() => {
     if (!auth.ready || !auth.authenticated || !auth.userId) {
@@ -102,6 +103,30 @@ export default function WorksheetPage() {
           void createWorksheet(sourceMessage);
         }
       });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function supplementCurrentWorksheet() {
+    const worksheet = result?.worksheet ?? loadedWorksheet;
+    if (!worksheet || !supplement.trim()) {
+      setError("请先输入要补充或更正的内容。");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await api.supplementWorksheet(
+        worksheet.worksheet_id,
+        currentUserId(),
+        supplement.trim()
+      );
+      setLoadedWorksheet(null);
+      setResult(next);
+      setSupplement("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法补充反思表");
     } finally {
       setLoading(false);
     }
@@ -255,6 +280,24 @@ export default function WorksheetPage() {
               />
             </Panel>
           )}
+          {(result?.worksheet ?? loadedWorksheet) ? (
+            <Panel title="继续补充或更正">
+              <div className="space-y-3">
+                <TextArea
+                  value={supplement}
+                  onChange={(event) => setSupplement(event.target.value)}
+                  placeholder="回答上面的追问，或明确说明要更正哪个字段..."
+                />
+                <Button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void supplementCurrentWorksheet()}
+                >
+                  {loading ? "更新中..." : "更新这份反思表"}
+                </Button>
+              </div>
+            </Panel>
+          ) : null}
         </div>
       </div>
     </AuthGuard>

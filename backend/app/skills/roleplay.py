@@ -45,7 +45,7 @@ class RoleplaySkill:
             context.message,
         )
         difficulty = _difficulty_from_context(context.selected_context)
-        result = self.service.start_session(
+        result = await self.service.start_session(
             RoleplayStartRequest(
                 user_id=context.user_id,
                 scenario=scenario,

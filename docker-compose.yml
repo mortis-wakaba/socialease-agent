@@ -1,4 +1,24 @@
 services:
+  redis:
+    image: redis:7-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - volatile-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   postgres:
     image: postgres:16
     environment:
@@ -30,10 +50,24 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       SOCIALEASE_DATABASE_URL: ${SOCIALEASE_DATABASE_URL:-sqlite:////data/socialease.db}
       SOCIALEASE_CORS_ORIGINS: ${SOCIALEASE_CORS_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
+      SOCIALEASE_REDIS_URL: ${SOCIALEASE_DOCKER_REDIS_URL:-redis://redis:6379/0}
+      ROLEPLAY_SESSION_CONTEXT_TTL_SECONDS: ${ROLEPLAY_SESSION_CONTEXT_TTL_SECONDS:-3600}
+      ROLEPLAY_PAUSED_CONTEXT_TTL_SECONDS: ${ROLEPLAY_PAUSED_CONTEXT_TTL_SECONDS:-86400}
+      ROLEPLAY_CONTEXT_MAX_INPUT_TOKENS: ${ROLEPLAY_CONTEXT_MAX_INPUT_TOKENS:-10000}
+      ROLEPLAY_RECENT_MIN_MESSAGES: ${ROLEPLAY_RECENT_MIN_MESSAGES:-12}
+      ROLEPLAY_RECENT_TARGET_MESSAGES: ${ROLEPLAY_RECENT_TARGET_MESSAGES:-16}
+      ROLEPLAY_RECENT_MAX_MESSAGES: ${ROLEPLAY_RECENT_MAX_MESSAGES:-20}
+      ROLEPLAY_COMPACT_TARGET_TOKENS: ${ROLEPLAY_COMPACT_TARGET_TOKENS:-1000}
+      ROLEPLAY_COMPACT_TRIGGER_RATIO: ${ROLEPLAY_COMPACT_TRIGGER_RATIO:-0.75}
+      WORKSHEET_DRAFT_TTL_SECONDS: ${WORKSHEET_DRAFT_TTL_SECONDS:-3600}
+      SUPPORT_SEARCH_TTL_SECONDS: ${SUPPORT_SEARCH_TTL_SECONDS:-1800}
     ports:
       - "8000:8000"
     volumes:
       - socialease-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
       interval: 30s

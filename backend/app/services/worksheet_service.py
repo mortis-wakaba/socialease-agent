@@ -1,18 +1,31 @@
 """Worksheet service shared by API routes and harness skills."""
 
+from datetime import datetime, timezone
+import re
+
 from app.agents.worksheet import WorksheetAgent
 from app.db.factory import repository_factory
 from app.knowledge.service import KnowledgeService
 from app.llm.factory import create_llm_client
 from app.memory.worksheet_store import WorksheetStore
+from app.memory.session_context_settings import roleplay_session_context_settings
+from app.memory.task_session_settings import worksheet_draft_ttl_seconds
+from app.memory.task_state_store import (
+    DisabledTaskStateStore,
+    RedisTaskStateStore,
+    TaskStateStore,
+    TaskStateStoreUnavailable,
+)
 from app.models import RiskLevel
 from app.models_knowledge import KnowledgeBaseType
 from app.models_worksheet import (
     WORKSHEET_DISCLAIMER,
     WorksheetCreateRequest,
     WorksheetCreateResponse,
+    WorksheetDraftContext,
     WorksheetFields,
     WorksheetRecord,
+    WorksheetSupplementRequest,
 )
 from app.privacy.persistence_gate import persistence_gate
 from app.privacy.policy import PersistenceKind
@@ -33,11 +46,25 @@ class WorksheetService:
         store: WorksheetStore | None = None,
         knowledge: KnowledgeService | None = None,
         safety_classifier: BaseSafetyClassifier | None = None,
+        draft_store: TaskStateStore[WorksheetDraftContext] | None = None,
+        draft_ttl_seconds: int | None = None,
     ) -> None:
         self.agent = agent or WorksheetAgent(llm_client=create_llm_client())
         self.store = store or WorksheetStore(repository=repository_factory().worksheet_repository())
         self.knowledge = knowledge or KnowledgeService()
         self.safety_classifier = safety_classifier or create_safety_classifier()
+        settings = roleplay_session_context_settings()
+        self.draft_store = draft_store or (
+            RedisTaskStateStore(
+                redis_url=settings.redis_url,
+                namespace="worksheet-draft",
+                model_type=WorksheetDraftContext,
+                socket_timeout_seconds=settings.redis_socket_timeout_seconds,
+            )
+            if settings.redis_url
+            else DisabledTaskStateStore()
+        )
+        self.draft_ttl_seconds = draft_ttl_seconds or worksheet_draft_ttl_seconds()
 
     async def create_worksheet(self, request: WorksheetCreateRequest) -> WorksheetCreateResponse:
         """Create a non-medical self-reflection worksheet from a message."""
@@ -72,6 +99,8 @@ class WorksheetService:
             missing_fields=missing_fields,
             gentle_followup_questions=followup_questions,
         )
+        if not worksheet.completed:
+            await self._save_draft(worksheet, recent_supplements=[])
         response = "已生成 CBT 风格自助反思练习。你可以把它当作整理社交压力想法的结构化草稿。"
         if missing_fields:
             response = "已先保存草稿，但还有一些信息可以继续补充。"
@@ -93,6 +122,143 @@ class WorksheetService:
         if worksheet is None:
             raise ServiceNotFoundError("Worksheet not found")
         return worksheet
+
+    async def supplement_worksheet(
+        self,
+        request: WorksheetSupplementRequest,
+    ) -> WorksheetCreateResponse:
+        """Merge one bounded clarification into a user-owned worksheet draft."""
+        worksheet = self.store.get_for_user(request.worksheet_id, request.user_id)
+        if worksheet is None:
+            raise ServiceNotFoundError("Worksheet not found")
+        safety_result = await self.safety_classifier.classify(request.message)
+        if safety_result.risk_level == RiskLevel.CRISIS:
+            await self.draft_store.delete(user_id=request.user_id, task_id=request.worksheet_id)
+            return WorksheetCreateResponse(
+                worksheet=None,
+                safety_result=safety_result,
+                blocked=True,
+                response=WORKSHEET_CRISIS_RESPONSE,
+            )
+
+        patch, _, _, llm_usage = await self.agent.create_fields(request.message)
+        correction_fields = (
+            _explicit_worksheet_fields(request.message, self.agent.field_labels)
+            if re.search(r"(?:更正|改成|写错|不是.+是|纠正)", request.message)
+            else set()
+        )
+        merged = _merge_worksheet_fields(
+            worksheet.fields,
+            patch,
+            correction_fields=correction_fields,
+        )
+        missing = [
+            field
+            for field in self.agent.required_fields
+            if getattr(merged, field) in (None, "")
+        ]
+        questions = [self.agent.followup_questions[field] for field in missing[:4]]
+        updated = worksheet.model_copy(
+            update={
+                "fields": _persist_worksheet_fields(request.user_id, merged),
+                "missing_fields": missing,
+                "gentle_followup_questions": questions,
+                "updated_at": datetime.now(timezone.utc),
+                "completed": not missing,
+            },
+            deep=True,
+        )
+        updated = self.store.save(updated)
+        recent = await self._recent_supplements(request.user_id, request.worksheet_id)
+        if updated.completed:
+            await self.draft_store.delete(user_id=request.user_id, task_id=request.worksheet_id)
+        else:
+            await self._save_draft(
+                updated,
+                recent_supplements=[*recent, request.message[:2000]][-8:],
+            )
+        return WorksheetCreateResponse(
+            worksheet=updated,
+            safety_result=safety_result,
+            missing_fields=missing,
+            gentle_followup_questions=questions,
+            blocked=False,
+            response=(
+                "已更新并完成这份结构化反思草稿。"
+                if updated.completed
+                else "已把补充内容合并到原反思表，还可以继续补充缺失信息。"
+            ),
+            llm_usage=llm_usage,
+        )
+
+    async def delete_user_context(self, user_id: str) -> int:
+        return await self.draft_store.delete_user(user_id=user_id)
+
+    async def close(self) -> None:
+        await self.draft_store.close()
+
+    async def _save_draft(
+        self,
+        worksheet: WorksheetRecord,
+        *,
+        recent_supplements: list[str],
+    ) -> None:
+        for attempt in range(3):
+            try:
+                current = await self.draft_store.get(
+                    user_id=worksheet.user_id,
+                    task_id=worksheet.worksheet_id,
+                )
+            except TaskStateStoreUnavailable:
+                return None
+            effective_supplements = recent_supplements
+            if attempt > 0 and current is not None and recent_supplements:
+                effective_supplements = [
+                    *current.recent_supplements,
+                    recent_supplements[-1],
+                ][-8:]
+            state = WorksheetDraftContext(
+                user_id=worksheet.user_id,
+                worksheet_id=worksheet.worksheet_id,
+                fields=worksheet.fields,
+                missing_fields=worksheet.missing_fields,
+                last_question=(
+                    worksheet.gentle_followup_questions[0]
+                    if worksheet.gentle_followup_questions
+                    else None
+                ),
+                recent_supplements=effective_supplements,
+                version=(current.version + 1 if current else 1),
+                updated_at=datetime.now(timezone.utc),
+            )
+            try:
+                if current is None:
+                    await self.draft_store.put(
+                        user_id=worksheet.user_id,
+                        task_id=worksheet.worksheet_id,
+                        state=state,
+                        ttl_seconds=self.draft_ttl_seconds,
+                    )
+                    return None
+                saved = await self.draft_store.compare_and_set(
+                    user_id=worksheet.user_id,
+                    task_id=worksheet.worksheet_id,
+                    state=state,
+                    expected_version=current.version,
+                    ttl_seconds=self.draft_ttl_seconds,
+                )
+                if saved:
+                    return None
+            except TaskStateStoreUnavailable:
+                return None
+        return None
+
+    async def _recent_supplements(self, user_id: str, worksheet_id: str) -> list[str]:
+        try:
+            state = await self.draft_store.get(user_id=user_id, task_id=worksheet_id)
+        except TaskStateStoreUnavailable:
+            return []
+        return state.recent_supplements if state is not None else []
 
 
 worksheet_service = WorksheetService()
@@ -121,3 +287,31 @@ def _persist_worksheet_fields(user_id: str, fields: WorksheetFields) -> Workshee
             "next_action": safe_text(fields.next_action),
         }
     )
+
+
+def _merge_worksheet_fields(
+    current: WorksheetFields,
+    patch: WorksheetFields,
+    *,
+    correction_fields: set[str],
+) -> WorksheetFields:
+    """Fill missing fields, or overwrite only after an explicit correction signal."""
+    values = current.model_dump(mode="python")
+    for field, value in patch.model_dump(mode="python").items():
+        if value in (None, ""):
+            continue
+        if values.get(field) in (None, "") or field in correction_fields:
+            values[field] = value
+    return WorksheetFields.model_validate(values)
+
+
+def _explicit_worksheet_fields(
+    message: str,
+    field_labels: dict[str, tuple[str, ...]],
+) -> set[str]:
+    """Return fields explicitly named by the user in a correction message."""
+    return {
+        field
+        for field, labels in field_labels.items()
+        if any(re.search(rf"{re.escape(label)}\s*[:：]", message, re.IGNORECASE) for label in labels)
+    }

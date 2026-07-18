@@ -75,7 +75,7 @@ async def start_roleplay(
         payload=effective_request,
         protocol_id=protocol_id,
     )
-    response = roleplay_service.start_session(effective_request)
+    response = await roleplay_service.start_session(effective_request)
     consume_direct_action_consent(
         user_id=effective_request.user_id,
         consent=consent,
@@ -111,7 +111,7 @@ async def pause_roleplay_session(
         effective_request = request.model_copy(
             update={"user_id": resolve_request_user_id(request.user_id, current_user)}
         )
-        return roleplay_service.pause_session(effective_request)
+        return await roleplay_service.pause_session(effective_request)
     except ServiceNotFoundError:
         raise HTTPException(status_code=404, detail="Role-play session not found")
     except ServiceStateError as error:
@@ -128,7 +128,7 @@ async def resume_roleplay_session(
         effective_request = request.model_copy(
             update={"user_id": resolve_request_user_id(request.user_id, current_user)}
         )
-        return roleplay_service.resume_session(effective_request)
+        return await roleplay_service.resume_session(effective_request)
     except ServiceNotFoundError:
         raise HTTPException(status_code=404, detail="Role-play session not found")
     except ServiceStateError as error:
@@ -145,7 +145,7 @@ async def get_roleplay_feedback(
         effective_request = request.model_copy(
             update={"user_id": resolve_request_user_id(request.user_id, current_user)}
         )
-        return roleplay_service.get_feedback(effective_request)
+        return await roleplay_service.get_feedback(effective_request)
     except ServiceNotFoundError:
         raise HTTPException(status_code=404, detail="Role-play session not found")
     except ServiceStateError as error:

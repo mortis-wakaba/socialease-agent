@@ -14,6 +14,7 @@ export default function SupportPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryQuery, setRetryQuery] = useState<string | null>(null);
+  const [searchSessionId, setSearchSessionId] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -30,7 +31,9 @@ export default function SupportPage() {
     setError(null);
     setRetryQuery(null);
     try {
-      setResult(await api.querySupportResources(trimmed));
+      const next = await api.querySupportResources(trimmed, searchSessionId);
+      setResult(next);
+      setSearchSessionId(next.search_session_id ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "无法查询支持资源");
       setRetryQuery(trimmed);
