@@ -88,11 +88,24 @@ Provider 失败或关闭时，系统仍必须保持安全。
 | `LLM_MAX_CONCURRENCY` | pilot | 推荐的全局 LLM 并发上限变量 |
 | `SOCIALEASE_LLM_MAX_CONCURRENCY` | legacy | `LLM_MAX_CONCURRENCY` 的兼容别名 |
 | `SOCIALEASE_SLOW_REQUEST_MS` | pilot | structured log 和 slow-request metrics 阈值 |
-| `SOCIALEASE_REDIS_URL` | future multi-instance | 未来共享限流或并发协调使用的 Redis URL |
+| `SOCIALEASE_REDIS_URL` | role-play / multi-instance | Role-play 短期会话 Context 的 Redis URL；也为未来共享限流/并发协调复用 |
+| `SOCIALEASE_DOCKER_REDIS_URL` | local compose | 可选的 backend 容器 Redis URL；默认 `redis://redis:6379/0`，避免把宿主机的 `localhost` 地址传入容器 |
+| `WORKSHEET_DRAFT_TTL_SECONDS` | worksheet | Worksheet 原始补充回答和草稿会话的滑动 TTL，默认 3600 秒 |
+| `SUPPORT_SEARCH_TTL_SECONDS` | support | Support 查询历史和 Citation 指代状态的滑动 TTL，默认 1800 秒 |
+| `ROLEPLAY_SESSION_CONTEXT_TTL_SECONDS` | role-play | 活跃 Role-play 原始短期 Context 的滑动 TTL |
+| `ROLEPLAY_PAUSED_CONTEXT_TTL_SECONDS` | role-play | 暂停 Role-play Context 的 TTL |
+| `ROLEPLAY_CONTEXT_MAX_INPUT_TOKENS` | role-play | 应用级 Role-play 输入 Token Budget |
+| `ROLEPLAY_RECENT_MIN_MESSAGES` | role-play | 预算允许时优先保留的最少最近消息数 |
+| `ROLEPLAY_RECENT_TARGET_MESSAGES` | role-play | Compact 后目标最近消息数 |
+| `ROLEPLAY_RECENT_MAX_MESSAGES` | role-play | Compact 前允许的最大最近消息数 |
+| `ROLEPLAY_COMPACT_TARGET_TOKENS` | role-play | 结构化 Compact State 的目标预算 |
+| `ROLEPLAY_COMPACT_TRIGGER_RATIO` | role-play | 输入预算利用率达到该比例时触发 Compact |
+| `ROLEPLAY_TOKENIZER_BACKEND` | role-play | `auto`、`heuristic` 或 `tiktoken`；不支持当前模型时保守降级 |
+| `ROLEPLAY_TOKENIZER_MODEL` | role-play | Tokenizer 使用的模型名；为空时复用 `LLM_MODEL` |
 | `SOCIALEASE_RATE_LIMIT_BACKEND` | pilot | `local` 进程内限流；`gateway` 表示网关限流；`redis` 目前 fail fast |
 | `SOCIALEASE_LLM_CONCURRENCY_BACKEND` | future multi-instance | `local` 进程内 semaphore；`redis` 为未来共享 provider semaphore |
 
-当前本地运行时限制是进程内的。多实例试点时，只有部署网关真正执行请求预算，才设置 `SOCIALEASE_RATE_LIMIT_BACKEND=gateway`。`redis` 当前为预留值，在共享 adapter 完成前会 fail fast。
+Role-play 已使用 Redis 保存带 TTL 的短期原始会话 Context；长期数据库仍只保存最小化消息和结构化练习状态。当前限流仍是进程内实现，多实例试点时只有部署网关真正执行请求预算，才设置 `SOCIALEASE_RATE_LIMIT_BACKEND=gateway`；限流后端的 `redis` 值仍会 fail fast，因为共享 limiter adapter 尚未实现。
 
 ## Operational Alerts
 
