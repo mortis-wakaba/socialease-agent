@@ -51,6 +51,7 @@ from app.workflow.recovery import (
     skill_failure_result,
 )
 from app.workflow.router import BaseIntentRouter, IntentRouter, LlmIntentRouter
+from app.workflow.response_constraints import extract_response_constraints
 
 
 class AgentHarness:
@@ -105,6 +106,7 @@ class AgentHarness:
             user_profile=user_profile,
             active_exposure_plan=active_exposure_plan,
             memory_context=memory_context,
+            response_constraints=extract_response_constraints(request.message),
         )
 
         for hook in self.hooks:
@@ -327,6 +329,11 @@ class AgentHarness:
         should_consider_intervention_plan = (
             safety_result.risk_level != RiskLevel.CRISIS
             and permission_decision.action != PermissionAction.BLOCK
+            and harness_action
+            not in {
+                HarnessAction.REQUEST_CLARIFICATION,
+                HarnessAction.DECLINE_OUT_OF_SCOPE,
+            }
         )
         memory_decision = (
             _run_before_memory_write_hooks(
@@ -666,6 +673,8 @@ def _action_for_intent(intent: Intent) -> HarnessAction:
         Intent.EXPOSURE_PLANNING: HarnessAction.CREATE_EXPOSURE_PLAN,
         Intent.PROGRESS_REVIEW: HarnessAction.CREATE_EXPOSURE_PLAN,
         Intent.CAMPUS_RESOURCE_QUERY: HarnessAction.QUERY_SUPPORT_RESOURCE,
+        Intent.CLARIFICATION_NEEDED: HarnessAction.REQUEST_CLARIFICATION,
+        Intent.OUT_OF_SCOPE: HarnessAction.DECLINE_OUT_OF_SCOPE,
         Intent.CRISIS: HarnessAction.CRISIS_ESCALATION,
     }.get(intent, HarnessAction.GENERAL_SUPPORT)
 

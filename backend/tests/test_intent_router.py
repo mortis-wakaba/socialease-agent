@@ -70,13 +70,33 @@ async def test_router_preserves_crisis_from_safety() -> None:
 
 
 @pytest.mark.anyio
-async def test_router_defaults_to_emotional_support_for_unknown_safe_message() -> None:
+async def test_router_requests_clarification_for_underspecified_help() -> None:
     router = IntentRouter()
     safety = SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
 
     result = await router.route("最近有点烦，但还没想好要做什么", safety)
 
+    assert result.intent == Intent.CLARIFICATION_NEEDED
+
+
+@pytest.mark.anyio
+async def test_router_keeps_clear_open_ended_social_question_in_support() -> None:
+    router = IntentRouter()
+    safety = SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
+
+    result = await router.route("同学一直不回复消息，我不知道该怎么继续沟通", safety)
+
     assert result.intent == Intent.EMOTIONAL_SUPPORT
+
+
+@pytest.mark.anyio
+async def test_router_declines_explicit_out_of_scope_subject() -> None:
+    router = IntentRouter()
+    safety = SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
+
+    result = await router.route("帮我写代码解决这个 Python 程序", safety)
+
+    assert result.intent == Intent.OUT_OF_SCOPE
 
 
 @pytest.mark.anyio

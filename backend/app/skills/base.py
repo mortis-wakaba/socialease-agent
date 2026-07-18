@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from app.models import Intent, SafetyResult
 from app.models_context import SkillContextProjection
 from app.models_memory import MemoryContext
+from app.models_support_generation import PresentationConstraints
 from app.workflow.context import RunContext
 
 
@@ -53,6 +54,11 @@ class SkillContext:
     def selected_context(self) -> SkillContextProjection | None:
         """Return the task-specific context projection selected by the harness."""
         return self.run.skill_context
+
+    @property
+    def response_constraints(self) -> PresentationConstraints:
+        """Return explicit presentation preferences independent from business intent."""
+        return self.run.response_constraints
 
 
 @dataclass(frozen=True)

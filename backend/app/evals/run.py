@@ -603,6 +603,8 @@ def _selected_agent_for_eval(intent: Intent) -> str:
         Intent.EXPOSURE_PLANNING: "exposure_planner",
         Intent.PROGRESS_REVIEW: "exposure_planner",
         Intent.CAMPUS_RESOURCE_QUERY: "support_resource_rag_agent",
+        Intent.CLARIFICATION_NEEDED: "clarification_agent",
+        Intent.OUT_OF_SCOPE: "product_boundary_agent",
         Intent.CRISIS: "crisis_escalation",
     }.get(intent, "support_agent")
 
@@ -616,6 +618,8 @@ def _action_for_intent(intent: Intent) -> HarnessAction:
         Intent.EXPOSURE_PLANNING: HarnessAction.CREATE_EXPOSURE_PLAN,
         Intent.PROGRESS_REVIEW: HarnessAction.CREATE_EXPOSURE_PLAN,
         Intent.CAMPUS_RESOURCE_QUERY: HarnessAction.QUERY_SUPPORT_RESOURCE,
+        Intent.CLARIFICATION_NEEDED: HarnessAction.REQUEST_CLARIFICATION,
+        Intent.OUT_OF_SCOPE: HarnessAction.DECLINE_OUT_OF_SCOPE,
         Intent.CRISIS: HarnessAction.CRISIS_ESCALATION,
     }.get(intent, HarnessAction.GENERAL_SUPPORT)
 

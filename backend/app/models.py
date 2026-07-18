@@ -27,6 +27,8 @@ class Intent(str, Enum):
     EXPOSURE_PLANNING = "exposure_planning"
     CAMPUS_RESOURCE_QUERY = "campus_resource_query"
     PROGRESS_REVIEW = "progress_review"
+    CLARIFICATION_NEEDED = "clarification_needed"
+    OUT_OF_SCOPE = "out_of_scope"
     CRISIS = "crisis"
 
 

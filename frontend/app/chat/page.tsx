@@ -284,6 +284,10 @@ function ProductStatusPanel({ latest }: { latest: ChatResponse }) {
           ? "已生成结构化反思"
           : action === "exposure_plan_created"
             ? "已生成社交练习计划"
+            : action === "clarification_requested"
+              ? "需要你再补充一点信息"
+              : action === "out_of_scope"
+                ? "这个请求超出当前产品范围"
             : "可以继续对话或选择一个低强度练习";
 
   return (

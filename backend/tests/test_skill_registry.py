@@ -16,6 +16,8 @@ def test_skill_registry_lists_core_agent_skills() -> None:
     assert "worksheet_skill" in names
     assert "exposure_planning_skill" in names
     assert "support_resource_rag_skill" in names
+    assert "clarification_skill" in names
+    assert "out_of_scope_skill" in names
 
 
 def test_skill_registry_resolves_crisis_skill_for_crisis_risk() -> None:
@@ -60,3 +62,17 @@ def test_descriptor_for_intent_exposes_specialized_skill_metadata() -> None:
     assert descriptor is not None
     assert descriptor.name == "worksheet_skill"
     assert "worksheet" in descriptor.entrypoint
+
+
+def test_registry_resolves_non_mutating_boundary_skills() -> None:
+    registry = SkillRegistry()
+    safety_result = SafetyResult(risk_level=RiskLevel.LOW, reason="safe")
+
+    clarification = registry.resolve_for_chat(
+        Intent.CLARIFICATION_NEEDED,
+        safety_result,
+    )
+    out_of_scope = registry.resolve_for_chat(Intent.OUT_OF_SCOPE, safety_result)
+
+    assert clarification.descriptor.name == "clarification_skill"
+    assert out_of_scope.descriptor.name == "out_of_scope_skill"

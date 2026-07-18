@@ -240,6 +240,46 @@ async def test_agent_harness_loads_run_context_for_skill() -> None:
     assert "memory_context" in response.structured_data
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("message", "expected_intent", "expected_skill", "expected_action"),
+    [
+        (
+            "最近有点烦，但还没想好要做什么",
+            Intent.CLARIFICATION_NEEDED,
+            "clarification_skill",
+            "clarification_requested",
+        ),
+        (
+            "帮我写代码解决这个 Python 程序",
+            Intent.OUT_OF_SCOPE,
+            "out_of_scope_skill",
+            "out_of_scope",
+        ),
+    ],
+)
+async def test_harness_boundary_paths_do_not_create_business_plans(
+    message: str,
+    expected_intent: Intent,
+    expected_skill: str,
+    expected_action: str,
+) -> None:
+    harness = AgentHarness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
+        intent_router=workflow_engine.IntentRouter(),
+    )
+
+    response = await harness.run(
+        ChatRequest(user_id=f"boundary_{expected_intent.value}", message=message)
+    )
+
+    assert response.intent == expected_intent
+    assert response.trace.selected_skill == expected_skill
+    assert response.trace.action == expected_action
+    assert response.trace.intervention_plan_id is None
+    assert response.structured_data["state_changed"] is False
+
+
 def test_memory_context_builder_combines_profile_preferences_and_active_plan() -> None:
     plan = ExposurePlan(
         plan_id="plan_memory_context",

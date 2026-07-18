@@ -51,6 +51,19 @@ class LlmIntentRouter:
             result = IntentResult.model_validate(payload)
             if result.intent == Intent.CRISIS:
                 raise ValueError("LLM router cannot emit crisis outside safety routing.")
+            if (
+                result.confidence < 0.6
+                and result.intent
+                not in {Intent.EMOTIONAL_SUPPORT, Intent.OUT_OF_SCOPE}
+            ):
+                result = IntentResult(
+                    intent=Intent.CLARIFICATION_NEEDED,
+                    confidence=max(0.6, result.confidence),
+                    reason=(
+                        "The semantic router was not confident enough to start a "
+                        "specialized action; clarification is required."
+                    ),
+                )
             return result.model_copy(update={"llm_usage": LLMUsage(used=True)})
         except (ValueError, json.JSONDecodeError, ValidationError):
             fallback = await self.fallback_router.route(message, safety_result)
@@ -99,6 +112,43 @@ class RuleBasedIntentRouter:
         "pause role play",
         "stop practice",
         "pause practice",
+    )
+
+    clarification_terms: tuple[str, ...] = (
+        "帮帮我",
+        "帮一下我",
+        "不知道怎么办",
+        "还没想好",
+        "说不清楚",
+        "不知道从哪说",
+        "can you help me",
+        "not sure what to do",
+    )
+
+    out_of_scope_terms: tuple[str, ...] = (
+        "高数题",
+        "数学题",
+        "微积分",
+        "线性代数",
+        "物理题",
+        "化学题",
+        "写代码",
+        "改代码",
+        "代码报错",
+        "python 程序",
+        "java 程序",
+        "c++",
+        "网络爬虫",
+        "股票推荐",
+        "哪只股票",
+        "预测股价",
+        "天气预报",
+        "明天天气",
+        "做菜食谱",
+        "旅游攻略",
+        "latest news",
+        "weather forecast",
+        "stock price",
     )
 
     intent_terms: dict[Intent, tuple[str, ...]] = {
@@ -177,6 +227,13 @@ class RuleBasedIntentRouter:
                 reason="User asked to pause or stop active practice; routed to support.",
             )
 
+        if self._is_out_of_scope_request(normalized):
+            return IntentResult(
+                intent=Intent.OUT_OF_SCOPE,
+                confidence=0.9,
+                reason="Request matched an explicit out-of-scope subject boundary.",
+            )
+
         scored_matches = self._score_intents(normalized)
         if scored_matches:
             best_intent, best_terms = scored_matches[0]
@@ -189,6 +246,16 @@ class RuleBasedIntentRouter:
                 reason=(
                     f"Keyword scoring selected {best_intent.value} with "
                     f"{score} matched term(s): {matched}"
+                ),
+            )
+
+        if self._needs_clarification(normalized):
+            return IntentResult(
+                intent=Intent.CLARIFICATION_NEEDED,
+                confidence=0.72,
+                reason=(
+                    "The request appears in-domain but lacks enough information to "
+                    "select a useful response or specialized action."
                 ),
             )
 
@@ -210,6 +277,19 @@ class RuleBasedIntentRouter:
     def _is_stop_practice_request(self, message: str) -> bool:
         """Return whether the user is asking to pause or stop practice."""
         return any(term in message for term in self.stop_practice_terms)
+
+    def _needs_clarification(self, message: str) -> bool:
+        """Recognize short, underspecified help requests without guessing an action."""
+        normalized = message.strip("。！？!?，, ")
+        if normalized in {"帮我", "怎么办", "help", "help me"}:
+            return True
+        return len(normalized) <= 32 and any(
+            term in normalized for term in self.clarification_terms
+        )
+
+    def _is_out_of_scope_request(self, message: str) -> bool:
+        """Recognize only explicit non-product subjects in deterministic fallback."""
+        return any(term in message for term in self.out_of_scope_terms)
 
 
 IntentRouter = RuleBasedIntentRouter

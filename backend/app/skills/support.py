@@ -58,6 +58,7 @@ class SupportSkill:
             intent=context.intent,
             safety_result=context.safety_result,
             support_context=support_context,
+            application_constraints=context.response_constraints,
         )
         return SkillResult(
             response=response,

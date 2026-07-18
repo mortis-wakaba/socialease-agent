@@ -14,6 +14,8 @@ class PresentationConstraints(BaseModel):
     max_chars: int | None = Field(default=None, ge=10, le=1000)
     output_format: Literal["plain", "single_sentence", "steps"] = "plain"
     requested_language: Literal["zh", "en"] | None = None
+    item_count: int | None = Field(default=None, ge=1, le=5)
+    plain_language: bool = False
 
 
 class PrivacyCandidate(BaseModel):

@@ -8,6 +8,7 @@ from app.models_context import SkillContextProjection
 from app.models_exposure import ExposurePlan
 from app.models_intervention import InterventionPlan
 from app.models_memory import MemoryContext, UserPracticeSummary
+from app.models_support_generation import PresentationConstraints
 
 
 @dataclass
@@ -27,3 +28,6 @@ class RunContext:
     skill_context: SkillContextProjection | None = None
     consent_state: dict[str, Any] = field(default_factory=dict)
     intervention_plan: InterventionPlan | None = None
+    response_constraints: PresentationConstraints = field(
+        default_factory=PresentationConstraints
+    )

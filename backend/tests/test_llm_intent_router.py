@@ -84,3 +84,19 @@ async def test_crisis_skips_llm_router_call() -> None:
     assert result.intent == Intent.CRISIS
     assert client.calls == 0
     assert result.llm_usage.used is False
+
+
+@pytest.mark.anyio
+async def test_llm_router_low_confidence_action_requests_clarification(
+    low_safety: SafetyResult,
+) -> None:
+    router = LlmIntentRouter(
+        llm_client=FakeLLMClient(
+            '{"intent":"roleplay_practice","confidence":0.41,"reason":"unclear"}'
+        )
+    )
+
+    result = await router.route("你能帮我一下吗", low_safety)
+
+    assert result.intent == Intent.CLARIFICATION_NEEDED
+    assert result.llm_usage.used is True

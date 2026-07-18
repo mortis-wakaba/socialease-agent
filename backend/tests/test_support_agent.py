@@ -7,6 +7,7 @@ import pytest
 from app.agents.support import SupportAgent
 from app.agents.support_generation import SupportGenerationAgent
 from app.models import Intent, RiskLevel, SafetyResult
+from app.models_support_generation import PresentationConstraints
 
 
 class FakeLLMClient:
@@ -172,6 +173,30 @@ async def test_direct_practice_returns_only_requested_short_sentence() -> None:
     assert "低强度步骤" not in response
     assert data["response_mode"] == "direct_practice"
     assert data["presentation_constraints"]["max_chars"] == 30
+
+
+@pytest.mark.anyio
+async def test_application_constraints_limit_support_steps_independently() -> None:
+    payload = json.loads(_valid_generation())
+    payload["practice_steps"] = ["第一步", "第二步", "第三步"]
+    payload["automatic_thought"] = None
+    agent = SupportGenerationAgent(
+        llm_client=FakeLLMClient(json.dumps(payload, ensure_ascii=False))
+    )
+
+    response, data = await agent.respond(
+        message="给我一条建议，怎么更自然地参与小组讨论？",
+        intent=Intent.EMOTIONAL_SUPPORT,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="test"),
+        application_constraints=PresentationConstraints(
+            output_format="steps",
+            item_count=1,
+        ),
+    )
+
+    assert "1. 第一步" in response
+    assert "第二步" not in response
+    assert data["presentation_constraints"]["item_count"] == 1
 
 
 @pytest.mark.anyio

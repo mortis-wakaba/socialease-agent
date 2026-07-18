@@ -43,6 +43,7 @@ class SupportGenerationAgent:
         intent: Intent,
         safety_result: SafetyResult,
         support_context: SupportGenerationContext | None = None,
+        application_constraints: PresentationConstraints | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Return validated LLM support or a deterministic safe fallback."""
         if self.llm_client is None:
@@ -51,6 +52,7 @@ class SupportGenerationAgent:
                 intent=intent,
                 safety_result=safety_result,
                 fallback_reason="LLM_DISABLED",
+                application_constraints=application_constraints,
             )
         if safety_result.risk_level == RiskLevel.HIGH:
             return self._fallback(
@@ -58,6 +60,7 @@ class SupportGenerationAgent:
                 intent=intent,
                 safety_result=safety_result,
                 fallback_reason="HIGH_RISK_DETERMINISTIC_SUPPORT",
+                application_constraints=application_constraints,
             )
 
         guidance = self.knowledge.query(message, KnowledgeBaseType.SOCIAL_SKILLS)
@@ -76,6 +79,11 @@ class SupportGenerationAgent:
                         for citation in guidance.citations
                     ],
                     application_context=_support_context_payload(support_context),
+                    response_constraints=(
+                        application_constraints.model_dump(mode="json")
+                        if application_constraints is not None
+                        else {}
+                    ),
                 ),
                 temperature=0.1,
             )
@@ -89,6 +97,7 @@ class SupportGenerationAgent:
                 fallback_reason="OUTPUT_GUARDRAIL",
                 error_category=exc.category,
                 validation_issues=[str(exc)],
+                application_constraints=application_constraints,
             )
         except json.JSONDecodeError as exc:
             return self._fallback(
@@ -98,6 +107,7 @@ class SupportGenerationAgent:
                 fallback_reason="JSON_PARSE_ERROR",
                 error_category="JSON_PARSE_ERROR",
                 validation_issues=[f"line_{exc.lineno}:column_{exc.colno}"],
+                application_constraints=application_constraints,
             )
         except ValidationError as exc:
             return self._fallback(
@@ -107,6 +117,7 @@ class SupportGenerationAgent:
                 fallback_reason="SCHEMA_VALIDATION_ERROR",
                 error_category="SCHEMA_VALIDATION_ERROR",
                 validation_issues=_safe_validation_issues(exc),
+                application_constraints=application_constraints,
             )
         except ValueError as exc:
             return self._fallback(
@@ -116,6 +127,7 @@ class SupportGenerationAgent:
                 fallback_reason="JSON_SHAPE_ERROR",
                 error_category="JSON_SHAPE_ERROR",
                 validation_issues=[str(exc)[:160]],
+                application_constraints=application_constraints,
             )
         except Exception as exc:
             category = (
@@ -129,11 +141,13 @@ class SupportGenerationAgent:
                 safety_result=safety_result,
                 fallback_reason="PROVIDER_ERROR",
                 error_category=category,
+                application_constraints=application_constraints,
             )
 
         constraints = _resolve_presentation_constraints(
             message=message,
             proposed=proposal.presentation_constraints,
+            application=application_constraints,
         )
         composed_response = _compose_support_response(proposal, constraints=constraints)
         response, deterministic_categories = redact_sensitive_identifiers(composed_response)
@@ -192,8 +206,15 @@ class SupportGenerationAgent:
         fallback_reason: str,
         error_category: str | None = None,
         validation_issues: list[str] | None = None,
+        application_constraints: PresentationConstraints | None = None,
     ) -> tuple[str, dict[str, Any]]:
         response, data = self.fallback_agent.respond(message, intent, safety_result)
+        constraints = _resolve_presentation_constraints(
+            message=message,
+            proposed=PresentationConstraints(),
+            application=application_constraints,
+        )
+        response = _apply_presentation_constraints(response, constraints)
         result = {
             **data,
             "fallback_used": True,
@@ -202,6 +223,7 @@ class SupportGenerationAgent:
                 fallback_used=self.llm_client is not None,
                 error_category=error_category,
             ).model_dump(mode="json"),
+            "presentation_constraints": constraints.model_dump(mode="json"),
         }
         if validation_issues:
             result["validation_issues"] = validation_issues
@@ -312,8 +334,11 @@ def _compose_support_response(
         sections.append(f"可以尝试的平衡想法：{proposal.balanced_thought}")
     if proposal.suggested_phrase:
         sections.append(f"可以先练这句话：{proposal.suggested_phrase}")
+    practice_steps = proposal.practice_steps[
+        : resolved.item_count if resolved.item_count is not None else None
+    ]
     steps = "\n".join(
-        f"{index}. {step}" for index, step in enumerate(proposal.practice_steps, start=1)
+        f"{index}. {step}" for index, step in enumerate(practice_steps, start=1)
     )
     sections.append(f"低强度步骤：\n{steps}")
     if proposal.followup_question:
@@ -352,27 +377,39 @@ def _resolve_presentation_constraints(
     *,
     message: str,
     proposed: PresentationConstraints,
+    application: PresentationConstraints | None = None,
 ) -> PresentationConstraints:
     """Merge model-extracted preferences with high-confidence user-text rules."""
-    max_chars = proposed.max_chars
+    extracted = application or PresentationConstraints()
+    max_chars = extracted.max_chars or proposed.max_chars
     match = re.search(r"(?:不超过|最多|控制在)\s*(\d{1,4})\s*(?:个)?字", message)
     if match:
         max_chars = min(1000, max(10, int(match.group(1))))
 
-    output_format = proposed.output_format
+    output_format = (
+        extracted.output_format
+        if extracted.output_format != "plain"
+        else proposed.output_format
+    )
     if re.search(r"(?:只(?:回复|回答|输出|给)?|帮我写)?\s*(?:一|1)句话", message):
         output_format = "single_sentence"
     elif "不要分点" in message or "不要列点" in message:
         output_format = "plain"
 
-    verbosity = proposed.verbosity
+    verbosity = (
+        "brief"
+        if extracted.verbosity == "brief"
+        else proposed.verbosity
+    )
     if max_chars is not None or output_format == "single_sentence" or "简短" in message:
         verbosity = "brief"
     return PresentationConstraints(
         verbosity=verbosity,
         max_chars=max_chars,
         output_format=output_format,
-        requested_language=proposed.requested_language,
+        requested_language=extracted.requested_language or proposed.requested_language,
+        item_count=extracted.item_count or proposed.item_count,
+        plain_language=extracted.plain_language or proposed.plain_language,
     )
 
 
