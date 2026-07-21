@@ -1,0 +1,46 @@
+.github/workflows/ci.yml
+  s_f8dae88ec33b77::t_c5e7a28f308407 54-58
+  s_f8dae88ec33b77::t_092ae1d8423f91 40-41
+  s_f8dae88ec33b77::t_d8cbfe623502ed 28-36,60-62,73-79
+  s_f8dae88ec33b77::t_98497a882ed0aa 59
+AGENTS.md
+  s_f8dae88ec33b77::t_6b93cb09f9dbb9 40-52
+scripts/check_repository_privacy.py
+  s_f8dae88ec33b77::t_af081f43148340 10,12,17
+  s_f8dae88ec33b77::t_44c84dd83193b9 2
+  s_f8dae88ec33b77::t_f2c362b4e4a9e2 1,3-9,11,13-16,18-28
+backend/app/privacy/repository_check.py
+  s_f8dae88ec33b77::t_44c84dd83193b9 29,31
+  s_f8dae88ec33b77::t_af081f43148340 1-28,30,32-73
+Makefile
+  s_f8dae88ec33b77::t_3b15f98a9e82cd 6-8,15-16
+  s_f8dae88ec33b77::t_d8cbfe623502ed 1,18-20,42-44
+  s_f8dae88ec33b77::t_c5e7a28f308407 37-41
+  s_f8dae88ec33b77::t_a21c30f66a2e6c 17
+  s_f8dae88ec33b77::t_e9252dded9d482 21
+  s_f8dae88ec33b77::t_484562231e8fbd 45
+backend/tests/test_repository_privacy_check.py
+  s_f8dae88ec33b77::t_af081f43148340 5
+  s_f8dae88ec33b77::t_f2c362b4e4a9e2 1-4,6-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "dd5ea5cc97b2d70fe905a9c8a66e65be19c215c7",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
