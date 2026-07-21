@@ -63,11 +63,17 @@ echo "Starting SocialEase backend smoke server on ${BACKEND_URL}"
   SOCIALEASE_ENFORCE_DIRECT_ACTION_CONSENT=true \
   SOCIALEASE_ENABLE_DEVELOPER_ENDPOINTS=true \
   SOCIALEASE_CORS_ORIGINS="${FRONTEND_URL}" \
+  SOCIALEASE_REDIS_URL="${SOCIALEASE_REDIS_URL:-}" \
+  SOCIALEASE_REQUIRE_REDIS="${SOCIALEASE_REQUIRE_REDIS:-false}" \
   LLM_ENABLED=false \
   python -m uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}"
 ) >"${BACKEND_LOG}" 2>&1 &
 BACKEND_PID="$!"
-wait_for_url "${BACKEND_URL}/health" "backend"
+if ! wait_for_url "${BACKEND_URL}/health" "backend"; then
+  echo "Backend smoke log:" >&2
+  sed -n '1,240p' "${BACKEND_LOG}" >&2
+  exit 1
+fi
 
 echo "Starting SocialEase frontend smoke server on ${FRONTEND_URL}"
 (
@@ -80,7 +86,11 @@ echo "Starting SocialEase frontend smoke server on ${FRONTEND_URL}"
   npm run dev -- --hostname 127.0.0.1 --port "${FRONTEND_PORT}"
 ) >"${FRONTEND_LOG}" 2>&1 &
 FRONTEND_PID="$!"
-wait_for_url "${FRONTEND_URL}" "frontend"
+if ! wait_for_url "${FRONTEND_URL}" "frontend"; then
+  echo "Frontend smoke log:" >&2
+  sed -n '1,240p' "${FRONTEND_LOG}" >&2
+  exit 1
+fi
 
 echo "Running real frontend/backend smoke flow"
 (
