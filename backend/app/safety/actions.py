@@ -16,3 +16,7 @@ class HarnessAction(str, Enum):
     DECLINE_OUT_OF_SCOPE = "decline_out_of_scope"
     CRISIS_ESCALATION = "crisis_escalation"
     WRITE_MEMORY = "write_memory"
+    CREATE_CALENDAR_EVENT = "create_calendar_event"
+    UPDATE_CALENDAR_EVENT = "update_calendar_event"
+    DELETE_CALENDAR_EVENT = "delete_calendar_event"
+    PROPOSE_CALENDAR_EVENT = "propose_calendar_event"

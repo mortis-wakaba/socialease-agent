@@ -17,6 +17,8 @@ class ErrorCategory(str, Enum):
     SAFETY_CLASSIFIER_FAILURE = "SAFETY_CLASSIFIER_FAILURE"
     TOOL_OR_SKILL_FAILURE = "TOOL_OR_SKILL_FAILURE"
     MEMORY_WRITE_FAILURE = "MEMORY_WRITE_FAILURE"
+    TRACE_PERSISTENCE_FAILURE = "TRACE_PERSISTENCE_FAILURE"
+    OBSERVABILITY_HOOK_FAILURE = "OBSERVABILITY_HOOK_FAILURE"
     UNKNOWN_FAILURE = "UNKNOWN_FAILURE"
 
 
@@ -30,11 +32,14 @@ def categorize_error(error: Exception) -> ErrorCategory:
 
 
 def format_trace_error(category: ErrorCategory, error: Exception | str) -> str:
-    """Return compact trace-safe error text."""
-    message = str(error)
-    if not message:
-        message = error.__class__.__name__ if isinstance(error, Exception) else "unknown"
-    return f"{category.value}:{message[:160]}"
+    """Return a stable error marker without persisting provider exception text."""
+    detail = error.__class__.__name__ if isinstance(error, Exception) else "reported_error"
+    return f"{category.value}:{detail}"
+
+
+def format_observability_error(category: ErrorCategory, error: Exception) -> str:
+    """Return a content-free observability failure marker safe for API responses."""
+    return f"{category.value}:{error.__class__.__name__}"
 
 
 def skill_failure_result(

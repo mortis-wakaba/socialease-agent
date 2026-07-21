@@ -72,12 +72,13 @@ class SafetyPermissionGate:
             if harness_action in {
                 HarnessAction.START_ROLEPLAY,
                 HarnessAction.CREATE_EXPOSURE_PLAN,
+                HarnessAction.PROPOSE_CALENDAR_EVENT,
             }:
                 return PermissionDecision(
                     action=PermissionAction.BLOCK,
-                    reason="High-risk states should not start active role-play or exposure practice.",
+                    reason="High-risk states should not start active practice or calendar planning.",
                     allowed=False,
-                    block_reason="High-risk states should not start active practice.",
+                    block_reason="High-risk states should not start active practice planning.",
                 )
             return PermissionDecision(
                 action=PermissionAction.ALLOW,

@@ -43,10 +43,10 @@ class WorksheetSkill:
             ],
             "next_ui": "worksheet",
             "blocked": result.blocked,
+            "llm_usage": result.llm_usage.model_dump(mode="json"),
         }
         return SkillResult(
             response=result.response,
             structured_data=structured_data,
             selected_agent="worksheet_agent",
         )
-

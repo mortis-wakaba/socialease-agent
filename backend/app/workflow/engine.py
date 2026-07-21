@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 from time import perf_counter
 from uuid import uuid4
 
@@ -35,6 +36,7 @@ from app.safety.actions import HarnessAction
 from app.safety.permissions import PermissionAction, PermissionDecision, SafetyPermissionGate
 from app.skills import SkillContext, SkillRegistry, SkillResult
 from app.tracing.logger import TraceLogger
+from app.tracing.versions import build_execution_version_info
 from app.memory.context_builder import build_memory_context
 from app.memory.context_selector import select_skill_context
 from app.protocols.service import protocol_service
@@ -47,11 +49,15 @@ from app.workflow.hooks import AgentHarnessHook, HookDecision
 from app.workflow.recovery import (
     ErrorCategory,
     categorize_error,
+    format_observability_error,
     format_trace_error,
     skill_failure_result,
 )
 from app.workflow.router import BaseIntentRouter, IntentRouter, LlmIntentRouter
 from app.workflow.response_constraints import extract_response_constraints
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentHarness:
@@ -333,6 +339,7 @@ class AgentHarness:
             not in {
                 HarnessAction.REQUEST_CLARIFICATION,
                 HarnessAction.DECLINE_OUT_OF_SCOPE,
+                HarnessAction.PROPOSE_CALENDAR_EVENT,
             }
         )
         memory_decision = (
@@ -418,6 +425,17 @@ class AgentHarness:
             user_id=request.user_id,
             session_id=session_id,
             intervention_plan_id=intervention_plan.plan_id if intervention_plan else None,
+            execution_version=build_execution_version_info(
+                selected_skill=selected_skill,
+                safety_llm_used=safety_result.llm_usage.used,
+                intent_llm_used=intent_result.llm_usage.used,
+                skill_llm_used=_skill_llm_used(skill_result.structured_data),
+                output_semantic_checked=(
+                    output_guardrail_result.semantic_checked
+                    or output_guardrail_result.semantic_check_failed
+                ),
+                output_repair_attempted=output_guardrail_result.repair_attempted,
+            ),
             input=input_decision.persisted_text,
             safety_result=safety_result,
             intent_result=intent_result,
@@ -497,12 +515,42 @@ class AgentHarness:
             error_categories=_error_categories(errors),
             created_at=datetime.now(timezone.utc),
         )
-        self.trace_logger.save(trace)
+        trace = self.trace_logger.prepare(trace)
+        trace_persisted = True
+        try:
+            self.trace_logger.save(trace)
+        except Exception as exc:
+            trace_persisted = False
+            trace = _append_trace_error(
+                trace,
+                format_observability_error(ErrorCategory.TRACE_PERSISTENCE_FAILURE, exc),
+            )
+            _record_observability_event_safely("trace_persistence")
+            logger.warning("Trace persistence failed: %s", exc.__class__.__name__)
+        observability_hook_failed = False
         for hook in self.hooks:
             method = getattr(hook, "after_trace", None)
             if method is not None:
-                method(trace)
-        _run_on_stop_hooks(self.hooks, run_context, trace)
+                try:
+                    method(trace)
+                except Exception as exc:
+                    observability_hook_failed = True
+                    trace = _append_trace_error(
+                        trace,
+                        format_observability_error(
+                            ErrorCategory.OBSERVABILITY_HOOK_FAILURE,
+                            exc,
+                        ),
+                    )
+                    _record_observability_event_safely("observability_hook")
+                    logger.warning(
+                        "Post-trace hook failed: %s",
+                        exc.__class__.__name__,
+                    )
+        stop_hook_errors = _run_on_stop_hooks(self.hooks, run_context, trace)
+        for marker in stop_hook_errors:
+            trace = _append_trace_error(trace, marker)
+        observability_hook_failed = observability_hook_failed or bool(stop_hook_errors)
 
         return ChatResponse(
             run_id=run_id,
@@ -513,6 +561,8 @@ class AgentHarness:
                 **skill_result.structured_data,
                 "request_id": request_id,
                 "error_categories": trace.error_categories,
+                "trace_persisted": trace_persisted,
+                "observability_hook_failed": observability_hook_failed,
             },
             trace=trace,
         )
@@ -530,6 +580,15 @@ def _optional_string(value: object) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _skill_llm_used(structured_data: dict[str, object]) -> bool:
+    """Return whether one normalized Skill result reports a real LLM call."""
+    for key in ("llm_usage", "agent_loop_llm_usage"):
+        value = structured_data.get(key)
+        if isinstance(value, dict) and value.get("used") is True:
+            return True
+    return False
 
 
 def _grounding_metadata(
@@ -673,6 +732,7 @@ def _action_for_intent(intent: Intent) -> HarnessAction:
         Intent.EXPOSURE_PLANNING: HarnessAction.CREATE_EXPOSURE_PLAN,
         Intent.PROGRESS_REVIEW: HarnessAction.CREATE_EXPOSURE_PLAN,
         Intent.CAMPUS_RESOURCE_QUERY: HarnessAction.QUERY_SUPPORT_RESOURCE,
+        Intent.CALENDAR_PLANNING: HarnessAction.PROPOSE_CALENDAR_EVENT,
         Intent.CLARIFICATION_NEEDED: HarnessAction.REQUEST_CLARIFICATION,
         Intent.OUT_OF_SCOPE: HarnessAction.DECLINE_OUT_OF_SCOPE,
         Intent.CRISIS: HarnessAction.CRISIS_ESCALATION,
@@ -964,12 +1024,51 @@ def _run_on_stop_hooks(
     hooks: tuple[AgentHarnessHook, ...],
     run_context: RunContext,
     trace: TraceRecord,
-) -> None:
-    """Run stop hooks after trace persistence."""
+) -> list[str]:
+    """Run stop hooks after trace persistence and isolate observer failures."""
+    errors: list[str] = []
     for hook in hooks:
         method = getattr(hook, "on_stop", None)
         if method is not None:
-            method(run_context, trace)
+            try:
+                method(run_context, trace)
+            except Exception as exc:
+                errors.append(
+                    format_observability_error(
+                        ErrorCategory.OBSERVABILITY_HOOK_FAILURE,
+                        exc,
+                    )
+                )
+                _record_observability_event_safely("observability_hook")
+                logger.warning("Stop hook failed: %s", exc.__class__.__name__)
+    return errors
+
+
+def _append_trace_error(trace: TraceRecord, marker: str) -> TraceRecord:
+    """Return a trace copy with one stable, content-free failure marker."""
+    category = marker.partition(":")[0]
+    return trace.model_copy(
+        update={
+            "errors": [*trace.errors, marker],
+            "error_categories": list(dict.fromkeys([*trace.error_categories, category])),
+        },
+        deep=True,
+    )
+
+
+def _record_observability_event_safely(event: str) -> None:
+    """Best-effort operational metric that can never block a user response."""
+    try:
+        if event == "trace_persistence":
+            from app.observability.runtime_events import record_trace_persistence_failure
+
+            record_trace_persistence_failure()
+        else:
+            from app.observability.runtime_events import record_observability_hook_failure
+
+            record_observability_hook_failure()
+    except Exception:
+        return
 
 
 # Backwards-compatible name used by older imports and tests.

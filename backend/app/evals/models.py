@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 
 from app.models import Intent, RiskLevel
+from app.models_trace import ExecutionVersionInfo
 from app.models_knowledge import KnowledgeBaseType
 from datetime import datetime
 from typing import Any, Literal
@@ -179,6 +180,7 @@ class EvalTraceReport(BaseModel):
     """Full deterministic eval report plus per-case traces."""
 
     generated_at: datetime
+    execution_version: ExecutionVersionInfo = Field(default_factory=ExecutionVersionInfo)
     report: EvalReport
     summary: dict[str, int]
     cases: list[EvalCaseTrace] = Field(default_factory=list)

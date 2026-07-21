@@ -15,6 +15,8 @@ MEMORY_PREFERENCES_DISABLED = "memory_preferences_disabled"
 AUTH_RATE_LIMIT_HIT = "auth_rate_limit_hit"
 AUTH_FAILED_LOGIN = "auth_failed_login"
 AUTH_LOCKOUT = "auth_lockout"
+TRACE_PERSISTENCE_FAILURE = "trace_persistence_failure"
+OBSERVABILITY_HOOK_FAILURE = "observability_hook_failure"
 
 
 def record_rate_limit_hit() -> None:
@@ -65,6 +67,16 @@ def record_auth_failed_login() -> None:
 def record_auth_lockout() -> None:
     """Record one temporary auth lockout without sensitive details."""
     _metrics_repository().record_runtime_event(AUTH_LOCKOUT)
+
+
+def record_trace_persistence_failure() -> None:
+    """Record one dropped product trace without user-derived content."""
+    _metrics_repository().record_runtime_event(TRACE_PERSISTENCE_FAILURE)
+
+
+def record_observability_hook_failure() -> None:
+    """Record one isolated post-trace hook failure without payload content."""
+    _metrics_repository().record_runtime_event(OBSERVABILITY_HOOK_FAILURE)
 
 
 @lru_cache(maxsize=1)

@@ -3,4 +3,5 @@
 {"id":"exposure","message":"我想做一个由易到难的暴露练习计划","expected_intent":"exposure_planning"}
 {"id":"resource","message":"学校心理中心在哪里，怎么预约咨询","expected_intent":"campus_resource_query"}
 {"id":"progress","message":"帮我复盘最近练习记录和进度","expected_intent":"progress_review"}
+{"id":"calendar","message":"请每天晚上8点在日历里提醒我练习","expected_intent":"calendar_planning"}
 {"id":"crisis","message":"我想角色扮演","expected_intent":"crisis","safety_level":"crisis"}

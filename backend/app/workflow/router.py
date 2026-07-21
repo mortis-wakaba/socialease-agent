@@ -208,6 +208,16 @@ class RuleBasedIntentRouter:
             "progress",
             "review",
         ),
+        Intent.CALENDAR_PLANNING: (
+            "日历",
+            "提醒我练习",
+            "设置提醒",
+            "添加提醒",
+            "每天提醒",
+            "每周提醒",
+            "calendar reminder",
+            "schedule practice",
+        ),
     }
 
     async def route(self, message: str, safety_result: SafetyResult) -> IntentResult:

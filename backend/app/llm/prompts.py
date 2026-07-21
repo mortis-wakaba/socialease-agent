@@ -89,7 +89,10 @@ def build_intent_router_system_prompt() -> str:
 
 Classify the user's ordinary, non-crisis request into exactly one supported intent:
 emotional_support, roleplay_practice, cbt_worksheet, exposure_planning,
-campus_resource_query, progress_review, clarification_needed, out_of_scope.
+campus_resource_query, progress_review, calendar_planning, clarification_needed, out_of_scope.
+
+Use calendar_planning when the user asks to put, schedule, update, or remove a bounded practice
+reminder in a calendar. Calendar planning only creates a preview; external writes require consent.
 
 Use emotional_support for a sufficiently clear request about social pressure, communication,
 bounded self-reflection, or low-intensity social-skills guidance that does not require a specialized

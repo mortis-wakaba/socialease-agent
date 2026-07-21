@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.models_llm import LLMUsage
+from app.models_trace import ExecutionVersionInfo
 
 
 class RiskLevel(str, Enum):
@@ -27,6 +28,7 @@ class Intent(str, Enum):
     EXPOSURE_PLANNING = "exposure_planning"
     CAMPUS_RESOURCE_QUERY = "campus_resource_query"
     PROGRESS_REVIEW = "progress_review"
+    CALENDAR_PLANNING = "calendar_planning"
     CLARIFICATION_NEEDED = "clarification_needed"
     OUT_OF_SCOPE = "out_of_scope"
     CRISIS = "crisis"
@@ -87,6 +89,7 @@ class TraceRecord(BaseModel):
     user_id: str
     session_id: str | None = None
     intervention_plan_id: str | None = None
+    execution_version: ExecutionVersionInfo = Field(default_factory=ExecutionVersionInfo)
     input: str
     safety_result: SafetyResult
     intent_result: IntentResult

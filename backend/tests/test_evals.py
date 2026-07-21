@@ -88,6 +88,9 @@ def test_eval_trace_report_contains_case_artifacts(tmp_path) -> None:
 
     assert trace_report.summary["total"] == len(trace_report.cases)
     assert trace_report.summary["failed"] == 0
+    assert trace_report.execution_version.eval_dataset_version is not None
+    assert trace_report.execution_version.eval_dataset_version.startswith("sha256:")
+    assert trace_report.execution_version.trace_schema_version == "trace-v2"
     assert trace_report.cases
     assert any(case.suite == "e2e_workflow" for case in trace_report.cases)
     assert all(case.expected for case in trace_report.cases)
@@ -98,6 +101,7 @@ def test_eval_trace_report_contains_case_artifacts(tmp_path) -> None:
     assert latest_path.exists()
     assert failures_path.exists()
     assert "e2e_workflow" in latest_path.read_text(encoding="utf-8")
+    assert '"execution_version"' in latest_path.read_text(encoding="utf-8")
     assert '"cases": []' in failures_path.read_text(encoding="utf-8")
 
 

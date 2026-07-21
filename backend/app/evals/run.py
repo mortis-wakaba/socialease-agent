@@ -53,6 +53,10 @@ from app.models_roleplay import (
 )
 from app.safety.classifier import RuleBasedSafetyClassifier
 from app.workflow.router import IntentRouter
+from app.tracing.versions import (
+    build_execution_version_info,
+    deterministic_eval_dataset_version,
+)
 
 REPORTS_DIR = Path(__file__).with_name("reports")
 
@@ -570,6 +574,9 @@ def run_evaluations_with_traces() -> EvalTraceReport:
     passed_cases = sum(1 for case in case_traces if case.passed)
     return EvalTraceReport(
         generated_at=datetime.now(timezone.utc),
+        execution_version=build_execution_version_info(
+            eval_dataset_version=deterministic_eval_dataset_version(),
+        ),
         report=report,
         summary={
             "total": len(case_traces),
@@ -603,6 +610,7 @@ def _selected_agent_for_eval(intent: Intent) -> str:
         Intent.EXPOSURE_PLANNING: "exposure_planner",
         Intent.PROGRESS_REVIEW: "exposure_planner",
         Intent.CAMPUS_RESOURCE_QUERY: "support_resource_rag_agent",
+        Intent.CALENDAR_PLANNING: "calendar_planner",
         Intent.CLARIFICATION_NEEDED: "clarification_agent",
         Intent.OUT_OF_SCOPE: "product_boundary_agent",
         Intent.CRISIS: "crisis_escalation",
@@ -618,6 +626,7 @@ def _action_for_intent(intent: Intent) -> HarnessAction:
         Intent.EXPOSURE_PLANNING: HarnessAction.CREATE_EXPOSURE_PLAN,
         Intent.PROGRESS_REVIEW: HarnessAction.CREATE_EXPOSURE_PLAN,
         Intent.CAMPUS_RESOURCE_QUERY: HarnessAction.QUERY_SUPPORT_RESOURCE,
+        Intent.CALENDAR_PLANNING: HarnessAction.PROPOSE_CALENDAR_EVENT,
         Intent.CLARIFICATION_NEEDED: HarnessAction.REQUEST_CLARIFICATION,
         Intent.OUT_OF_SCOPE: HarnessAction.DECLINE_OUT_OF_SCOPE,
         Intent.CRISIS: HarnessAction.CRISIS_ESCALATION,

@@ -1,0 +1,41 @@
+{
+  "prompts": {
+    "intent_router": {
+      "fingerprint": "sha256:1c11610e09b4c3cc",
+      "version": "intent-v3"
+    },
+    "output_guardrail": {
+      "fingerprint": "sha256:f082f0acdf59fd8e",
+      "version": "output-guardrail-v4"
+    },
+    "output_repair": {
+      "fingerprint": "sha256:a3c4e5daf02a4a3b",
+      "version": "output-repair-v2"
+    },
+    "resource_agent_loop": {
+      "fingerprint": "sha256:9abd2bf441da79f6",
+      "version": "resource-loop-v2"
+    },
+    "roleplay": {
+      "fingerprint": "sha256:33552ad6e06c12a0",
+      "version": "roleplay-v2"
+    },
+    "roleplay_compaction": {
+      "fingerprint": "sha256:a222dd9c1f0de91d",
+      "version": "roleplay-compaction-v1"
+    },
+    "safety_classifier": {
+      "fingerprint": "sha256:f435a6bfd261fa68",
+      "version": "safety-v1"
+    },
+    "support_generation": {
+      "fingerprint": "sha256:bb9670b5f66a1f42",
+      "version": "support-v3"
+    },
+    "worksheet_extraction": {
+      "fingerprint": "sha256:92a57f10fef13f4a",
+      "version": "worksheet-v2"
+    }
+  },
+  "schema_version": 1
+}

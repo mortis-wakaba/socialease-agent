@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from app.models import Intent, RiskLevel, SafetyResult
 from app.skills.base import BaseSkill, SkillDescriptor
 from app.skills.boundary import ClarificationSkill, OutOfScopeSkill
+from app.skills.calendar import CalendarPlanningSkill
 from app.skills.crisis import CrisisEscalationSkill
 from app.skills.exposure import ExposurePlanningSkill
 from app.skills.roleplay import RoleplaySkill
@@ -28,6 +29,7 @@ class SkillRegistry:
                 SupportRagSkill(),
                 ClarificationSkill(),
                 OutOfScopeSkill(),
+                CalendarPlanningSkill(),
             )
         )
         self._executable_by_name = {skill.descriptor.name: skill for skill in skills}
@@ -50,6 +52,7 @@ class SkillRegistry:
             Intent.EXPOSURE_PLANNING: "exposure_planning_skill",
             Intent.PROGRESS_REVIEW: "exposure_planning_skill",
             Intent.CAMPUS_RESOURCE_QUERY: "support_resource_rag_skill",
+            Intent.CALENDAR_PLANNING: "calendar_planning_skill",
             Intent.CLARIFICATION_NEEDED: "clarification_skill",
             Intent.OUT_OF_SCOPE: "out_of_scope_skill",
         }
