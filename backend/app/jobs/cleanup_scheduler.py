@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.services.retention_service import RetentionResult, RetentionService, retention_service
+from app.jobs.cleanup_lock import CleanupRunLock, create_cleanup_run_lock
 
 
 LOGGER = logging.getLogger("socialease.cleanup_scheduler")
@@ -39,13 +40,18 @@ class CleanupScheduler:
         sleep_fn: Callable[[float], None] = time.sleep,
         now_fn: Callable[[], datetime] | None = None,
         logger: logging.Logger | None = None,
+        run_lock: CleanupRunLock | None = None,
     ) -> None:
         self.service = service
         self.config = config
         self.sleep_fn = sleep_fn
         self.now_fn = now_fn or (lambda: datetime.now(timezone.utc))
         self.logger = logger or LOGGER
+        self.run_lock = run_lock or create_cleanup_run_lock(
+            getattr(service, "database_url", None)
+        )
         self._stop_requested = False
+        self.last_run_skipped_due_to_lock = False
 
     def request_stop(self) -> None:
         """Request a graceful stop after the current iteration."""
@@ -63,12 +69,23 @@ class CleanupScheduler:
             )
             self._log_result(result, dry_run=True)
             return result
-        result = self.service.run_once(
-            now=self.now_fn(),
-            abandoned_plan_minutes=self.config.abandoned_plan_minutes,
-            trace_retention_days=self.config.trace_retention_days,
-            protocol_retention_days=self.config.protocol_retention_days,
-        )
+        if not self.run_lock.acquire():
+            self.last_run_skipped_due_to_lock = True
+            self.logger.info(
+                "cleanup_scheduler_iteration_skipped lock_backend=%s reason=lock_held",
+                self.run_lock.backend_name,
+            )
+            return RetentionResult(expired_protocols=0, cancelled_intervention_plans=0)
+        self.last_run_skipped_due_to_lock = False
+        try:
+            result = self.service.run_once(
+                now=self.now_fn(),
+                abandoned_plan_minutes=self.config.abandoned_plan_minutes,
+                trace_retention_days=self.config.trace_retention_days,
+                protocol_retention_days=self.config.protocol_retention_days,
+            )
+        finally:
+            self.run_lock.release()
         self._log_result(result, dry_run=False)
         return result
 

@@ -16,6 +16,7 @@ def test_app_imports_with_postgres_runtime_configuration() -> None:
         ),
         "SOCIALEASE_AUTH_MODE": "production",
         "SOCIALEASE_AUTH_TOKEN_SECRET": "test-postgres-import-secret",
+        "SOCIALEASE_REDIS_URL": "redis://127.0.0.1:6379/0",
     }
 
     result = subprocess.run(

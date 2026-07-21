@@ -1,6 +1,7 @@
 """FastAPI entrypoint for the SocialEase Agent backend."""
 
 from contextlib import asynccontextmanager
+import asyncio
 import os
 
 from fastapi import FastAPI, Request
@@ -10,6 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth.csrf import CsrfProtectionMiddleware
 from app.db.capabilities import validate_runtime_database_support
+from app.memory.runtime_requirements import (
+    task_state_runtime_report,
+    validate_task_state_runtime,
+)
+from app.memory.session_context_store import SessionContextStoreUnavailable
+from app.memory.task_state_store import TaskStateStoreUnavailable
 from app.middleware import RequestIdMiddleware
 from app.observability.readiness import readiness_snapshot
 from app.observability.request_logging import StructuredRequestLoggingMiddleware
@@ -18,6 +25,7 @@ from app.request_context import REQUEST_ID_HEADER, get_request_id
 from app.memory.session_context_settings import roleplay_session_context_settings
 
 validate_runtime_database_support()
+validate_task_state_runtime()
 
 from app.api.routes import router as api_router
 from app.services.roleplay_service import roleplay_service
@@ -86,6 +94,26 @@ async def http_exception_handler(
     )
 
 
+@app.exception_handler(TaskStateStoreUnavailable)
+@app.exception_handler(SessionContextStoreUnavailable)
+async def task_state_unavailable_handler(
+    request: Request,
+    _exc: Exception,
+) -> JSONResponse:
+    """Report shared task-state outages without leaking connection details."""
+    request_id = getattr(request.state, "request_id", None) or get_request_id()
+    headers = {REQUEST_ID_HEADER: request_id} if request_id is not None else {}
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Short-lived task context is temporarily unavailable",
+            "request_id": request_id,
+            "error_category": "TASK_STATE_UNAVAILABLE",
+        },
+        headers=headers,
+    )
+
+
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Return a lightweight health status for local development."""
@@ -97,16 +125,33 @@ async def readiness_check() -> JSONResponse:
     """Return deployment readiness checks without exposing secrets."""
     status_code, payload = readiness_snapshot()
     context_settings = roleplay_session_context_settings()
-    redis_configured = context_settings.redis_url is not None
-    redis_available = (
-        await roleplay_service.context_health() if redis_configured else False
-    )
-    payload["checks"]["roleplay_session_context"] = {
-        "ok": redis_available if redis_configured else True,
-        "configured": redis_configured,
-        "backend": "redis" if redis_configured else "disabled",
+    task_state = task_state_runtime_report()
+    component_health = {
+        "roleplay": False,
+        "worksheet": False,
+        "support_search": False,
     }
-    if redis_configured and not redis_available:
+    if task_state.configured:
+        results = await asyncio.gather(
+            roleplay_service.context_health(),
+            worksheet_service.context_health(),
+            support_resource_service.context_health(),
+            return_exceptions=True,
+        )
+        component_health = {
+            name: result is True
+            for name, result in zip(component_health, results, strict=True)
+        }
+    redis_available = task_state.configured and all(component_health.values())
+    task_state_ok = redis_available or not task_state.required
+    payload["checks"]["task_state"] = {
+        "ok": task_state_ok,
+        "required": task_state.required,
+        "configured": task_state.configured,
+        "backend": "redis" if context_settings.redis_url else "disabled",
+        "components": component_health,
+    }
+    if not task_state_ok:
         status_code = 503
         payload["status"] = "not_ready"
     return JSONResponse(status_code=status_code, content=payload)

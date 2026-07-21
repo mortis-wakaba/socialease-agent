@@ -38,6 +38,24 @@ class FakeRetentionService:
         )
 
 
+class FakeRunLock:
+    """Controllable cleanup lock for scheduler behavior tests."""
+
+    backend_name = "fake"
+
+    def __init__(self, *, acquired: bool = True) -> None:
+        self.acquired = acquired
+        self.acquire_calls = 0
+        self.release_calls = 0
+
+    def acquire(self) -> bool:
+        self.acquire_calls += 1
+        return self.acquired
+
+    def release(self) -> None:
+        self.release_calls += 1
+
+
 def test_cleanup_scheduler_run_once_calls_retention_service() -> None:
     service = FakeRetentionService()
     now = datetime(2026, 7, 1, tzinfo=timezone.utc)
@@ -122,3 +140,41 @@ def test_cleanup_scheduler_config_from_env(monkeypatch) -> None:
     assert config.trace_retention_days == 56
     assert config.protocol_retention_days == 78
     assert config.dry_run is True
+
+
+def test_cleanup_scheduler_skips_when_another_replica_holds_lock() -> None:
+    service = FakeRetentionService()
+    run_lock = FakeRunLock(acquired=False)
+    scheduler = CleanupScheduler(
+        service,  # type: ignore[arg-type]
+        CleanupSchedulerConfig(),
+        run_lock=run_lock,
+    )
+
+    result = scheduler.run_once()
+
+    assert result == RetentionResult(expired_protocols=0, cancelled_intervention_plans=0)
+    assert service.calls == []
+    assert run_lock.acquire_calls == 1
+    assert run_lock.release_calls == 0
+    assert scheduler.last_run_skipped_due_to_lock is True
+
+
+def test_cleanup_scheduler_releases_lock_after_failure() -> None:
+    service = FakeRetentionService(fail=True)
+    run_lock = FakeRunLock()
+    scheduler = CleanupScheduler(
+        service,  # type: ignore[arg-type]
+        CleanupSchedulerConfig(),
+        run_lock=run_lock,
+    )
+
+    try:
+        scheduler.run_once()
+    except RuntimeError:
+        pass
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("cleanup failure should propagate from run_once")
+
+    assert run_lock.acquire_calls == 1
+    assert run_lock.release_calls == 1

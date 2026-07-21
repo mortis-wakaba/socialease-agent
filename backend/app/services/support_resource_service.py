@@ -143,6 +143,10 @@ class SupportResourceService:
     async def close(self) -> None:
         await self.search_store.close()
 
+    async def context_health(self) -> bool:
+        """Return whether the configured support-search backend responds."""
+        return await self.search_store.ping()
+
     async def _load(self, user_id: str, session_id: str) -> SupportSearchContext | None:
         try:
             return await self.search_store.get(user_id=user_id, task_id=session_id)

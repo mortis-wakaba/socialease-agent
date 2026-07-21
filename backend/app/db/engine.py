@@ -15,8 +15,9 @@ def connect() -> sqlite3.Connection:
     settings = database_settings()
     if settings.provider not in {"sqlite", "file"}:
         raise NotImplementedError(
-            "Only SQLite is wired in the MVP; configure repository adapters before using "
-            f"{settings.provider!r}."
+            "app.db.engine.connect() is the SQLite-only connection helper; "
+            "PostgreSQL runtime callers must obtain repositories from RepositoryFactory. "
+            f"Received provider {settings.provider!r}."
         )
     connection = sqlite3.connect(
         database_path(),

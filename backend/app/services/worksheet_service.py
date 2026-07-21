@@ -197,6 +197,10 @@ class WorksheetService:
     async def close(self) -> None:
         await self.draft_store.close()
 
+    async def context_health(self) -> bool:
+        """Return whether the configured worksheet task-state backend responds."""
+        return await self.draft_store.ping()
+
     async def _save_draft(
         self,
         worksheet: WorksheetRecord,
