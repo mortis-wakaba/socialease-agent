@@ -1,0 +1,33 @@
+frontend/e2e/production-auth.spec.ts
+  s_f8dae88ec33b77::t_de2b99d6c23224 94-130
+frontend/app/chat/page.tsx
+  s_f8dae88ec33b77::t_9d05d7b2bf5e2d 289-290
+frontend/lib/use-developer-access.ts
+  s_f8dae88ec33b77::t_de2b99d6c23224 6,48-54
+frontend/components/harness-action-card.tsx
+  s_f8dae88ec33b77::t_9d05d7b2bf5e2d 179-200
+frontend/lib/types.ts
+  s_f8dae88ec33b77::t_84051e0d1e2894 28-39,45
+  s_f8dae88ec33b77::t_3b15f98a9e82cd 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "fb2a098e1f13b031c6d8f7c59aa876202628be2c",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
