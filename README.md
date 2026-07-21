@@ -15,7 +15,7 @@ flowchart LR
     S --> R[Intent Router]
     R --> P[Permission / Consent]
     P --> K[Skill Registry]
-    K --> A[Support / Role-play / Worksheet / Exposure / Resource Loop / Crisis]
+    K --> A[Support / Role-play / Worksheet / Exposure / Resource Loop / Calendar / Crisis]
     A --> O[Output Guardrail + Repair]
     A --> M[Context + Memory]
     O --> T[Trace + Eval]
@@ -32,9 +32,10 @@ flowchart LR
 - **有界 Skills**：包含普通支持、Role-play、CBT 风格 Worksheet、分级练习、资源导航和 Crisis Escalation；资源导航可运行最多三步的只读工具循环。
 - **全局 Guardrails**：输入侧优先识别危机表达；输出侧结合规则与可选 LLM 检查诊断、疗效承诺、依赖诱导、现实支持劝阻和虚构资源，并对可修复问题执行一次 Repair 与二次复检。
 - **Permission / Consent**：主动练习和状态变更可要求一次性同意凭证，绑定用户、会话、动作和请求摘要，并防止过期、篡改与重复消费。
+- **Calendar MCP**：Calendar Skill 只生成有限期提醒预览；创建、修改和删除通过 owner-bound Consent、幂等键与创建后回读控制。当前内置 Provider 是 Demo，真实厂商通过 `CalendarProvider` Adapter 扩展。
 - **Context / Memory**：数据库保存经授权、脱敏的结构化长期状态；Redis 保存带 TTL 的任务状态。Role-play 使用 Token Budget、动态消息窗口和结构化 Compact，Worksheet 与 Support 使用各自的类型化 State。
 - **Grounded Retrieval**：本地 BM25 检索返回 Citation；未命中时返回 `unknown`，不编造学校、电话或联系人。
-- **Trace / Eval**：记录隐私安全的执行诊断；提供 292 条确定性 Eval、45 条 Output Guardrail 边界用例和可选 DeepEval LLM Judge。
+- **Trace / Eval**：记录隐私安全的执行诊断；提供 294 条确定性 Eval、45 条 Output Guardrail 边界用例和可选 DeepEval LLM Judge。
 
 ## 项目结构
 
@@ -46,6 +47,7 @@ backend/app/
   guardrails/    全局 Output Guardrail、Repair 与复检
   memory/        Context Builder、Redis Task State 与 Compact
   knowledge/     BM25 RAG、Citation 与 Unknown 策略
+  calendar/      Calendar Provider、MCP Server/Client 与 Tool Contract
   db/            Repository 接口及 SQLite/PostgreSQL Adapter
   tracing/       结构化 Run Trace
   evals/         Eval 数据、Runner、Metrics 与 Gate
@@ -92,7 +94,7 @@ docker compose ps
 curl http://127.0.0.1:8000/ready
 ```
 
-其中 `database.provider` 应为 `postgres`，`roleplay_session_context.backend` 应为 `redis`。
+其中 `database.provider` 应为 `postgres`，`task_state.backend` 应为 `redis`，三个任务状态探针均应为 `true`。
 
 停止服务但保留容器：
 
@@ -143,6 +145,21 @@ cp .env.example .env
 
 `.env`、密钥、个人数据和面试准备材料不应提交到 Git。
 
+验证仓库隐私边界：
+
+```bash
+make privacy-check
+```
+
+使用一次性测试数据库运行完整 PostgreSQL Adapter、API runtime 和重启持久化回归：
+
+```bash
+SOCIALEASE_TEST_DATABASE_URL='postgresql+psycopg://socialease:socialease@localhost:5432/socialease_test' \
+make test-postgres-runtime
+```
+
+该命令包含 migration downgrade/upgrade，只能指向可丢弃的测试数据库，不能指向开发或生产数据。
+
 ## 可选启用 LLM
 
 不配置模型时，系统使用确定性 Fallback，核心工作流仍可运行。启用 OpenAI-compatible Provider 时，在本地 `.env` 中配置：
@@ -183,6 +200,19 @@ docker compose up -d redis
 make test-redis-context
 ```
 
+Calendar MCP 确定性与真实协议契约测试：
+
+```bash
+make test-calendar-mcp
+```
+
+独立启动本地 Streamable HTTP MCP Server：
+
+```bash
+make dev-calendar-mcp
+SOCIALEASE_CALENDAR_MCP_URL=http://127.0.0.1:8010/mcp make dev-backend
+```
+
 PostgreSQL 集成测试需要设置独立测试数据库 URL：
 
 ```bash
@@ -205,6 +235,10 @@ npm run typecheck
 npm run lint
 npm run build
 ```
+
+两套 Playwright 用例使用不同认证配置但共享同一 worktree 的 `.next` 目录，请顺序执行
+`make test-e2e` 和 `make test-e2e-production-auth`；不要用 `make -j` 并行运行。如需并行，
+应使用不同 worktree 或独立的 Next.js 构建目录。
 
 DeepEval 会调用真实 LLM 并可能产生费用，因此默认跳过：
 

@@ -15,6 +15,10 @@ SocialEase 的清理任务设计为运行在 FastAPI 请求进程之外。API �
 
 调度器只记录聚合计数。不能记录用户消息、assistant 回复、`user_id`、`run_id`、protocol payload 或 intervention-plan payload。
 
+PostgreSQL 模式下，每轮执行前会尝试获取 session-level advisory lock。多个 Scheduler
+副本同时触发时只有一个执行清理，其余副本记录 `lock_held` 后跳过；SQLite 本地模式继续使用
+单进程锁语义。
+
 ## 单次运行
 
 ```bash
@@ -51,6 +55,7 @@ SOCIALEASE_CLEANUP_DRY_RUN=false
 
 - 作为独立 worker process 运行；
 - 使用 cron 或托管 scheduler 调用 `--run-once`；
+- 可以部署多个触发器，但 PostgreSQL advisory lock 只允许一轮实际清理；
 - 如果后续引入队列，可在独立 worker 中使用 Celery beat 或 APScheduler。
 
 避免：

@@ -4,14 +4,14 @@
 
 ## 推荐阅读顺序
 
-1. [`architecture_diagram.md`](architecture_diagram.md)：系统架构图。
+1. [`architecture_diagram.md`](architecture_diagram.md)：系统架构图，包含全局 Output Guardrail、Redis Task State 与 Calendar MCP 边界。
 2. [`agent_harness_design.md`](agent_harness_design.md)：Agent Harness、skills、permission、memory 和 trace 设计。
 3. [`benchmark_report.md`](benchmark_report.md)：评测目标和当前基线。
 4. [`production_readiness.md`](production_readiness.md)：生产化能力和剩余差距。
 
 ## 运行和部署
 
-- [`environment_config.md`](environment_config.md)：环境变量说明。
+- [`environment_config.md`](environment_config.md)：环境变量说明，以及 Calendar MCP 的本地协议演示方式。
 - [`deployment_runbook.md`](deployment_runbook.md)：部署、回滚、健康检查和运维流程。
 - [`migrations.md`](migrations.md)：数据库迁移规范。
 - [`cleanup_scheduler.md`](cleanup_scheduler.md)：清理任务和 retention 行为。

@@ -26,14 +26,20 @@ pytest -m load
 docker compose up -d postgres
 ```
 
-然后运行：
+然后在仓库根目录创建独立测试库（只需一次），再进入后端运行：
 
 ```bash
+docker compose exec postgres createdb -U socialease socialease_test  # 仅首次创建
 cd backend
-SOCIALEASE_TEST_DATABASE_URL=postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease pytest -m load
+SOCIALEASE_TEST_DATABASE_URL=postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease_test pytest -m load
 ```
 
-PostgreSQL fresh migration 测试会把配置的测试数据库降到 `base`，再升级到 `head`。不要把它指向任何需要保留数据的数据库。
+PostgreSQL fresh migration 测试会把配置的测试数据库降到 `base`，再升级到 `head`。必须使用可丢弃的独立测试库，绝不能指向开发库、试点库或任何需要保留数据的数据库。完整 PostgreSQL Repository/Runtime 检查优先运行仓库目标：
+
+```bash
+SOCIALEASE_TEST_DATABASE_URL=postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease_test \
+  make test-postgres-runtime
+```
 
 ## 当前范围
 
@@ -45,7 +51,7 @@ PostgreSQL fresh migration 测试会把配置的测试数据库降到 `base`，�
 
 ## 最近本地结果
 
-运行日期：2026-07-03
+负载测试记录日期：2026-07-03（历史快照）
 
 命令：
 
@@ -63,6 +69,8 @@ pytest -m load
 | 50 concurrent chat runs | passed |
 | Memory export/delete with cleanup | passed |
 | Fresh PostgreSQL migration | 未设置 `SOCIALEASE_TEST_DATABASE_URL` 时跳过 |
+
+2026-07-20 的完整外部状态集成基线为：PostgreSQL `29 passed`，Redis `2 passed`。这些数字是 Repository/Runtime 集成结果，不是正式吞吐量 benchmark。
 
 已知限制：
 

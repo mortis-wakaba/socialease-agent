@@ -1,6 +1,6 @@
 # SocialEase Agent Benchmark Report
 
-> 当前基线：backend pytest `307 passed, 26 skipped`；eval suite `all metrics passed`；eval gate `passed`。
+> 当前基线：backend pytest `437 passed, 32 skipped`；PostgreSQL integration `29 passed`；Redis integration `2 passed`；294 条确定性 Eval 全部通过；eval gate `passed`。
 
 本报告记录 SocialEase Agent 的确定性评测集，用于防止安全边界、产品边界和 agent workflow 在迭代中回退。它不是临床效果评估，不证明系统可以诊断、治疗或改善心理健康问题。
 
@@ -33,7 +33,11 @@ backend/app/evals/reports/latest.json
 backend/app/evals/reports/latest_failures.json
 ```
 
-`latest.json` 包含每条 eval case 的 suite、case_id、expected、actual、step 级结果和 failure reason；`latest_failures.json` 只保留失败样例，便于 CI 或本地回归失败时快速定位。它和产品 `/api/runs/{run_id}` trace 不同：eval trace 是 synthetic benchmark 的调试产物，不记录真实用户运行。
+`latest.json` 包含本次运行的非敏感执行版本、确定性 JSONL 数据集内容 Hash，以及每条
+eval case 的 suite、case_id、expected、actual、step 级结果和 failure reason；
+`latest_failures.json` 只保留失败样例，便于 CI 或本地回归失败时快速定位。它和产品
+`/api/runs/{run_id}` trace 不同：eval trace 是 synthetic benchmark 的调试产物，不记录
+真实用户运行。
 
 运行产品边界 gate：
 
@@ -41,6 +45,22 @@ backend/app/evals/reports/latest_failures.json
 cd backend
 python -m app.evals.gate
 ```
+
+检查 Prompt 版本治理：
+
+```bash
+make prompt-version-check
+```
+
+生产 Prompt 以 AST 指纹登记在 `backend/app/llm/prompt_versions.json`。修改 Prompt 后，先在
+`backend/app/tracing/versions.py` 提升对应版本号，再运行：
+
+```bash
+make update-prompt-versions
+```
+
+更新命令会拒绝“Prompt 已变化但版本号未变化”的情况；GitHub Actions 还会与 PR 或推送前的
+Manifest 比较，防止通过只手工刷新指纹绕过版本提升。
 
 运行后端测试：
 
@@ -60,9 +80,12 @@ make check
 最近本地基线：
 
 ```text
-backend pytest: 307 passed, 26 skipped
+backend pytest: 437 passed, 32 skipped
+PostgreSQL integration: 29 passed
+Redis integration: 2 passed
 eval suite: all metrics passed
 eval gate: passed
+deterministic eval cases: 294 / 294 passed
 ```
 
 Eval 指标：
@@ -72,17 +95,17 @@ Eval 指标：
 | safety accuracy | 5 / 5 | 1.000 |
 | safety red-team pass rate | 9 / 9 | 1.000 |
 | blocked crisis rate | 2 / 2 | 1.000 |
-| intent accuracy | 6 / 6 | 1.000 |
+| intent accuracy | 7 / 7 | 1.000 |
 | citation hit rate | 6 / 6 | 1.000 |
 | retrieval recall@3 | 6 / 6 | 1.000 |
 | retrieval MRR | 6 / 6 | 1.000 |
 | unknown precision | 1 / 1 | 1.000 |
 | roleplay feedback pass rate | 2 / 2 | 1.000 |
 | worksheet extraction pass rate | 2 / 2 | 1.000 |
-| E2E workflow pass rate | 4 / 4 | 1.000 |
+| E2E workflow pass rate | 5 / 5 | 1.000 |
 | product-boundary pass rate | 210 / 210 | 1.000 |
-| privacy redaction pass rate | 21 / 21 | 1.000 |
-| consent replay resistance | 5 / 5 | 1.000 |
+| privacy redaction pass rate | 37 / 37 | 1.000 |
+| consent replay resistance | 16 / 16 | 1.000 |
 | cross-user access denial | 5 / 5 | 1.000 |
 | continuation crisis detection | 10 / 10 | 1.000 |
 | unsafe exposure progression block rate | 6 / 6 | 1.000 |
@@ -96,7 +119,7 @@ Eval 指标：
 
 ### Intent Routing
 
-检查常见用户请求是否进入 support、role-play、worksheet、exposure planning、support-resource query 或 crisis escalation 等有界 action。
+检查常见用户请求是否进入 support、role-play、worksheet、exposure planning、support-resource query、calendar planning 或 crisis escalation 等有界 action。
 
 ### RAG Grounding
 
@@ -169,7 +192,7 @@ Role-play feedback 和 worksheet extraction 测试保证输出保持 schema 和�
 
 - 将 210 条 product-boundary case 扩展成人工复核中文红队集；
 - 增加 role-play、worksheet、exposure 的多轮对抗 case；
-- 增加语义 PII 检测，不只看“电话”“地址”等显式标签；
-- 在 eval report 中记录 prompt/model 版本；
+- 将 Support 输出中“LLM 提名候选片段、后端验证精确证据”的语义隐私检查扩展到其他生成型 Skill；
+- 将 Prompt 版本提升从人工命名进一步演进为自动发布版本；
 - 对比 deterministic fallback 与 LLM-enabled 运行；
 - 为 role-play feedback 加入小规模人工质量 rubric。

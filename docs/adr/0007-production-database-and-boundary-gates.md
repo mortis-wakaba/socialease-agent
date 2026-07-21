@@ -51,13 +51,14 @@ SQLite 只作为本地开发后端。生产化目标是 PostgreSQL，并使用�
 
 - SQLite repository 仍适合本地开发和测试；
 - CI 覆盖 backend tests、eval gates、frontend typecheck/lint/build；
-- PostgreSQL implementation 可在 repository interfaces 后逐步完成；
-- metrics 长期应从进程内计数迁移到外部 metrics backend。
+- PostgreSQL 已成为 production 配置下的 RepositoryFactory 分支，SQLite 继续服务本地开发；
+- 单实例聚合 metrics 已可用，真实多实例部署仍应导出到 Prometheus/OpenTelemetry 或托管 metrics backend。
 
 ## 当前实现检查点
 
 - Alembic 配置位于 `backend/alembic.ini` 和 `backend/migrations/`；
 - migration 已创建当前产品表；
-- PostgreSQL adapters 已覆盖当前主要 runtime path；
+- PostgreSQL adapters 已覆盖 11 类当前主要 Repository/Runtime path，并由独立集成目标验证；
 - repository factory 可按配置选择 SQLite 或 PostgreSQL；
-- 后续重点是继续加强多实例 coordination、托管身份和部署级监控。
+- cleanup scheduler 在 PostgreSQL 下使用 advisory lock 协调多副本；
+- 后续重点是托管数据库运维、共享限流/并发协调、托管身份和部署级监控。

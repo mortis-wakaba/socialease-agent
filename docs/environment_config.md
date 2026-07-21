@@ -52,6 +52,26 @@ Production cookie 模式还会设置非 HttpOnly 的 `socialease_csrf_token`，�
 |---|---|---|
 | `SOCIALEASE_ENFORCE_DIRECT_ACTION_CONSENT` | staging/production | 强制直接写状态的练习 API 走 consent protocol |
 
+## Calendar MCP
+
+| 变量 | 必需场景 | 含义 |
+|---|---|---|
+| `SOCIALEASE_CALENDAR_MCP_URL` | remote MCP | Calendar MCP Streamable HTTP URL；为空时使用明确标注的进程内 Demo Provider |
+| `SOCIALEASE_CALENDAR_MCP_HOST` | local MCP server | 独立 MCP Server 监听地址，默认仅本机 `127.0.0.1` |
+| `SOCIALEASE_CALENDAR_MCP_PORT` | local MCP server | 独立 MCP Server 端口，默认 `8010` |
+| `SOCIALEASE_CALENDAR_MCP_SERVER_TRANSPORT` | local MCP server | `streamable-http` 或 `stdio`；默认使用官方推荐的 Streamable HTTP |
+
+本地真实 MCP 协议演示需要分别启动 Calendar MCP Server 和 Backend：
+
+```bash
+make dev-calendar-mcp
+SOCIALEASE_CALENDAR_MCP_URL=http://127.0.0.1:8010/mcp make dev-backend
+```
+
+当前 MCP Server 使用内存 Demo Provider，用于协议、Consent、owner scope、幂等和回读验证，
+不会写入 Google 或 Microsoft 日历。真实厂商接入需要实现新的 `CalendarProvider` 和用户级
+OAuth Token 管理；不能把共享 Token、用户日程正文或凭据写入 Trace。
+
 ## Database
 
 | 变量 | 必需场景 | 含义 |
@@ -68,6 +88,7 @@ SQLite 是默认本地开发运行时。PostgreSQL repository adapters 已覆盖
 
 | 变量 | 必需场景 | 含义 |
 |---|---|---|
+| `SOCIALEASE_APP_VERSION` | deployment | 写入 Product/Eval Trace 的非敏感应用版本，例如 Git commit 或 release tag |
 | `LLM_ENABLED` | optional | `true` 启用 provider call；`false` 使用 deterministic fallback |
 | `LLM_PROVIDER` | optional | 当前值：`openai_compatible` |
 | `LLM_BASE_URL` | optional | Provider base URL，例如 DeepSeek |
@@ -88,7 +109,8 @@ Provider 失败或关闭时，系统仍必须保持安全。
 | `LLM_MAX_CONCURRENCY` | pilot | 推荐的全局 LLM 并发上限变量 |
 | `SOCIALEASE_LLM_MAX_CONCURRENCY` | legacy | `LLM_MAX_CONCURRENCY` 的兼容别名 |
 | `SOCIALEASE_SLOW_REQUEST_MS` | pilot | structured log 和 slow-request metrics 阈值 |
-| `SOCIALEASE_REDIS_URL` | role-play / multi-instance | Role-play 短期会话 Context 的 Redis URL；也为未来共享限流/并发协调复用 |
+| `SOCIALEASE_REDIS_URL` | task sessions / multi-instance | Role-play、Worksheet 草稿和 Support Search Session 共用的 Redis URL |
+| `SOCIALEASE_REQUIRE_REDIS` | production | production 默认 `true`；缺少 Redis URL 时拒绝启动，Redis 探针失败时 `/ready` 返回 503 |
 | `SOCIALEASE_DOCKER_REDIS_URL` | local compose | 可选的 backend 容器 Redis URL；默认 `redis://redis:6379/0`，避免把宿主机的 `localhost` 地址传入容器 |
 | `WORKSHEET_DRAFT_TTL_SECONDS` | worksheet | Worksheet 原始补充回答和草稿会话的滑动 TTL，默认 3600 秒 |
 | `SUPPORT_SEARCH_TTL_SECONDS` | support | Support 查询历史和 Citation 指代状态的滑动 TTL，默认 1800 秒 |
@@ -105,7 +127,7 @@ Provider 失败或关闭时，系统仍必须保持安全。
 | `SOCIALEASE_RATE_LIMIT_BACKEND` | pilot | `local` 进程内限流；`gateway` 表示网关限流；`redis` 目前 fail fast |
 | `SOCIALEASE_LLM_CONCURRENCY_BACKEND` | future multi-instance | `local` 进程内 semaphore；`redis` 为未来共享 provider semaphore |
 
-Role-play 已使用 Redis 保存带 TTL 的短期原始会话 Context；长期数据库仍只保存最小化消息和结构化练习状态。当前限流仍是进程内实现，多实例试点时只有部署网关真正执行请求预算，才设置 `SOCIALEASE_RATE_LIMIT_BACKEND=gateway`；限流后端的 `redis` 值仍会 fail fast，因为共享 limiter adapter 尚未实现。
+Role-play 使用 Redis 保存带 TTL、受 Token Budget 约束的最近消息与 Compact State；Worksheet Draft 保存未完成字段和少量补充内容；Support Search 保存短期查询与 Citation 指代状态。长期数据库仍只保存经过持久化策略处理的结构化业务记录。production 模式默认要求 Redis：未配置 URL 时拒绝启动，三类状态后端任一探针失败时 `/ready` 返回 503；请求执行中的短暂故障仍由各服务按边界降级。当前限流仍是进程内实现，多实例试点时只有部署网关真正执行请求预算，才设置 `SOCIALEASE_RATE_LIMIT_BACKEND=gateway`；限流后端的 `redis` 值仍会 fail fast，因为共享 limiter adapter 尚未实现。
 
 ## Operational Alerts
 

@@ -54,11 +54,13 @@ python -m app.db.migration_check --check-names-only
 
 ```bash
 cd backend
-SOCIALEASE_DATABASE_URL=postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease python -m app.db.migration_check
+SOCIALEASE_DATABASE_URL=postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease_test python -m app.db.migration_check
 ```
+
+本地验证应使用可丢弃的独立测试库。不要把测试或 downgrade/upgrade 演练指向开发、试点或生产数据。
 
 ## CI 期望
 
 CI 应在 backend tests 前，对临时 PostgreSQL service 运行 migration。这样可以在合并前发现 DDL 错误、依赖缺失和 revision graph 问题。
 
-Live migration check 不证明每个 repository 都已经生产可用。Repository-level integration tests 仍需要覆盖事务边界和 ownership rules。
+Live migration check 只证明 schema 可以升级到 head。当前独立 PostgreSQL Runtime 测试已覆盖主要 Repository、事务边界、ownership 和 fresh-process 持久化；真实部署仍需在目标基础设施上验证连接池配置、备份恢复与 migration/rollback 流程。

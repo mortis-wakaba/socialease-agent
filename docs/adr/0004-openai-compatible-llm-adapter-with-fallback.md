@@ -26,7 +26,14 @@
 
 - 不同 OpenAI-compatible API 仍可能有细节差异；
 - deterministic fallback 不如 LLM 输出自然；
-- 项目扩大后需要 prompt/model versioning。
+- 不同 Provider/模型升级仍需要独立灰度、质量监控与回滚策略。
+
+## 当前实现检查点
+
+- 生产 Prompt 已登记显式版本号与 AST 指纹 Manifest；
+- CI 会拒绝 Prompt 内容变化但版本号未提升的提交；
+- Trace 会记录应用版本、Prompt 版本、模型配置 Hash 与确定性 Eval 数据集版本；
+- 这些能力解决可追溯性，但不替代真实 Provider 的灰度和回滚机制。
 
 ## 备选方案
 

@@ -7,14 +7,16 @@ SocialEase 是一个**产品化 Agent 原型**，不是医疗产品，也不是�
 最近一次产品化检查点：
 
 ```text
-backend pytest: 307 passed, 26 skipped
+backend pytest: 437 passed, 32 skipped
+PostgreSQL integration: 29 passed
+Redis integration: 2 passed
 eval suite: all metrics passed
 eval gate: passed
 frontend typecheck: passed
 frontend lint: passed
 frontend build: passed
 frontend E2E: 23 passed
-production auth E2E: 16 passed
+production auth E2E suite: 17 cases
 real frontend/backend smoke E2E: 1 passed
 ```
 
@@ -45,18 +47,21 @@ real frontend/backend smoke E2E: 1 passed
 已实现：
 
 - 主 `AgentHarness`：safety、routing、permission、skill dispatch、hooks、memory/update、trace、recovery；
-- support、role-play、worksheet、exposure planning、support-resource RAG、crisis escalation 等 executable skills；
+- support、role-play、worksheet、exposure planning、support-resource RAG、calendar planning、clarification、out-of-scope、crisis escalation 等 executable skills；
 - 主动练习 action 的 consent protocol；
 - protocol request hash、session binding、过期、同意/拒绝、一次性消费和 replay resistance；
 - PostgreSQL protocol 与 intervention-plan 的事务边界；
 - 前端覆盖 `consent_required`、roleplay、worksheet、exposure-plan、support-resource、blocked、failed、crisis；
-- harness-managed run 自动创建 intervention plan。
+- harness-managed run 自动创建 intervention plan；
+- Calendar Planning Skill 只生成提醒提案，Calendar API 的 create/update/delete 经过 owner-bound Consent；
+- Calendar MCP 链路具备 Tool Schema、幂等 create、创建后回读和低敏 Tool Trace，当前 Provider 明确为 Demo。
 
 真实试点前仍需：
 
 - 使用 OIDC 或托管身份服务替换自建 HS256 JWT/session；
 - 根据产品政策扩展高风险 support/practice 的策略组合；
-- 为直接写状态 API 补更深的 HTTP-level eval。
+- 为直接写状态 API 补更深的 HTTP-level eval；
+- 为 Google/Outlook 等真实 Calendar Provider 实现用户级 OAuth、Token 生命周期和撤销流程。
 
 ### Grounding 与资源完整性
 
@@ -88,13 +93,14 @@ real frontend/backend smoke E2E: 1 passed
 - repeated provider failure circuit breaker；
 - routing、role-play、worksheet extraction、safety 的 deterministic fallback；
 - `llm_usage.fallback_used` 和 `llm_usage.error_category` metadata；
-- skill/tool failure 和 memory-write failure 的 workflow recovery。
+- skill/tool failure 和 memory-write failure 的 workflow recovery；
+- Prompt 源码 AST 指纹、显式版本号、Manifest 和 CI 版本治理检查；
+- Trace 记录 app、prompt、model config 和 deterministic eval dataset 版本。
 
 真实试点前仍需：
 
 - provider-level monitoring；
-- prompt/model versioning；
-- rollout/rollback 策略；
+- Prompt/模型发布的灰度、回滚和 provider 质量监控；
 - 多 provider failover 策略。
 
 ### Observability
@@ -108,7 +114,7 @@ real frontend/backend smoke E2E: 1 passed
 - `MetricsHook` backed by aggregate non-identifying metric events;
 - latency average, p50, and p95 metrics;
 - runtime metrics for rate-limit hits, LLM concurrency saturation, auth lockout, memory export/delete, and preference changes;
-- standalone cleanup scheduler entrypoint;
+- standalone cleanup scheduler entrypoint，并在 PostgreSQL 下使用 advisory lock 防止多副本重复执行；
 - `llm_usage` on key LLM-backed nodes;
 - deterministic eval suite。
 
@@ -126,6 +132,7 @@ real frontend/backend smoke E2E: 1 passed
 - SQLite 本地开发持久化；
 - repository interfaces for storage replacement;
 - repository factory with SQLite default and PostgreSQL adapters for trace, roleplay, worksheet, exposure, user profile, memory settings, protocol, intervention plan, metrics, account, and session records;
+- Redis typed task state for Role-play、Worksheet Draft 和 Support Search，production 默认要求配置并纳入 `/ready`；
 - explicit database runtime capability check with a clear support matrix;
 - Alembic migration discipline and PostgreSQL CI migration check;
 - first-pass structured PostgreSQL query fields for trace risk/intent, roleplay scenario/difficulty, and exposure plan/attempt state while retaining JSON payloads for full agent artifacts;
@@ -157,7 +164,10 @@ real frontend/backend smoke E2E: 1 passed
 - bounded resource agent-loop tests 覆盖双工具 observation、只读工具白名单、finish grounding、step budget、provider/tool failure 和 deterministic fallback；
 - eval suite 覆盖 safety、routing、citation、unknown handling、roleplay feedback、worksheet extraction、retrieval metrics、E2E workflow；
 - product-boundary eval gate with 210 bundled Chinese boundary cases;
-- heavier local load regression tests for concurrency and migration readiness;
+- heavier local load regression tests for 50-user requests、Consent 原子消费、Calendar 幂等副作用和 migration readiness;
+- PostgreSQL 完整 Repository/Runtime CI，以及 fresh-process 重启持久化验证；
+- Redis 对 Role-play、Worksheet 和 Support Search 的统一 readiness 探针；
+- tracked-file privacy check，阻止本地 `.env`、凭据、简历和面试准备目录进入 Git；
 - bundled JSONL eval cases for deterministic regression;
 - GitHub Actions workflow 覆盖 backend tests、evals、migration check、frontend quality gates。
 
@@ -178,11 +188,11 @@ docker compose up --build
 真实部署仍需：
 
 - 托管数据库；
-- migration 流程；
-- connection pooling；
+- 在部署流水线中执行 migration/rollback 演练；
+- 统一 PostgreSQL engine 生命周期，并按真实并发调优连接池、超时和池指标；
 - secret management；
 - HTTPS and CORS hardening;
-- authentication/authorization；
+- 用托管身份和更细粒度角色权限替换/加强当前自建认证授权；
 - observability stack；
 - backup/restore；
 - 环境配置审核；

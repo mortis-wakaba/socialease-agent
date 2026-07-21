@@ -7,7 +7,7 @@
 
 | 数据类别 | 示例 | 是否可能包含用户原文 | 当前保护方式 | 用户控制 |
 |---|---|---:|---|---|
-| 账号数据 | email、密码哈希、session/token id | 否 | 密码只保存哈希；refresh token 保存 hash | 可退出试点；后续可扩展账号删除 |
+| 账号数据 | email、密码哈希、session/token id | 否 | 密码只保存哈希；refresh token 保存 hash | 可退出登录；可删除账号并撤销会话 |
 | 练习记录 | roleplay session、worksheet、exposure plan | 部分字段可能来自用户输入 | privacy persistence gate、敏感信息脱敏、raw text 最小化 | `/settings` 导出/删除 |
 | Trace | safety、intent、permission、selected agent、输出摘要 | 默认不应保存完整原始心理文本 | trace field policy、最小化 input/output | retention cleanup |
 | Protocol | consent request、approval/rejection/consumed 状态 | 否，主要是动作和请求绑定 | protocol id、request hash、过期时间 | 过期/终态后 cleanup |
@@ -40,6 +40,12 @@ cleanup job 会删除：
 - `intervention_plans`
 - `user_memory_settings`
 
+三类删除路径的语义不同：
+
+- Memory Delete：删除用户拥有的练习记录、Trace、Protocol、Intervention Plan、长期设置以及 Redis Task State，但保留账号本身；
+- Account Delete：先执行 Memory Delete，再撤销账号 Session 并删除账号记录；
+- Retention Cleanup：按运维窗口删除过期 Trace 和终态 Protocol/Intervention Plan，不等价于用户主动删除。
+
 ## 用户控制
 
 用户应能在产品中完成：
@@ -47,6 +53,7 @@ cleanup job 会删除：
 - 查看轻量 profile summary；
 - 导出本人练习记录；
 - 删除本人练习记录；
+- 删除账号并撤销现有会话；
 - 关闭长期练习偏好；
 - 了解系统不是医疗产品、不做诊断、不承诺效果。
 
