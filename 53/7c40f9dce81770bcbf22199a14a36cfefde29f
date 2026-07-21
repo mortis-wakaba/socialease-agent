@@ -1,0 +1,66 @@
+backend/app/jobs/cleanup_scheduler.py
+  s_f8dae88ec33b77::t_cc236a322ee12d 15,43,50-52,54,72-88
+docker-compose.yml
+  s_f8dae88ec33b77::t_b9f6ce51128e95 54
+.env.staging.example
+  s_f8dae88ec33b77::t_b9f6ce51128e95 52
+  s_f8dae88ec33b77::t_348bfbedf0ed13 27
+  s_f8dae88ec33b77::t_84051e0d1e2894 37
+.env.production.example
+  s_f8dae88ec33b77::t_348bfbedf0ed13 30
+  s_f8dae88ec33b77::t_b9f6ce51128e95 54
+  s_f8dae88ec33b77::t_84051e0d1e2894 39
+backend/tests/test_postgres_app_import.py
+  s_f8dae88ec33b77::t_b48bbdc380c6a6 19
+backend/tests/test_cleanup_scheduler.py
+  s_f8dae88ec33b77::t_cc236a322ee12d 41-58,143-180
+backend/tests/test_postgres_runtime_smoke.py
+  s_f8dae88ec33b77::t_621624cb6ed8d2 6,57-101,189-264,267-269
+  s_f8dae88ec33b77::t_b48bbdc380c6a6 40-42
+  s_f8dae88ec33b77::t_267996c1a479b6 265-266
+docker-compose.prod.yml
+  s_f8dae88ec33b77::t_b9f6ce51128e95 24
+backend/app/services/support_resource_service.py
+  s_f8dae88ec33b77::t_9cbd341e7074b7 146-149
+backend/tests/test_postgres_cleanup_lock.py
+  s_f8dae88ec33b77::t_cc236a322ee12d 1-30
+backend/app/db/postgres/__init__.py
+  s_f8dae88ec33b77::t_9cbd341e7074b7 1
+backend/app/memory/runtime_requirements.py
+  s_f8dae88ec33b77::t_9cbd341e7074b7 1-56
+backend/app/main.py
+  s_f8dae88ec33b77::t_9cbd341e7074b7 4,14-19,28,97-116,128-152,154
+backend/app/jobs/cleanup_lock.py
+  s_f8dae88ec33b77::t_cc236a322ee12d 1-91
+backend/app/db/engine.py
+  s_f8dae88ec33b77::t_82f4a24cb69bf6 18-20
+.env.example
+  s_f8dae88ec33b77::t_84051e0d1e2894 7
+  s_f8dae88ec33b77::t_348bfbedf0ed13 43-49
+  s_f8dae88ec33b77::t_b9f6ce51128e95 58,78
+backend/app/services/worksheet_service.py
+  s_f8dae88ec33b77::t_9cbd341e7074b7 200-203
+backend/tests/test_task_state_runtime.py
+  s_f8dae88ec33b77::t_b48bbdc380c6a6 1-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "537c40f9dce81770bcbf22199a14a36cfefde29f",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
