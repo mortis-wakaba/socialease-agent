@@ -25,9 +25,20 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,6 +51,15 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
 
+      - name: Check Prompt version governance
+        working-directory: backend
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python -m app.llm.prompt_version_check --base-ref "$BASE_REF"
+
+      - name: Check repository privacy boundaries
+        run: python scripts/check_repository_privacy.py
+
       - name: Validate PostgreSQL migrations
         working-directory: backend
         env:
@@ -50,11 +70,13 @@ jobs:
         working-directory: backend
         env:
           SOCIALEASE_TEST_DATABASE_URL: postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease
-        run: |
-          pytest \
-            tests/test_postgres_protocol_repository.py \
-            tests/test_postgres_protocol_service.py \
-            tests/test_heavier_load.py::test_fresh_postgres_database_can_upgrade_to_head_when_configured
+        run: pytest -q tests/test_postgres_*.py tests/test_heavier_load.py::test_fresh_postgres_database_can_upgrade_to_head_when_configured
+
+      - name: Run shared Redis task-state integration tests
+        working-directory: backend
+        env:
+          SOCIALEASE_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+        run: pytest -p no:rerunfailures -q -m redis_integration
 
       - name: Run backend tests
         working-directory: backend

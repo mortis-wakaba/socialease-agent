@@ -1,13 +1,23 @@
-.PHONY: dev-backend dev-frontend test-backend test-redis-context eval eval-gate eval-llm eval-output-guardrail typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
+.PHONY: dev-backend dev-calendar-mcp dev-frontend test-backend test-calendar-mcp test-postgres-runtime test-redis-context eval eval-gate eval-llm eval-output-guardrail prompt-version-check update-prompt-versions privacy-check typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
 
 dev-backend:
 	cd backend && uvicorn app.main:app --reload
+
+dev-calendar-mcp:
+	cd backend && python -m app.calendar.mcp_server
 
 dev-frontend:
 	cd frontend && npm run dev
 
 test-backend:
 	cd backend && pytest
+
+test-calendar-mcp:
+	cd backend && pytest -p no:rerunfailures -q tests/test_calendar_provider.py tests/test_calendar_skill.py tests/test_calendar_mcp_contract.py tests/test_calendar_api.py
+
+test-postgres-runtime:
+	test -n "$(SOCIALEASE_TEST_DATABASE_URL)" || (echo "Set SOCIALEASE_TEST_DATABASE_URL to an isolated disposable PostgreSQL database" && exit 1)
+	cd backend && SOCIALEASE_TEST_DATABASE_URL="$(SOCIALEASE_TEST_DATABASE_URL)" pytest -q tests/test_postgres_*.py tests/test_heavier_load.py::test_fresh_postgres_database_can_upgrade_to_head_when_configured
 
 test-redis-context:
 	cd backend && SOCIALEASE_TEST_REDIS_URL=$${SOCIALEASE_TEST_REDIS_URL:-redis://localhost:6379/0} pytest -p no:rerunfailures -m redis_integration -s tests/test_roleplay_session_context.py tests/test_task_sessions.py
@@ -23,6 +33,15 @@ eval-llm:
 
 eval-output-guardrail:
 	cd backend && RUN_LLM_EVALS=true pytest -m llm_eval -s tests/test_output_guardrail_quality.py
+
+prompt-version-check:
+	cd backend && python -m app.llm.prompt_version_check
+
+update-prompt-versions:
+	cd backend && python -m app.llm.prompt_version_check --update
+
+privacy-check:
+	python scripts/check_repository_privacy.py
 
 typecheck-frontend:
 	cd frontend && npm run typecheck

@@ -37,6 +37,19 @@ SocialEase Agent 是面向大学生社交压力场景的安全可控 Agent 系�
 - 代码优先遵循当前目录和命名风格，新增抽象必须服务于真实复杂度。
 - 新增心理健康相关文本时，必须检查是否违反安全边界。
 
+### 修改 Prompt 的固定流程
+
+修改任何生产 Prompt 时，必须按以下顺序执行：
+
+1. 修改 Prompt 源码；
+2. 在 `backend/app/tracing/versions.py` 的 `PROMPT_VERSIONS` 中提升所有受影响 Prompt 的版本号；
+3. 在仓库根目录运行 `make update-prompt-versions` 更新 AST 指纹 Manifest；
+4. 运行 `make prompt-version-check`，确认本地版本治理检查通过。
+
+不要直接手工修改 `backend/app/llm/prompt_versions.json`。如果修改了
+`COMMON_SAFETY_INSTRUCTIONS`，需要提升所有引用该公共片段的 Prompt 版本。GitHub Actions
+会再次比较源码指纹、当前版本和提交前基线；Prompt 已变化但版本号未变化时，CI 必须失败。
+
 ## 4. 推荐目录结构
 
 ```text
@@ -80,4 +93,3 @@ pytest
 - 如果测试失败，先修测试。
 - 任何心理健康相关输出都必须保持非医疗化和安全。
 - 默认从已有代码结构出发；需求不清楚时做合理默认，并在结果中说明。
-
