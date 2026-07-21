@@ -91,6 +91,43 @@ test("production mode blocks direct trace page for normal users", async ({ page 
   expect(traceCalls()).toEqual([]);
 });
 
+test("production mode clears a stale local marker and redirects trace to login", async ({
+  page
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("socialease.accountUserId", "stale_user");
+    window.localStorage.setItem("socialease.accountEmail", "stale@example.com");
+  });
+  const traceCalls = await captureTraceDetailCalls(page);
+  await page.route(`${API}/auth/me`, async (route) => {
+    await route.fulfill({
+      json: {
+        authenticated: false,
+        user_id: null,
+        roles: [],
+        auth_mode: "production",
+        is_demo_user: false,
+        developer_endpoints_enabled: true,
+        developer_access: false
+      }
+    });
+  });
+
+  await page.goto("/trace");
+
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("heading", { name: "账号登录" })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        userId: window.localStorage.getItem("socialease.accountUserId"),
+        email: window.localStorage.getItem("socialease.accountEmail")
+      }))
+    )
+    .toEqual({ userId: null, email: null });
+  expect(traceCalls()).toEqual([]);
+});
+
 test("production mode shows trace navigation to developer users", async ({ page }) => {
   await loginAs(page, ["user", "developer"]);
   await page.route(`${API}/auth/me`, async (route) => {

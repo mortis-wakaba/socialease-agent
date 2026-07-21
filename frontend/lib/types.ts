@@ -7,6 +7,7 @@ export type Intent =
   | "exposure_planning"
   | "campus_resource_query"
   | "progress_review"
+  | "calendar_planning"
   | "clarification_needed"
   | "out_of_scope"
   | "crisis";
@@ -24,11 +25,24 @@ export type IntentResult = {
   llm_usage: LLMUsage;
 };
 
+export type ExecutionVersionInfo = {
+  app_version: string;
+  trace_schema_version: string;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+  model_config_version: string;
+  prompt_versions: Record<string, string>;
+  guardrail_policy_version: string;
+  skill_registry_version: string;
+  eval_dataset_version?: string | null;
+};
+
 export type TraceRecord = {
   run_id: string;
   user_id: string;
   session_id?: string | null;
   intervention_plan_id?: string | null;
+  execution_version: ExecutionVersionInfo;
   input: string;
   safety_result: SafetyResult;
   intent_result: IntentResult;

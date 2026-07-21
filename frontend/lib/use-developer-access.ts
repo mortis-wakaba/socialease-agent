@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import {
+  clearAccountSession,
   frontendAuthMode,
   isAuthenticatedForFrontend,
   subscribeAuthState
@@ -44,6 +45,13 @@ export function useDeveloperAccess(): DeveloperAccessState {
 
       try {
         const me = await api.authMe();
+        if (!me.authenticated || !me.user_id) {
+          clearAccountSession();
+          if (active && version === requestVersion) {
+            setState({ ready: true, authenticated: false, allowed: false });
+          }
+          return;
+        }
         if (active && version === requestVersion) {
           setState({
             ready: true,

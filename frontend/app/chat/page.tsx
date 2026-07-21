@@ -286,6 +286,8 @@ function ProductStatusPanel({ latest }: { latest: ChatResponse }) {
             ? "已生成社交练习计划"
             : action === "clarification_requested"
               ? "需要你再补充一点信息"
+              : action === "calendar_proposal_created"
+                ? "日历预览等待确认"
               : action === "out_of_scope"
                 ? "这个请求超出当前产品范围"
             : "可以继续对话或选择一个低强度练习";

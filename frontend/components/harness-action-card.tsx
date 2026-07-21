@@ -176,6 +176,28 @@ export function HarnessActionCard({
     );
   }
 
+  if (action === "calendar_proposal_created") {
+    const proposal = result.structured_data.calendar_proposal;
+    return (
+      <ActionPanel tone="info" label="日历预览已生成">
+        <p className="leading-6 text-sky-900">
+          系统尚未写入日历。写操作仍需要你确认，并由 Calendar MCP 工具回读验证。
+        </p>
+        <div className="mt-3 rounded-md border border-sky-200 bg-white p-2 text-xs leading-5 text-slate-700">
+          <div>{readStringFromObject(proposal, "title") ?? "练习提醒"}</div>
+          <div>开始：{readStringFromObject(proposal, "start_time") ?? "待确认"}</div>
+          <div>
+            时长：{readNumberFromObject(proposal, "duration_minutes") ?? "?"} 分钟；
+            重复：{readStringFromObject(proposal, "recurrence") ?? "none"}
+          </div>
+        </div>
+        <div className="mt-3">
+          <TraceLinkButton runId={result.run_id}>查看 Trace</TraceLinkButton>
+        </div>
+      </ActionPanel>
+    );
+  }
+
   if (action === "action_blocked" || action === "skill_failed") {
     return (
       <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
