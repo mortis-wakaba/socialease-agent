@@ -48,6 +48,17 @@ class MemoryProposalRepository(Protocol):
         limit: int = 100,
     ) -> list[PendingMemoryProposalRecord]: ...
 
+    def consume_pending(
+        self,
+        *,
+        user_id: str,
+        proposal_id: str,
+        expected_version: int,
+        target_status: MemoryProposalStatus,
+        reason_code: str,
+        changed_at: datetime,
+    ) -> None: ...
+
     def record_rejection(
         self,
         *,
@@ -177,6 +188,71 @@ class SQLiteMemoryProposalRepository:
             PendingMemoryProposalRecord.model_validate(dict(row))
             for row in rows
         ]
+
+    def consume_pending(
+        self,
+        *,
+        user_id: str,
+        proposal_id: str,
+        expected_version: int,
+        target_status: MemoryProposalStatus,
+        reason_code: str,
+        changed_at: datetime,
+    ) -> None:
+        """Delete decided proposal content and retain only a content-free event."""
+        if target_status not in {
+            MemoryProposalStatus.CONFIRMED,
+            MemoryProposalStatus.REJECTED,
+        }:
+            raise ValueError("pending proposals may only be confirmed or rejected")
+        with _sqlite_transaction() as connection:
+            row = connection.execute(
+                """SELECT version, status FROM memory_proposals
+                WHERE proposal_id = ? AND user_id = ?""",
+                (proposal_id, user_id),
+            ).fetchone()
+            if row is None:
+                raise MemoryConflictError("pending memory proposal was not found")
+            if (
+                row["status"] != MemoryProposalStatus.PENDING_CONFIRMATION.value
+                or row["version"] != expected_version
+            ):
+                raise MemoryConflictError(
+                    "pending memory proposal was changed concurrently"
+                )
+            cursor = connection.execute(
+                """DELETE FROM memory_proposals
+                WHERE proposal_id = ? AND user_id = ? AND version = ?
+                AND status = ?""",
+                (
+                    proposal_id,
+                    user_id,
+                    expected_version,
+                    MemoryProposalStatus.PENDING_CONFIRMATION.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise MemoryConflictError(
+                    "pending memory proposal was changed concurrently"
+                )
+            _insert_sqlite_event(
+                connection,
+                MemoryEvent(
+                    user_id=user_id,
+                    subject_type=MemorySubjectType.MEMORY_PROPOSAL,
+                    subject_id=proposal_id,
+                    event_type=(
+                        MemoryEventType.PROPOSAL_CONFIRMED
+                        if target_status == MemoryProposalStatus.CONFIRMED
+                        else MemoryEventType.PROPOSAL_REJECTED
+                    ),
+                    from_status=MemoryProposalStatus.PENDING_CONFIRMATION.value,
+                    to_status=target_status.value,
+                    reason_code=reason_code,
+                    subject_version=expected_version + 1,
+                    created_at=changed_at,
+                ),
+            )
 
     def record_rejection(
         self,

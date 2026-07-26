@@ -13,6 +13,7 @@ const baseNavItems = [
   { href: "/worksheet", label: "反思" },
   { href: "/progress", label: "进度" },
   { href: "/history", label: "历史" },
+  { href: "/memory", label: "记忆" },
   { href: "/support", label: "资源" },
   { href: "/settings", label: "设置" },
   { href: "/privacy", label: "隐私" },

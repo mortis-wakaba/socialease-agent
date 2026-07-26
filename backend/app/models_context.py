@@ -20,7 +20,6 @@ class ContextValueSource(str, Enum):
     EXPLICIT_PREFERENCE = "explicit_preference"
     ONBOARDING = "onboarding"
     RECENT_PRACTICE = "recent_practice"
-    ACTIVE_PLAN = "active_plan"
     DEFAULT = "default"
 
 

@@ -2,11 +2,13 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.db.config import database_settings
+from app.db.postgres.engine import shared_postgres_engine
 from app.models_memory import (
+    AgentMemoryType,
     PracticePreferences,
     UserOnboardingProfile,
     UserConsentState,
@@ -19,9 +21,8 @@ class PostgresUserMemorySettingsRepository:
     """PostgreSQL-backed privacy-aware memory settings repository."""
 
     def __init__(self, database_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+        self.engine = engine or shared_postgres_engine(
+            database_url or database_settings().database_url
         )
 
     def get(self, user_id: str) -> UserMemorySettings:
@@ -40,6 +41,7 @@ class PostgresUserMemorySettingsRepository:
         consent_state: UserConsentState | None = None,
         practice_preferences: PracticePreferences | None = None,
         onboarding_profile: UserOnboardingProfile | None = None,
+        disabled_memory_types: list[AgentMemoryType] | None = None,
     ) -> UserMemorySettings:
         """Persist explicit user memory settings."""
         current = self.get(user_id)
@@ -47,6 +49,11 @@ class PostgresUserMemorySettingsRepository:
             consent_state=consent_state or current.consent_state,
             practice_preferences=practice_preferences or current.practice_preferences,
             onboarding_profile=onboarding_profile or current.onboarding_profile,
+            disabled_memory_types=(
+                disabled_memory_types
+                if disabled_memory_types is not None
+                else current.disabled_memory_types
+            ),
         )
         with self.engine.begin() as connection:
             connection.execute(

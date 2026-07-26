@@ -1,9 +1,13 @@
 """Policy-gated memory extraction and durable write orchestration."""
 
 from datetime import datetime, timedelta, timezone
-import hashlib
 import logging
 
+from app.memory.commit_service import EpisodicMemoryCommitter
+from app.memory.identity import (
+    memory_content_hash,
+    memory_idempotency_key,
+)
 from app.memory.long_term_repository import (
     LongTermMemoryRepository,
     MemoryConflictError,
@@ -21,6 +25,7 @@ from app.models_long_term_memory import (
     MemoryPipelineItemResult,
     MemoryPipelineResult,
     MemoryPolicyAction,
+    MemoryPolicyDecision,
     MemoryPolicyReason,
     MemoryProposal,
     MemoryProposalStatus,
@@ -30,7 +35,6 @@ from app.models_long_term_memory import (
 )
 
 
-MEMORY_CONSENT_VERSION = "practice-summary-v1"
 logger = logging.getLogger(__name__)
 
 
@@ -49,6 +53,7 @@ class MemoryWritePipeline:
         self.extractor = extractor
         self.policy_engine = policy_engine
         self.memory_repository = memory_repository
+        self.committer = EpisodicMemoryCommitter(memory_repository)
         self.proposal_repository = proposal_repository
         self.settings_repository = settings_repository
 
@@ -97,12 +102,23 @@ class MemoryWritePipeline:
         items: list[MemoryPipelineItemResult] = []
         write_failures = 0
         explicit_revoke_requested = _has_explicit_revoke_request(messages)
+        disabled_types = {
+            memory_type.value for memory_type in settings.disabled_memory_types
+        }
         for proposal in extracted.proposals:
-            decision = self.policy_engine.decide(
-                proposal,
-                consent_state=settings.consent_state,
-                risk_level=risk_level,
-                explicit_revoke_requested=explicit_revoke_requested,
+            decision = (
+                MemoryPolicyDecision(
+                    proposal_id=proposal.proposal_id,
+                    action=MemoryPolicyAction.REJECT,
+                    reason=MemoryPolicyReason.MEMORY_TYPE_DISABLED,
+                )
+                if proposal.memory_type.value in disabled_types
+                else self.policy_engine.decide(
+                    proposal,
+                    consent_state=settings.consent_state,
+                    risk_level=risk_level,
+                    explicit_revoke_requested=explicit_revoke_requested,
+                )
             )
             if decision.action == MemoryPolicyAction.REJECT:
                 try:
@@ -232,53 +248,13 @@ class MemoryWritePipeline:
         reason_code: str,
         timestamp: datetime,
     ) -> tuple[EpisodicMemoryRecord, bool]:
-        content_hash = _content_hash(safe_summary)
-        idempotency_key = _idempotency_key(
+        return self.committer.commit(
             user_id=user_id,
             proposal=proposal,
             safe_summary=safe_summary,
+            reason_code=reason_code,
+            timestamp=timestamp,
         )
-        existing = self.memory_repository.get_memory_by_idempotency_key(
-            user_id=user_id,
-            idempotency_key=idempotency_key,
-        )
-        if existing is not None:
-            return existing, True
-        record = EpisodicMemoryRecord(
-            memory_id=f"memory_{idempotency_key[:32]}",
-            user_id=user_id,
-            memory_type=proposal.memory_type,
-            summary=safe_summary,
-            scenario_type=proposal.scenario_type,
-            source_type=proposal.source_type,
-            source_id=proposal.source_id,
-            evidence_type=proposal.evidence_type,
-            confidence=proposal.confidence,
-            status=MemoryRecordStatus.ACTIVE,
-            occurred_at=proposal.occurred_at,
-            created_at=timestamp,
-            updated_at=timestamp,
-            expires_at=_memory_expiry(proposal, timestamp),
-            consent_version=MEMORY_CONSENT_VERSION,
-            content_hash=content_hash,
-            idempotency_key=idempotency_key,
-        )
-        try:
-            return (
-                self.memory_repository.create_memory(
-                    record,
-                    reason_code=reason_code,
-                ),
-                False,
-            )
-        except MemoryConflictError:
-            existing = self.memory_repository.get_memory_by_idempotency_key(
-                user_id=user_id,
-                idempotency_key=idempotency_key,
-            )
-            if existing is None:
-                raise
-            return existing, True
 
     def _save_pending(
         self,
@@ -289,11 +265,12 @@ class MemoryWritePipeline:
         policy_reason: MemoryPolicyReason,
         timestamp: datetime,
     ) -> tuple[PendingMemoryProposalRecord, bool]:
-        content_hash = _content_hash(safe_summary)
-        idempotency_key = _idempotency_key(
+        content_hash = memory_content_hash(safe_summary)
+        idempotency_key = memory_idempotency_key(
             user_id=user_id,
-            proposal=proposal,
-            safe_summary=safe_summary,
+            source_type=proposal.source_type.value,
+            memory_type=proposal.memory_type.value,
+            summary=safe_summary,
         )
         existing = self.proposal_repository.get_by_idempotency_key(
             user_id=user_id,
@@ -338,7 +315,7 @@ class MemoryWritePipeline:
         proposal: MemoryProposal,
         changed_at: datetime,
     ) -> tuple[EpisodicMemoryRecord | None, bool]:
-        content_hash = _content_hash(proposal.summary)
+        content_hash = memory_content_hash(proposal.summary)
         existing = self.memory_repository.get_memory_by_content_hash(
             user_id=user_id,
             content_hash=content_hash,
@@ -375,11 +352,6 @@ class MemoryWritePipeline:
             raise
 
 
-def _content_hash(summary: str) -> str:
-    normalized = " ".join(summary.casefold().split())
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
 def _has_explicit_revoke_request(messages: list[dict[str, str]]) -> bool:
     """Require deletion intent from original user text, not model-owned evidence."""
     user_text = "\n".join(
@@ -404,31 +376,6 @@ def _has_explicit_revoke_request(messages: list[dict[str, str]]) -> bool:
         "don't remember",
     )
     return any(marker in user_text for marker in markers)
-
-
-def _idempotency_key(
-    *,
-    user_id: str,
-    proposal: MemoryProposal,
-    safe_summary: str,
-) -> str:
-    material = "\0".join(
-        (
-            user_id,
-            proposal.source_type.value,
-            proposal.memory_type.value,
-            " ".join(safe_summary.casefold().split()),
-        )
-    )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
-
-
-def _memory_expiry(
-    proposal: MemoryProposal,
-    created_at: datetime,
-) -> datetime:
-    long_lived = proposal.memory_type.value == "helpful_strategy"
-    return created_at + timedelta(days=730 if long_lived else 365)
 
 
 def _as_utc(value: datetime) -> datetime:

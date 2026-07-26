@@ -19,7 +19,7 @@ from app.models_long_term_memory import (
     MemorySourceType,
     MemoryType,
 )
-from app.models_memory import UserConsentState
+from app.models_memory import AgentMemoryType, UserConsentState
 from app.services.memory_privacy_service import MemoryPrivacyService
 
 
@@ -128,6 +128,40 @@ async def test_helpful_strategy_auto_commit_is_idempotent() -> None:
     assert second.items[0].deduplicated is True
     assert len(memories) == 1
     assert memories[0].summary == "先写一句简短开场对我的小组表达练习有帮助。"
+
+
+@pytest.mark.anyio
+async def test_disabled_memory_type_is_not_written() -> None:
+    user_id = f"memory_pipeline_disabled_{uuid4().hex}"
+    repository_factory().user_memory_settings_repository().save(
+        user_id=user_id,
+        consent_state=UserConsentState(consent_to_practice_summary=True),
+        disabled_memory_types=[AgentMemoryType.HELPFUL_STRATEGY],
+    )
+    pipeline = _pipeline(
+        StubLLMClient(
+            _output(
+                memory_type="helpful_strategy",
+                summary="先写一句简短开场对练习有帮助。",
+            )
+        )
+    )
+
+    result = await pipeline.process_messages(
+        user_id=user_id,
+        messages=[{"role": "user", "content": "先写一句开场对我有帮助。"}],
+        source_type=MemorySourceType.CHAT,
+        source_id="request_1",
+        occurred_at=NOW,
+        risk_level=RiskLevel.LOW,
+        now=NOW,
+    )
+
+    assert result.status == "rejected"
+    assert result.items[0].reason == MemoryPolicyReason.MEMORY_TYPE_DISABLED
+    assert repository_factory().long_term_memory_repository().list_memories(
+        user_id
+    ) == []
 
 
 @pytest.mark.anyio

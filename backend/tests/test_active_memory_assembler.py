@@ -222,6 +222,12 @@ def test_one_budget_preserves_stable_then_working_before_episodic() -> None:
     assert first.working_memory is not None
     assert first.episodic_memories == []
     assert first.estimated_tokens <= first.token_budget
+    budget_drop = next(
+        item
+        for item in first.selections
+        if item.drop_reason == ActiveMemoryDropReason.TOKEN_BUDGET
+    )
+    assert budget_drop.estimated_tokens > 0
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
 
 

@@ -171,35 +171,50 @@ class ThreadCheckpointService:
         self,
         checkpoint: PracticeThreadCheckpoint,
     ) -> DurableCheckpointContext | None:
-        skills = _merge_codes(
-            checkpoint.helpful_strategy_codes,
-            checkpoint.attempted_skill_names,
-            limit=6,
-        )
-        state = RoleplayCompactState(
-            user_goal=checkpoint.current_goal.value if checkpoint.current_goal else None,
-            current_topic=_checkpoint_topic(checkpoint),
-            unresolved_question=_safe_next_step(checkpoint.unresolved_next_step),
-            practiced_skills=skills,
-            compacted_through_message=0,
-            source_message_count=0,
-            version=checkpoint.version,
-            updated_at=checkpoint.updated_at,
-        )
-        state = _fit_active_memory(
-            state,
+        return project_checkpoint_context(
+            checkpoint,
             token_budget=self.active_memory_token_budget,
             estimator=self.token_estimator,
         )
-        estimated = self.token_estimator.count(state.model_dump_json())
-        if estimated > self.active_memory_token_budget:
-            return None
-        return DurableCheckpointContext(
-            compact_state=state,
-            checkpoint_version=checkpoint.version,
-            estimated_tokens=estimated,
-            token_budget=self.active_memory_token_budget,
-        )
+
+
+def project_checkpoint_context(
+    checkpoint: PracticeThreadCheckpoint,
+    *,
+    token_budget: int,
+    estimator: TokenEstimator,
+) -> DurableCheckpointContext | None:
+    """Project a stored checkpoint with the same runtime compaction contract."""
+    bounded_budget = min(max(token_budget, 128), 1024)
+    skills = _merge_codes(
+        checkpoint.helpful_strategy_codes,
+        checkpoint.attempted_skill_names,
+        limit=6,
+    )
+    state = RoleplayCompactState(
+        user_goal=checkpoint.current_goal.value if checkpoint.current_goal else None,
+        current_topic=_checkpoint_topic(checkpoint),
+        unresolved_question=_safe_next_step(checkpoint.unresolved_next_step),
+        practiced_skills=skills,
+        compacted_through_message=0,
+        source_message_count=0,
+        version=checkpoint.version,
+        updated_at=checkpoint.updated_at,
+    )
+    state = _fit_active_memory(
+        state,
+        token_budget=bounded_budget,
+        estimator=estimator,
+    )
+    estimated = estimator.count(state.model_dump_json())
+    if estimated > bounded_budget:
+        return None
+    return DurableCheckpointContext(
+        compact_state=state,
+        checkpoint_version=checkpoint.version,
+        estimated_tokens=estimated,
+        token_budget=bounded_budget,
+    )
 
 
 def _fit_active_memory(

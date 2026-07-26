@@ -12,6 +12,7 @@ from app.models_roleplay import RoleplaySession
 from app.models_session_review import SessionReviewRecord
 from app.models_worksheet import WorksheetRecord
 from app.models_memory import UserPracticeSummary
+from app.memory.profile_projection import build_user_practice_summary
 
 
 def _initialize_sqlite_if_configured() -> None:
@@ -219,30 +220,10 @@ class SQLiteUserProfileRepository:
 
         sessions = [RoleplaySession.model_validate_json(row["payload"]) for row in roleplay_rows]
         plan = ExposurePlan.model_validate_json(plan_row["payload"]) if plan_row else None
-        recent_scenarios = list(dict.fromkeys(session.scenario.value for session in sessions))[:3]
-        preferred_difficulty = sessions[0].difficulty if sessions else None
-        practice_timestamps = [session.updated_at for session in sessions]
-        latest_anxiety_level = None
-        exposure_attempt_count = 0
-        if plan is not None:
-            practice_timestamps.append(plan.updated_at)
-            exposure_attempt_count = len(plan.attempts)
-            latest_anxiety_level = (
-                plan.attempts[-1].anxiety_after
-                if plan.attempts
-                else plan.current_anxiety_level
-            )
-            if plan.target_scenario not in recent_scenarios:
-                recent_scenarios = [plan.target_scenario, *recent_scenarios][:3]
-
-        return UserPracticeSummary(
-            recent_scenarios=recent_scenarios,
-            roleplay_session_count=len(sessions),
+        return build_user_practice_summary(
+            sessions=sessions,
             worksheet_count=worksheet_count,
-            exposure_attempt_count=exposure_attempt_count,
-            latest_anxiety_level=latest_anxiety_level,
-            preferred_difficulty=preferred_difficulty,
-            latest_practice_at=max(practice_timestamps) if practice_timestamps else None,
+            exposure_plan=plan,
         )
 
 

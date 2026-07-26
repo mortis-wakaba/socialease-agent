@@ -264,6 +264,31 @@ make eval-memory-vector
 revision；Vector/Hybrid 在应用用户、Consent、状态、类型和场景硬过滤之后运行，
 不能替代权限过滤。
 
+Memory Center 位于前端 `/memory`，明确区分稳定设置、Active Thread、情节记忆、
+待确认候选和普通聊天历史。用户可以查看来源与保存原因，安全编辑摘要，使用乐观锁
+归档、恢复或物理删除单条记忆，并按记忆类型关闭未来写入和检索。Memory Center
+快照会复用同一次用户作用域数据加载生成只读 Doctor 报告；独立 Doctor API 仍可
+用于单独刷新。对应 API 位于：
+
+```text
+GET    /api/users/{user_id}/memories
+PATCH  /api/users/{user_id}/memories/{memory_id}
+POST   /api/users/{user_id}/memories/{memory_id}/archive
+POST   /api/users/{user_id}/memories/{memory_id}/restore
+DELETE /api/users/{user_id}/memories/{memory_id}
+GET    /api/users/{user_id}/memory-proposals
+POST   /api/users/{user_id}/memory-proposals/{proposal_id}/confirm
+POST   /api/users/{user_id}/memory-proposals/{proposal_id}/reject
+PUT    /api/users/{user_id}/memory/personalization/{memory_type}
+GET    /api/users/{user_id}/memory-doctor
+```
+
+Memory Doctor 是用户作用域的只读质量检查：检测重复/冲突记忆、长期未使用项、
+授权或类别设置不一致、缺失来源、异常时间、Active Memory 预算、过期练习线程和
+久未确认候选。报告只返回稳定问题码、数量及哈希化对象标识，不返回记忆正文，也
+不会自动修复。当前生产向量索引未启用，因此孤立 embedding 检查会明确返回
+`not_applicable`，而不是误报为通过。
+
 Eval 的设计、指标和局限见 [Benchmark Report](docs/benchmark_report.md) 与 [Human Review Rubric](docs/human_review_rubric.md)。
 
 ## 安全与隐私边界

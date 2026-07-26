@@ -17,7 +17,7 @@ from app.guardrails.output import (
     create_output_guardrail,
 )
 from app.db.factory import repository_factory
-from app.db.repositories import ExposureRepository, UserProfileRepository
+from app.db.repositories import UserProfileRepository
 from app.memory.settings_store import UserMemorySettingsRepository
 from app.memory.active_memory_assembler import ActiveMemoryAssembler
 from app.memory.policy_engine import MemoryPolicyEngine
@@ -82,7 +82,6 @@ class AgentHarness:
         permission_gate: SafetyPermissionGate | None = None,
         hooks: Iterable[AgentHarnessHook] | None = None,
         user_profile_repository: UserProfileRepository | None = None,
-        exposure_repository: ExposureRepository | None = None,
         memory_settings_repository: UserMemorySettingsRepository | None = None,
         output_guardrail: OutputGuardrail | None = None,
         memory_write_pipeline: MemoryWritePipeline | None = None,
@@ -97,7 +96,6 @@ class AgentHarness:
         self.hooks = tuple(hooks or ())
         factory = repository_factory()
         self.user_profile_repository = user_profile_repository or factory.user_profile_repository()
-        self.exposure_repository = exposure_repository or factory.exposure_repository()
         self.memory_settings_repository = (
             memory_settings_repository or factory.user_memory_settings_repository()
         )
@@ -132,11 +130,9 @@ class AgentHarness:
         errors: list[str] = []
         request_id = _optional_string(request.context.get("request_id")) or get_request_id()
         user_profile = self.user_profile_repository.get_summary(request.user_id)
-        active_exposure_plan = self.exposure_repository.get_for_user(request.user_id)
         memory_context = build_memory_context(
             practice_summary=user_profile,
             memory_settings=self.memory_settings_repository.get(request.user_id),
-            active_exposure_plan=active_exposure_plan,
         )
         run_context = RunContext(
             run_id=run_id,
@@ -144,9 +140,6 @@ class AgentHarness:
             session_id=_optional_string(request.context.get("session_id")),
             message=request.message,
             request_context=request.context,
-            user_profile=user_profile,
-            active_exposure_plan=active_exposure_plan,
-            memory_context=memory_context,
             response_constraints=extract_response_constraints(request.message),
         )
 
@@ -246,7 +239,7 @@ class AgentHarness:
         run_context.skill_context = select_skill_context(
             skill_name=skill.descriptor.name,
             request_context=run_context.request_context,
-            memory_context=run_context.memory_context,
+            memory_context=memory_context,
         )
         run_context.active_memory = self.active_memory_assembler.assemble(
             user_id=request.user_id,
@@ -361,10 +354,6 @@ class AgentHarness:
             skill_result=skill_result,
         )
         if safety_result.risk_level != RiskLevel.CRISIS:
-            _annotate_memory_context(
-                run_context=run_context,
-                skill_result_data=skill_result.structured_data,
-            )
             _annotate_context_selection(
                 run_context=run_context,
                 skill_result_data=skill_result.structured_data,
@@ -976,31 +965,6 @@ def _annotate_intensity_adjustment(
     )
 
 
-def _annotate_memory_context(
-    *,
-    run_context: RunContext,
-    skill_result_data: dict[str, object],
-) -> None:
-    """Expose value-free memory diagnostics for the current run."""
-    if run_context.memory_context is None or run_context.skill_context is None:
-        return
-    projection = run_context.skill_context
-    skill_result_data.setdefault("memory_context_used", bool(projection.selected_fields))
-    skill_result_data.setdefault(
-        "memory_context",
-        {
-            "selected_fields": projection.selected_fields,
-            "dropped_fields": projection.dropped_fields,
-            "drop_reasons": projection.drop_reasons,
-        },
-    )
-    if run_context.active_memory is not None:
-        skill_result_data.setdefault(
-            "active_memory",
-            run_context.active_memory.trace_metadata(),
-        )
-
-
 def _annotate_context_selection(
     *,
     run_context: RunContext,
@@ -1023,6 +987,11 @@ def _annotate_context_selection(
             "drop_reasons": projection.drop_reasons,
         },
     )
+    if run_context.active_memory is not None:
+        skill_result_data.setdefault(
+            "active_memory",
+            run_context.active_memory.trace_metadata(),
+        )
 
 
 def _permission_limited_result(

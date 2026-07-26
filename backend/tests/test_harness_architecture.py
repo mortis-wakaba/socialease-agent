@@ -6,11 +6,10 @@ from uuid import uuid4
 import pytest
 
 from app.models import ChatRequest, Intent, RiskLevel, SafetyResult, TraceRecord
-from app.models_exposure import ExposurePlan, ExposureTask
 from app.models_long_term_memory import MemoryPipelineResult
 from app.models_memory import PracticePreferences, UserConsentState, UserPracticeSummary
 from app.memory.context_builder import build_memory_context
-from app.memory.settings_store import user_memory_settings_store
+from app.db.factory import repository_factory
 from app.protocols.service import protocol_service
 from app.safety.actions import HarnessAction
 from app.safety.permissions import PermissionAction, PermissionDecision, SafetyPermissionGate
@@ -61,10 +60,10 @@ class ContextInspectingSupportSkill:
     )
 
     def __init__(self) -> None:
-        self.seen_profile = False
+        self.seen_active_memory = False
 
     async def run(self, context: SkillContext) -> SkillResult:
-        self.seen_profile = context.run.user_profile is not None
+        self.seen_active_memory = context.active_memory is not None
         return SkillResult(
             response="ok",
             structured_data={"agent": "support_agent", "action": "general_support"},
@@ -304,12 +303,12 @@ async def test_agent_harness_loads_run_context_for_skill() -> None:
         )
     )
 
-    assert skill.seen_profile is True
+    assert skill.seen_active_memory is True
     assert response.trace.session_id == "session_from_client"
     assert response.trace.selected_skill == "general_support_skill"
     assert response.trace.action == "general_support"
     assert response.trace.permission_action == "allow"
-    assert "memory_context" in response.structured_data
+    assert "context_selection" in response.structured_data
 
 
 @pytest.mark.anyio
@@ -352,36 +351,17 @@ async def test_harness_boundary_paths_do_not_create_business_plans(
     assert response.structured_data["state_changed"] is False
 
 
-def test_memory_context_builder_combines_profile_preferences_and_active_plan() -> None:
-    plan = ExposurePlan(
-        plan_id="plan_memory_context",
-        user_id="memory_context_user",
-        target_scenario="课堂发言",
-        current_anxiety_level=7,
-        previous_attempts=[],
-        tasks=[
-            ExposureTask(
-                task_id="task_1",
-                title="先在纸上写一句开场",
-                description="demo",
-                difficulty=2,
-                estimated_time_minutes=5,
-                success_criteria="完成一句开场",
-                fallback_task="只写关键词",
-            )
-        ],
-        recommended_next_task_id="task_1",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
-    )
-
+def test_memory_context_builder_combines_profile_and_preferences() -> None:
     memory_context = build_memory_context(
         practice_summary=UserPracticeSummary(
             recent_scenarios=["group_discussion"],
             latest_anxiety_level=6,
             preferred_difficulty=2,
         ),
-        memory_settings=user_memory_settings_store.get("memory_context_empty").model_copy(
+        memory_settings=repository_factory()
+        .user_memory_settings_repository()
+        .get("memory_context_empty")
+        .model_copy(
             update={
                 "consent_state": UserConsentState(
                     consent_to_practice_summary=True,
@@ -394,22 +374,18 @@ def test_memory_context_builder_combines_profile_preferences_and_active_plan() -
                 )
             }
         ),
-        active_exposure_plan=plan,
     )
 
     assert memory_context.recent_scenarios == ["dorm_conflict", "group_discussion"]
     assert memory_context.preferred_difficulty == 4
     assert "test@example.com" not in str(memory_context.practice_preferences.model_dump())
     assert memory_context.latest_anxiety_level == 6
-    assert memory_context.active_exposure_plan_id == "plan_memory_context"
-    assert memory_context.active_exposure_next_task == "先在纸上写一句开场"
-    assert "active_exposure_plan_available" in memory_context.context_notes
 
 
 @pytest.mark.anyio
 async def test_roleplay_skill_uses_memory_context_after_consent() -> None:
     user_id = f"memory_context_roleplay_{uuid4().hex}"
-    user_memory_settings_store.save(
+    repository_factory().user_memory_settings_repository().save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_save_preferences=True),
         practice_preferences=PracticePreferences(
@@ -441,11 +417,12 @@ async def test_roleplay_skill_uses_memory_context_after_consent() -> None:
     assert response.structured_data["action"] == "roleplay_started"
     assert response.structured_data["difficulty"] == 4
     assert response.structured_data["scenario"] == "dorm_conflict"
-    assert response.structured_data["memory_context_used"] is True
-    assert "preferred_difficulty" in response.structured_data["memory_context"][
+    assert "preferred_difficulty" in response.structured_data["context_selection"][
         "selected_fields"
     ]
-    assert "dorm_conflict" not in str(response.structured_data["memory_context"])
+    assert "dorm_conflict" not in str(
+        response.structured_data["context_selection"]
+    )
     assert response.trace.active_memory_selections
     assert "dorm_conflict" not in str(response.trace.active_memory_selections)
     assert all(

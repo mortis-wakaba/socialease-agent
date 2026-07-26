@@ -1,11 +1,12 @@
 """PostgreSQL adapter for confirmation-gated memory proposals."""
 
 from datetime import datetime
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.exc import IntegrityError
 
 from app.db.config import database_settings
+from app.db.postgres.engine import shared_postgres_engine
 from app.memory.long_term_repository import MemoryConflictError
 from app.memory.proposal_repository import MemoryProposalRepository
 from app.models_long_term_memory import (
@@ -25,9 +26,8 @@ class PostgresMemoryProposalRepository(MemoryProposalRepository):
         database_url: str | None = None,
         engine: Engine | None = None,
     ) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+        self.engine = engine or shared_postgres_engine(
+            database_url or database_settings().database_url
         )
 
     def save_pending(
@@ -138,6 +138,76 @@ class PostgresMemoryProposalRepository(MemoryProposalRepository):
                 },
             ).mappings().all()
         return [_proposal_from_mapping(row) for row in rows]
+
+    def consume_pending(
+        self,
+        *,
+        user_id: str,
+        proposal_id: str,
+        expected_version: int,
+        target_status: MemoryProposalStatus,
+        reason_code: str,
+        changed_at: datetime,
+    ) -> None:
+        """Delete decided proposal content and retain only a content-free event."""
+        if target_status not in {
+            MemoryProposalStatus.CONFIRMED,
+            MemoryProposalStatus.REJECTED,
+        }:
+            raise ValueError("pending proposals may only be confirmed or rejected")
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT version, status FROM memory_proposals
+                    WHERE proposal_id = :proposal_id AND user_id = :user_id
+                    FOR UPDATE"""
+                ),
+                {"proposal_id": proposal_id, "user_id": user_id},
+            ).mappings().first()
+            if row is None:
+                raise MemoryConflictError("pending memory proposal was not found")
+            if (
+                row["status"] != MemoryProposalStatus.PENDING_CONFIRMATION.value
+                or row["version"] != expected_version
+            ):
+                raise MemoryConflictError(
+                    "pending memory proposal was changed concurrently"
+                )
+            result = connection.execute(
+                text(
+                    """DELETE FROM memory_proposals
+                    WHERE proposal_id = :proposal_id AND user_id = :user_id
+                    AND version = :expected_version AND status = :status"""
+                ),
+                {
+                    "proposal_id": proposal_id,
+                    "user_id": user_id,
+                    "expected_version": expected_version,
+                    "status": MemoryProposalStatus.PENDING_CONFIRMATION.value,
+                },
+            )
+            if result.rowcount != 1:
+                raise MemoryConflictError(
+                    "pending memory proposal was changed concurrently"
+                )
+            _insert_event(
+                connection,
+                MemoryEvent(
+                    user_id=user_id,
+                    subject_type=MemorySubjectType.MEMORY_PROPOSAL,
+                    subject_id=proposal_id,
+                    event_type=(
+                        MemoryEventType.PROPOSAL_CONFIRMED
+                        if target_status == MemoryProposalStatus.CONFIRMED
+                        else MemoryEventType.PROPOSAL_REJECTED
+                    ),
+                    from_status=MemoryProposalStatus.PENDING_CONFIRMATION.value,
+                    to_status=target_status.value,
+                    reason_code=reason_code,
+                    subject_version=expected_version + 1,
+                    created_at=changed_at,
+                ),
+            )
 
     def record_rejection(
         self,

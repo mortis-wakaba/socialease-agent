@@ -384,10 +384,6 @@ def _available_memory_fields(memory_context: MemoryContext | None) -> set[str]:
         fields.add("preferred_difficulty")
     if memory_context.latest_anxiety_level is not None:
         fields.add("latest_anxiety_level")
-    if memory_context.active_exposure_plan_id is not None:
-        fields.add("active_exposure_plan_id")
-    if memory_context.active_exposure_next_task is not None:
-        fields.add("active_exposure_next_task")
     preferences = memory_context.practice_preferences
     if preferences.preferred_feedback_style is not None:
         fields.add("preferred_feedback_style")

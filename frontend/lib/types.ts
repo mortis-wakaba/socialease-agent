@@ -280,6 +280,155 @@ export type PracticeSummaryConsentUpdateResponse = {
   consent_state: UserConsentState;
 };
 
+export type MemoryType =
+  | "practice_experience"
+  | "helpful_strategy"
+  | "practice_milestone"
+  | "social_context"
+  | "recurring_pattern";
+
+export type MemoryRecordStatus =
+  | "active"
+  | "inactive"
+  | "archived"
+  | "superseded"
+  | "revoked";
+
+export type EpisodicMemoryView = {
+  memory_id: string;
+  memory_type: MemoryType;
+  summary: string;
+  scenario_type?: RoleplayScenario | null;
+  source_type: string;
+  evidence_type: string;
+  confidence: number;
+  status: MemoryRecordStatus;
+  saved_reason: string;
+  occurred_at: string;
+  created_at: string;
+  updated_at: string;
+  last_retrieved_at?: string | null;
+  expires_at?: string | null;
+  version: number;
+};
+
+export type MemoryProposalView = {
+  proposal_id: string;
+  memory_type: MemoryType;
+  summary: string;
+  scenario_type?: RoleplayScenario | null;
+  source_type: string;
+  evidence_type: string;
+  confidence: number;
+  status: "pending_confirmation" | "confirmed" | "rejected" | "expired";
+  saved_reason: string;
+  occurred_at: string;
+  created_at: string;
+  expires_at: string;
+  version: number;
+};
+
+export type PracticeThreadCheckpoint = {
+  thread_id: string;
+  user_id: string;
+  current_goal?: OnboardingPrimaryGoal | null;
+  current_stage?: string | null;
+  current_scenario?: RoleplayScenario | null;
+  helpful_strategy_codes: string[];
+  attempted_skill_names: string[];
+  unresolved_next_step?: string | null;
+  status: "active" | "paused" | "completed" | "archived";
+  version: number;
+  last_activity_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MemoryCenterResponse = {
+  user_id: string;
+  stable_memory: {
+    consent_state: UserConsentState;
+    practice_preferences: PracticePreferences;
+    onboarding_profile: UserOnboardingProfile;
+    disabled_memory_types: MemoryType[];
+  };
+  active_threads: PracticeThreadCheckpoint[];
+  memories: EpisodicMemoryView[];
+  pending_proposals: MemoryProposalView[];
+  doctor: MemoryDoctorReport;
+  memory_history_distinction: string;
+};
+
+export type MemoryDoctorIssueCode =
+  | "duplicate_memory"
+  | "conflicting_memory"
+  | "stale_unused_memory"
+  | "consent_inactive_memory"
+  | "type_personalization_disabled"
+  | "source_reference_missing"
+  | "timestamp_invalid"
+  | "orphan_embedding"
+  | "active_memory_over_budget"
+  | "stale_checkpoint"
+  | "pending_proposal_aged";
+
+export type MemoryDoctorCheck = {
+  code: MemoryDoctorIssueCode;
+  status: "passed" | "issues_found" | "not_applicable";
+  issue_count: number;
+  detail_code?: string | null;
+};
+
+export type MemoryDoctorIssue = {
+  issue_id: string;
+  code: MemoryDoctorIssueCode;
+  severity: "info" | "warning" | "action_required";
+  subject_type: string;
+  subject_id_hashes: string[];
+  affected_count: number;
+  metadata: Record<string, string | number | boolean>;
+  recommendation_code: string;
+};
+
+export type MemoryDoctorReport = {
+  user_id: string;
+  policy_version: "memory-doctor-v1";
+  generated_at: string;
+  scanned_counts: Record<string, number>;
+  thresholds: {
+    stale_memory_days: number;
+    stale_checkpoint_days: number;
+    pending_proposal_days: number;
+    active_memory_token_budget: number;
+    conflict_term_overlap: number;
+  };
+  checks: MemoryDoctorCheck[];
+  issues: MemoryDoctorIssue[];
+  issues_truncated: boolean;
+  auto_fix_applied: false;
+  contains_memory_content: false;
+};
+
+export type MemoryTypePersonalizationResponse = {
+  user_id: string;
+  memory_type: MemoryType;
+  enabled: boolean;
+  disabled_memory_types: MemoryType[];
+};
+
+export type MemoryMutationResponse = {
+  user_id: string;
+  memory?: EpisodicMemoryView | null;
+  deleted: boolean;
+};
+
+export type MemoryProposalDecisionResponse = {
+  user_id: string;
+  proposal_id: string;
+  status: "confirmed" | "rejected";
+  memory?: EpisodicMemoryView | null;
+};
+
 export type RetrievalHit = {
   title: string;
   score: number;

@@ -109,15 +109,23 @@ class RoleplayService:
                 token_estimator=token_estimator,
             )
         self.context_manager = context_manager
+        long_term_repository = None
+        memory_settings_repository = None
+        if checkpoint_service is None or memory_retriever is None:
+            factory = repository_factory()
+            long_term_repository = factory.long_term_memory_repository()
+            memory_settings_repository = (
+                factory.user_memory_settings_repository()
+            )
         self.checkpoint_service = checkpoint_service or ThreadCheckpointService(
-            repository=repository_factory().long_term_memory_repository(),
-            settings_repository=repository_factory().user_memory_settings_repository(),
+            repository=long_term_repository,
+            settings_repository=memory_settings_repository,
             token_estimator=token_estimator,
             active_memory_token_budget=settings.active_checkpoint_max_tokens,
         )
         self.memory_retriever = memory_retriever or EpisodicMemoryRetriever(
-            repository=repository_factory().long_term_memory_repository(),
-            settings_repository=repository_factory().user_memory_settings_repository(),
+            repository=long_term_repository,
+            settings_repository=memory_settings_repository,
             token_estimator=token_estimator,
             context_token_budget=settings.episodic_memory_max_tokens,
         )
@@ -276,7 +284,7 @@ class RoleplayService:
                         episodic_types_for_skill("roleplay_skill")
                     ),
                     scenario_type=session.scenario,
-                    include_archived=True,
+                    include_archived=False,
                     strategy=MemoryRetrievalStrategy.SQL_TEXT,
                 )
             )

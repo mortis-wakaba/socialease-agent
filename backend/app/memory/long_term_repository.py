@@ -106,6 +106,19 @@ class LongTermMemoryRepository(Protocol):
         changed_at: datetime | None = None,
     ) -> EpisodicMemoryRecord: ...
 
+    def update_memory_summary(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        expected_version: int,
+        summary: str,
+        content_hash: str,
+        idempotency_key: str,
+        reason_code: str,
+        changed_at: datetime | None = None,
+    ) -> EpisodicMemoryRecord: ...
+
     def delete_memory(
         self,
         *,
@@ -130,6 +143,13 @@ class LongTermMemoryRepository(Protocol):
         thread_id: str,
         user_id: str,
     ) -> PracticeThreadCheckpoint | None: ...
+
+    def list_checkpoints(
+        self,
+        user_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[PracticeThreadCheckpoint]: ...
 
     def list_events(
         self,
@@ -458,6 +478,79 @@ class SQLiteLongTermMemoryRepository:
             )
         return updated
 
+    def update_memory_summary(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        expected_version: int,
+        summary: str,
+        content_hash: str,
+        idempotency_key: str,
+        reason_code: str,
+        changed_at: datetime | None = None,
+    ) -> EpisodicMemoryRecord:
+        """Update a safe summary with optimistic locking and content-free audit."""
+        timestamp = _aware_now(changed_at)
+        try:
+            with _sqlite_transaction() as connection:
+                row = connection.execute(
+                    """SELECT * FROM episodic_memories
+                    WHERE memory_id = ? AND user_id = ?""",
+                    (memory_id, user_id),
+                ).fetchone()
+                if row is None:
+                    raise MemoryNotFoundError(
+                        "user-scoped episodic memory was not found"
+                    )
+                current = _memory_from_row(row)
+                _require_expected_version(current.version, expected_version)
+                updated = current.model_copy(
+                    update={
+                        "summary": summary,
+                        "content_hash": content_hash,
+                        "idempotency_key": idempotency_key,
+                        "updated_at": timestamp,
+                        "version": current.version + 1,
+                    }
+                )
+                cursor = connection.execute(
+                    """UPDATE episodic_memories
+                    SET summary = ?, content_hash = ?, idempotency_key = ?,
+                        updated_at = ?, version = ?
+                    WHERE memory_id = ? AND user_id = ? AND version = ?""",
+                    (
+                        updated.summary,
+                        updated.content_hash,
+                        updated.idempotency_key,
+                        updated.updated_at.isoformat(),
+                        updated.version,
+                        memory_id,
+                        user_id,
+                        expected_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise MemoryConflictError(
+                        "episodic memory was changed concurrently"
+                    )
+                _insert_sqlite_event(
+                    connection,
+                    _memory_event(
+                        record=updated,
+                        event_type=MemoryEventType.MEMORY_UPDATED,
+                        from_status=current.status,
+                        to_status=current.status,
+                        reason_code=reason_code,
+                        created_at=timestamp,
+                    ),
+                )
+        except sqlite3.IntegrityError as error:
+            raise MemoryConflictError(
+                "an equivalent episodic memory already exists"
+            ) from error
+        return updated
+
     def delete_memory(
         self,
         *,
@@ -600,6 +693,23 @@ class SQLiteLongTermMemoryRepository:
                 (thread_id, user_id),
             ).fetchone()
         return _checkpoint_from_row(row) if row else None
+
+    def list_checkpoints(
+        self,
+        user_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[PracticeThreadCheckpoint]:
+        """Return bounded user-owned checkpoints ordered by latest activity."""
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM thread_checkpoints
+                WHERE user_id = ?
+                ORDER BY last_activity_at DESC, thread_id ASC
+                LIMIT ?""",
+                (user_id, min(max(limit, 1), 500)),
+            ).fetchall()
+        return [_checkpoint_from_row(row) for row in rows]
 
     def list_events(
         self,

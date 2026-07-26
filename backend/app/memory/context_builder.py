@@ -2,7 +2,6 @@
 
 from datetime import datetime, timedelta, timezone
 
-from app.models_exposure import ExposurePlan
 from app.models_memory import (
     MemoryContext,
     PracticePreferences,
@@ -16,10 +15,8 @@ def build_memory_context(
     *,
     practice_summary: UserPracticeSummary,
     memory_settings: UserMemorySettings,
-    active_exposure_plan: ExposurePlan | None,
     now: datetime | None = None,
     practice_summary_ttl: timedelta = timedelta(days=90),
-    active_plan_ttl: timedelta = timedelta(days=30),
 ) -> MemoryContext:
     """Return a consent-filtered, bounded memory packet for one agent run."""
     selected_at = _as_utc(now or datetime.now(timezone.utc))
@@ -36,24 +33,6 @@ def build_memory_context(
     practice_summary_stale = summary_allowed and _is_expired(
         practice_expires_at, selected_at
     )
-    active_plan_allowed = summary_allowed
-    active_plan_updated_at = (
-        _as_utc_or_none(
-            active_exposure_plan.updated_at if active_exposure_plan is not None else None
-        )
-        if active_plan_allowed
-        else None
-    )
-    active_plan_expires_at = _expiry(active_plan_updated_at, active_plan_ttl)
-    active_plan_stale = active_plan_allowed and _is_expired(
-        active_plan_expires_at, selected_at
-    )
-    usable_active_plan = (
-        active_exposure_plan
-        if active_plan_allowed and not active_plan_stale
-        else None
-    )
-
     preferences = (
         _redact_preferences(memory_settings.practice_preferences)
         if preferences_allowed
@@ -85,7 +64,6 @@ def build_memory_context(
         else None
     )
     onboarding_profile = memory_settings.onboarding_profile
-    context_notes: list[str] = []
     dropped_context: list[str] = []
 
     if not summary_allowed and _has_practice_summary(practice_summary):
@@ -96,35 +74,14 @@ def build_memory_context(
         memory_settings.practice_preferences
     ):
         dropped_context.append("practice_preferences_consent_required")
-    if not active_plan_allowed and active_exposure_plan is not None:
-        dropped_context.append("active_exposure_plan_consent_required")
-    elif active_plan_stale:
-        dropped_context.append("active_exposure_plan_expired")
-
-    if recent_scenarios:
-        context_notes.append("recent_practice_scenarios_available")
-    if preferred_difficulty is not None:
-        context_notes.append("preferred_roleplay_difficulty_available")
-    if latest_anxiety_level is not None:
-        context_notes.append("latest_anxiety_level_available")
-    if usable_active_plan is not None:
-        context_notes.append("active_exposure_plan_available")
-    if onboarding_profile.boundary_acknowledged:
-        context_notes.append("onboarding_profile_available")
-
     return MemoryContext(
         recent_scenarios=recent_scenarios,
         preferred_difficulty=preferred_difficulty,
         latest_anxiety_level=latest_anxiety_level,
-        active_exposure_plan_id=usable_active_plan.plan_id if usable_active_plan else None,
-        active_exposure_next_task=_next_exposure_task_title(usable_active_plan),
         practice_preferences=preferences,
         onboarding_profile=onboarding_profile,
-        context_notes=context_notes,
         practice_summary_observed_at=practice_observed_at,
         practice_summary_expires_at=practice_expires_at,
-        active_exposure_plan_updated_at=active_plan_updated_at,
-        active_exposure_plan_expires_at=active_plan_expires_at,
         dropped_context=dropped_context,
     )
 
@@ -172,16 +129,6 @@ def _redact_text(text: str) -> str:
     """Redact deterministic sensitive identifiers before context injection."""
     redacted, _ = redact_sensitive_identifiers(text)
     return redacted
-
-
-def _next_exposure_task_title(plan: ExposurePlan | None) -> str | None:
-    """Return the active plan's recommended next task title, if available."""
-    if plan is None or plan.recommended_next_task_id is None:
-        return None
-    for task in plan.tasks:
-        if task.task_id == plan.recommended_next_task_id:
-            return task.title
-    return None
 
 
 def _expiry(observed_at: datetime | None, ttl: timedelta) -> datetime | None:

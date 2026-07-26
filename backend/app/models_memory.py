@@ -5,6 +5,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.models_memory_types import MemoryType
 from app.models_roleplay import RoleplayScenario
 
 
@@ -34,6 +35,9 @@ class UserConsentState(BaseModel):
     consent_to_save_preferences: bool = False
     do_not_store_raw_messages: bool = True
     allow_sensitive_memory: bool = False
+
+
+AgentMemoryType = MemoryType
 
 
 class PreferredFeedbackStyle(str, Enum):
@@ -87,15 +91,10 @@ class MemoryContext(BaseModel):
     recent_scenarios: list[str] = Field(default_factory=list, max_length=5)
     preferred_difficulty: int | None = Field(default=None, ge=1, le=5)
     latest_anxiety_level: int | None = Field(default=None, ge=1, le=10)
-    active_exposure_plan_id: str | None = None
-    active_exposure_next_task: str | None = None
     practice_preferences: PracticePreferences = Field(default_factory=PracticePreferences)
     onboarding_profile: UserOnboardingProfile = Field(default_factory=UserOnboardingProfile)
-    context_notes: list[str] = Field(default_factory=list, max_length=8)
     practice_summary_observed_at: datetime | None = None
     practice_summary_expires_at: datetime | None = None
-    active_exposure_plan_updated_at: datetime | None = None
-    active_exposure_plan_expires_at: datetime | None = None
     dropped_context: list[str] = Field(default_factory=list, max_length=8)
 
 
@@ -105,6 +104,28 @@ class UserMemorySettings(BaseModel):
     consent_state: UserConsentState = Field(default_factory=UserConsentState)
     practice_preferences: PracticePreferences = Field(default_factory=PracticePreferences)
     onboarding_profile: UserOnboardingProfile = Field(default_factory=UserOnboardingProfile)
+    disabled_memory_types: list[AgentMemoryType] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+
+
+class MemoryTypePersonalizationRequest(BaseModel):
+    """Enable or disable one memory category for future personalization."""
+
+    enabled: bool
+
+
+class MemoryTypePersonalizationResponse(BaseModel):
+    """Current disabled-category set after one user control change."""
+
+    user_id: str
+    memory_type: AgentMemoryType
+    enabled: bool
+    disabled_memory_types: list[AgentMemoryType] = Field(
+        default_factory=list,
+        max_length=5,
+    )
 
 
 class UserOnboardingProfileUpdateRequest(BaseModel):

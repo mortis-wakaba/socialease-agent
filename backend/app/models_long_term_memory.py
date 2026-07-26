@@ -8,17 +8,8 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models_memory import OnboardingPrimaryGoal
+from app.models_memory_types import MemoryType
 from app.models_roleplay import RoleplayScenario
-
-
-class MemoryType(str, Enum):
-    """Allowed episodic memory categories."""
-
-    PRACTICE_EXPERIENCE = "practice_experience"
-    HELPFUL_STRATEGY = "helpful_strategy"
-    PRACTICE_MILESTONE = "practice_milestone"
-    SOCIAL_CONTEXT = "social_context"
-    RECURRING_PATTERN = "recurring_pattern"
 
 
 class MemorySourceType(str, Enum):
@@ -69,6 +60,7 @@ class MemoryEventType(str, Enum):
     MEMORY_REVOKED = "memory_revoked"
     MEMORY_DELETED = "memory_deleted"
     MEMORY_RETRIEVED = "memory_retrieved"
+    MEMORY_UPDATED = "memory_updated"
     CHECKPOINT_UPDATED = "checkpoint_updated"
     PROPOSAL_CREATED = "proposal_created"
     PROPOSAL_CONFIRMED = "proposal_confirmed"
@@ -113,6 +105,7 @@ class MemoryPolicyReason(str, Enum):
     EXPLICIT_REVOCATION_ALLOWED = "explicit_revocation_allowed"
     EXPLICIT_REVOCATION_REQUIRED = "explicit_revocation_required"
     REVOCATION_TARGET_NOT_FOUND = "revocation_target_not_found"
+    MEMORY_TYPE_DISABLED = "memory_type_disabled"
 
 
 class MemoryProposalOperation(str, Enum):

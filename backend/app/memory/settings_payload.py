@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.models_memory import (
+    AgentMemoryType,
     OnboardingPracticePreference,
     OnboardingPrimaryGoal,
     PracticePreferences,
@@ -84,6 +85,11 @@ def _sanitize_settings_payload(payload: dict[str, Any]) -> UserMemorySettings:
             payload.get("practice_preferences")
         ),
         onboarding_profile=_sanitize_onboarding_profile(payload.get("onboarding_profile")),
+        disabled_memory_types=_enum_list(
+            payload.get("disabled_memory_types"),
+            AgentMemoryType,
+            max_items=5,
+        ),
     )
 
 

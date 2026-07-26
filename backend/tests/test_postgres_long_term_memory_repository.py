@@ -33,13 +33,18 @@ from app.models_long_term_memory import (
     MemorySourceType,
     MemoryType,
     MemoryProposal,
+    MemoryProposalStatus,
+    MemoryPolicyReason,
     MemoryRetrievalRequest,
     MemoryRetrievalStrategy,
     PracticeThreadCheckpoint,
     PracticeThreadStatus,
+    PendingMemoryProposalRecord,
 )
 from app.models_memory import UserConsentState
+from app.models_memory_doctor import MemoryDoctorIssueCode
 from app.models_roleplay import RoleplayScenario
+from app.services.memory_doctor_service import MemoryDoctorService
 from app.services.memory_privacy_service import MemoryPrivacyService
 
 
@@ -97,6 +102,78 @@ def test_postgres_episodic_lifecycle_and_audit_are_atomic(
         MemoryEventType.MEMORY_COMMITTED,
         MemoryEventType.MEMORY_ARCHIVED,
     ]
+
+
+def test_postgres_memory_center_update_and_checkpoint_listing(
+    repository: PostgresLongTermMemoryRepository,
+) -> None:
+    user_id = f"pg_memory_center_{uuid4().hex}"
+    record = _memory(user_id)
+    repository.create_memory(record, reason_code="user_confirmed_proposal")
+    updated = repository.update_memory_summary(
+        memory_id=record.memory_id,
+        user_id=user_id,
+        expected_version=1,
+        summary="先写一个关键词，再开始表达。",
+        content_hash="b" * 64,
+        idempotency_key=uuid4().hex * 2,
+        reason_code="user_edited",
+    )
+    checkpoint = _checkpoint(user_id, f"thread_{uuid4().hex}")
+    repository.save_checkpoint(
+        checkpoint,
+        expected_version=None,
+        reason_code="practice_paused",
+    )
+
+    assert updated.version == 2
+    assert updated.summary == "先写一个关键词，再开始表达。"
+    assert repository.list_checkpoints(user_id) == [checkpoint]
+    events = repository.list_events(
+        user_id=user_id,
+        subject_id=record.memory_id,
+    )
+    assert events[-1].event_type == MemoryEventType.MEMORY_UPDATED
+    assert all(event.summary is None for event in events)
+
+
+def test_postgres_proposal_decision_erases_pending_body() -> None:
+    assert TEST_DATABASE_URL is not None
+    user_id = f"pg_proposal_decision_{uuid4().hex}"
+    repository = PostgresMemoryProposalRepository(
+        database_url=TEST_DATABASE_URL
+    )
+    proposal = PendingMemoryProposalRecord(
+        proposal_id=f"proposal_{uuid4().hex}",
+        user_id=user_id,
+        memory_type=MemoryType.SOCIAL_CONTEXT,
+        summary="我更常在课程结束后参加小组讨论。",
+        scenario_type=RoleplayScenario.GROUP_DISCUSSION,
+        source_type=MemorySourceType.CHAT,
+        source_id="pg-memory-center",
+        evidence_type=MemoryEvidenceType.EXPLICIT_USER_STATEMENT,
+        confidence=0.9,
+        occurred_at=NOW,
+        status=MemoryProposalStatus.PENDING_CONFIRMATION,
+        policy_reason=MemoryPolicyReason.SOCIAL_CONTEXT_CONFIRMATION_REQUIRED,
+        content_hash="c" * 64,
+        idempotency_key=uuid4().hex * 2,
+        created_at=NOW,
+        updated_at=NOW,
+        expires_at=NOW + timedelta(days=30),
+    )
+    repository.save_pending(proposal)
+
+    repository.consume_pending(
+        user_id=user_id,
+        proposal_id=proposal.proposal_id,
+        expected_version=1,
+        target_status=MemoryProposalStatus.REJECTED,
+        reason_code="user_rejected",
+        changed_at=NOW + timedelta(minutes=1),
+    )
+
+    assert repository.get_for_user(proposal.proposal_id, user_id) is None
 
 
 def test_postgres_checkpoint_export_and_user_delete_are_complete(
@@ -288,6 +365,49 @@ def test_postgres_retrieval_is_user_scoped_and_audited(
         subject_id=relevant.memory_id,
     )
     assert events[-1].event_type == MemoryEventType.MEMORY_RETRIEVED
+
+
+def test_postgres_memory_doctor_is_content_free_and_user_scoped(
+    repository: PostgresLongTermMemoryRepository,
+) -> None:
+    """Doctor composes real PostgreSQL adapters without widening tenant scope."""
+    assert TEST_DATABASE_URL is not None
+    user_id = f"pg_doctor_{uuid4().hex}"
+    foreign_user_id = f"pg_doctor_foreign_{uuid4().hex}"
+    first = _memory(user_id).model_copy(
+        update={"summary": "先写一句开场有帮助。"}
+    )
+    duplicate = first.model_copy(
+        update={
+            "memory_id": f"memory_{uuid4().hex}",
+            "idempotency_key": uuid4().hex * 2,
+        }
+    )
+    foreign = _memory(foreign_user_id).model_copy(
+        update={"summary": "foreign private memory body"}
+    )
+    repository.create_memory(first, reason_code="doctor_test")
+    repository.create_memory(duplicate, reason_code="doctor_test")
+    repository.create_memory(foreign, reason_code="doctor_test")
+    service = MemoryDoctorService(
+        memory_repository=repository,
+        proposal_repository=PostgresMemoryProposalRepository(
+            database_url=TEST_DATABASE_URL
+        ),
+        settings_repository=PostgresUserMemorySettingsRepository(
+            database_url=TEST_DATABASE_URL
+        ),
+    )
+
+    report = service.diagnose(user_id, now=NOW + timedelta(days=1))
+
+    assert MemoryDoctorIssueCode.DUPLICATE_MEMORY in {
+        issue.code for issue in report.issues
+    }
+    serialized = report.model_dump_json()
+    assert first.summary not in serialized
+    assert foreign.summary not in serialized
+    assert foreign.memory_id not in serialized
 
 
 def _memory(user_id: str) -> EpisodicMemoryRecord:

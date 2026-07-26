@@ -30,6 +30,12 @@ const dataRows = [
     stored: "低敏感度练习偏好，例如反馈风格和常用场景",
     retention: "只有明确同意后保存",
     control: "设置页可关闭长期偏好"
+  },
+  {
+    type: "Agent Memory",
+    stored: "经策略过滤或由用户确认的低敏摘要，与聊天历史分开",
+    retention: "按类型设置期限；归档后默认不参与普通检索",
+    control: "记忆中心可查看原因、编辑、归档、恢复或单条删除"
   }
 ];
 

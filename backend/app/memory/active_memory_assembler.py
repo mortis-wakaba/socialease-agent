@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 
-from app.memory.retriever import lexical_terms
+from app.memory.text_semantics import memories_conflict
 from app.memory.token_estimator import ConservativeTokenEstimator, TokenEstimator
 from app.models_active_memory import (
     ActiveMemoryDropReason,
@@ -40,20 +40,6 @@ _SKILL_EPISODIC_ALLOWLIST: dict[str, frozenset[MemoryType]] = {
     ),
     "worksheet_skill": frozenset({MemoryType.HELPFUL_STRATEGY}),
 }
-_NEGATION_MARKERS = (
-    "不再",
-    "不要",
-    "不想",
-    "不适合",
-    "没用",
-    "没有帮助",
-    "不是",
-    "别再",
-    "stop",
-    "no longer",
-    "do not",
-    "don't",
-)
 
 
 class ActiveMemoryAssembler:
@@ -169,7 +155,7 @@ class ActiveMemoryAssembler:
                         if selected
                         else ActiveMemoryDropReason.TOKEN_BUDGET
                     ),
-                    estimated_tokens=cost if selected else 0,
+                    estimated_tokens=cost,
                 )
             )
         return (
@@ -210,7 +196,7 @@ class ActiveMemoryAssembler:
                 drop_reason=(
                     None if selected else ActiveMemoryDropReason.TOKEN_BUDGET
                 ),
-                estimated_tokens=checkpoint.estimated_tokens if selected else 0,
+                estimated_tokens=checkpoint.estimated_tokens,
             )
         )
         return checkpoint if selected else None
@@ -263,7 +249,7 @@ class ActiveMemoryAssembler:
                     retrieval_score=hit.score.total,
                     selected=selected,
                     drop_reason=reason,
-                    estimated_tokens=cost if selected else 0,
+                    estimated_tokens=cost,
                 )
             )
         return rendered, episodic_tokens
@@ -287,7 +273,7 @@ class ActiveMemoryAssembler:
             return ActiveMemoryDropReason.SCOPE_MISMATCH
         if hit.memory_type not in allowed_types:
             return ActiveMemoryDropReason.NOT_ALLOWED_FOR_SKILL
-        if _conflicts_with_current(current_request, hit.summary):
+        if memories_conflict(current_request, hit.summary):
             return ActiveMemoryDropReason.CURRENT_REQUEST_CONFLICT
         if selected_count >= self.max_episodic_items:
             return ActiveMemoryDropReason.MAX_ITEMS
@@ -306,11 +292,3 @@ def episodic_types_for_skill(skill_name: str) -> tuple[MemoryType, ...]:
 
 def _hash_id(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()[:16]
-
-
-def _conflicts_with_current(current: str, stored: str) -> bool:
-    current_negative = any(marker in current.casefold() for marker in _NEGATION_MARKERS)
-    stored_negative = any(marker in stored.casefold() for marker in _NEGATION_MARKERS)
-    if current_negative == stored_negative:
-        return False
-    return len(lexical_terms(current).intersection(lexical_terms(stored))) >= 2

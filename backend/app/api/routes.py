@@ -14,6 +14,8 @@ from app.api.exposure import router as exposure_router
 from app.api.harness import router as harness_router
 from app.api.intervention_plans import router as intervention_plans_router
 from app.api.knowledge import router as knowledge_router
+from app.api.memory_center import router as memory_center_router
+from app.api.memory_doctor import router as memory_doctor_router
 from app.api.profile import router as profile_router
 from app.api.protocols import router as protocols_router
 from app.api.roleplay import router as roleplay_router
@@ -41,6 +43,8 @@ router.include_router(exposure_router)
 router.include_router(harness_router)
 router.include_router(intervention_plans_router)
 router.include_router(knowledge_router)
+router.include_router(memory_center_router)
+router.include_router(memory_doctor_router)
 router.include_router(profile_router)
 router.include_router(protocols_router)
 router.include_router(roleplay_router)

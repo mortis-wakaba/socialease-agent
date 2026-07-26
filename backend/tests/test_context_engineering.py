@@ -11,7 +11,6 @@ from app.memory.context_builder import build_memory_context
 from app.memory.context_selector import select_skill_context
 from app.models import Intent, RiskLevel, SafetyResult
 from app.models_context import ContextValueSource, SupportGenerationContext
-from app.models_exposure import ExposurePlan, ExposureTask
 from app.models_memory import (
     MemoryContext,
     PracticePreferences,
@@ -64,8 +63,6 @@ def test_support_selector_returns_only_support_fields_and_value_free_diagnostics
         recent_scenarios=["dorm_conflict"],
         preferred_difficulty=4,
         latest_anxiety_level=7,
-        active_exposure_plan_id="private-plan-id",
-        active_exposure_next_task="包含历史细节的任务",
         practice_preferences=PracticePreferences(
             preferred_feedback_style="gentle_specific",
         ),
@@ -90,10 +87,7 @@ def test_support_selector_returns_only_support_fields_and_value_free_diagnostics
         "practice_preference",
         "wants_pause_reminders",
     }
-    assert "active_exposure_plan_id" in projection.dropped_fields
     assert "latest_anxiety_level" in projection.dropped_fields
-    assert "private-plan-id" not in projection.model_dump_json()
-    assert "包含历史细节的任务" not in projection.model_dump_json()
 
 
 def test_current_request_overrides_stored_preferences_with_provenance() -> None:
@@ -154,8 +148,7 @@ def test_invalid_enum_override_is_dropped_and_cannot_enter_support_prompt() -> N
     assert attack not in prompt
 
 
-def test_stale_behavior_and_active_plan_expire_but_explicit_preferences_remain() -> None:
-    stale_plan = _exposure_plan(updated_at=NOW - timedelta(days=31))
+def test_stale_summary_expires_but_explicit_preferences_remain() -> None:
     context = build_memory_context(
         practice_summary=UserPracticeSummary(
             recent_scenarios=["group_discussion"],
@@ -173,19 +166,13 @@ def test_stale_behavior_and_active_plan_expire_but_explicit_preferences_remain()
                 preferred_practice_scenarios=["dorm_conflict"],
             )
         ),
-        active_exposure_plan=stale_plan,
         now=NOW,
     )
 
     assert context.recent_scenarios == ["dorm_conflict"]
     assert context.preferred_difficulty == 3
     assert context.latest_anxiety_level is None
-    assert context.active_exposure_plan_id is None
-    assert context.active_exposure_next_task is None
-    assert context.dropped_context == [
-        "practice_summary_expired",
-        "active_exposure_plan_expired",
-    ]
+    assert context.dropped_context == ["practice_summary_expired"]
 
 
 def test_memory_builder_blocks_historical_context_without_purpose_consent() -> None:
@@ -208,7 +195,6 @@ def test_memory_builder_blocks_historical_context_without_purpose_consent() -> N
                 preferred_practice_scenarios=["dorm_conflict"],
             ),
         ),
-        active_exposure_plan=_exposure_plan(updated_at=NOW),
         now=NOW,
     )
 
@@ -216,12 +202,10 @@ def test_memory_builder_blocks_historical_context_without_purpose_consent() -> N
     assert context.preferred_difficulty is None
     assert context.latest_anxiety_level is None
     assert context.practice_preferences == PracticePreferences()
-    assert context.active_exposure_plan_id is None
     assert context.practice_summary_observed_at is None
     assert context.dropped_context == [
         "practice_summary_consent_required",
         "practice_preferences_consent_required",
-        "active_exposure_plan_consent_required",
     ]
 
 
@@ -244,7 +228,6 @@ def test_memory_builder_injects_only_each_consented_memory_purpose() -> None:
                 preferred_practice_scenarios=["dorm_conflict"],
             ),
         ),
-        active_exposure_plan=None,
         now=NOW,
     )
 
@@ -312,27 +295,3 @@ async def test_support_generation_receives_only_typed_low_sensitivity_context() 
         "practice_preference",
         "preferred_feedback_style",
     ]
-
-
-def _exposure_plan(*, updated_at: datetime) -> ExposurePlan:
-    return ExposurePlan(
-        plan_id="stale-plan",
-        user_id="context-test-user",
-        target_scenario="课堂发言",
-        current_anxiety_level=7,
-        previous_attempts=[],
-        tasks=[
-            ExposureTask(
-                task_id="task-1",
-                title="写一句开场",
-                description="低强度练习",
-                difficulty=1,
-                estimated_time_minutes=5,
-                success_criteria="写完一句",
-                fallback_task="只写关键词",
-            )
-        ],
-        recommended_next_task_id="task-1",
-        created_at=updated_at,
-        updated_at=updated_at,
-    )

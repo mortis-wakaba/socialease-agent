@@ -12,6 +12,11 @@ import type {
   InterventionPlanResponse,
   ProtocolResponse,
   MemoryPreferencesUpdateResponse,
+  MemoryCenterResponse,
+  MemoryMutationResponse,
+  MemoryProposalDecisionResponse,
+  MemoryType,
+  MemoryTypePersonalizationResponse,
   PracticePreferences,
   PracticeSummaryConsentUpdateResponse,
   SessionReviewCompletion,
@@ -624,6 +629,87 @@ export const api = {
     );
   },
 
+  getMemoryCenter(userId: string) {
+    return request<MemoryCenterResponse>(
+      `/api/users/${encodeURIComponent(userId)}/memories`
+    );
+  },
+
+  updateMemoryTypePersonalization(
+    userId: string,
+    memoryType: MemoryType,
+    enabled: boolean
+  ) {
+    return request<MemoryTypePersonalizationResponse>(
+      `/api/users/${encodeURIComponent(userId)}/memory/personalization/${encodeURIComponent(memoryType)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ enabled })
+      }
+    );
+  },
+
+  editMemory(
+    userId: string,
+    memoryId: string,
+    summary: string,
+    expectedVersion: number
+  ) {
+    return request<MemoryMutationResponse>(
+      `/api/users/${encodeURIComponent(userId)}/memories/${encodeURIComponent(memoryId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          summary,
+          expected_version: expectedVersion
+        })
+      }
+    );
+  },
+
+  archiveMemory(userId: string, memoryId: string, expectedVersion: number) {
+    return memoryLifecycleRequest(
+      userId,
+      memoryId,
+      "archive",
+      expectedVersion
+    );
+  },
+
+  restoreMemory(userId: string, memoryId: string, expectedVersion: number) {
+    return memoryLifecycleRequest(
+      userId,
+      memoryId,
+      "restore",
+      expectedVersion
+    );
+  },
+
+  deleteMemoryItem(userId: string, memoryId: string, expectedVersion: number) {
+    return request<MemoryMutationResponse>(
+      `/api/users/${encodeURIComponent(userId)}/memories/${encodeURIComponent(memoryId)}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({ expected_version: expectedVersion })
+      }
+    );
+  },
+
+  decideMemoryProposal(
+    userId: string,
+    proposalId: string,
+    decision: "confirm" | "reject",
+    expectedVersion: number
+  ) {
+    return request<MemoryProposalDecisionResponse>(
+      `/api/users/${encodeURIComponent(userId)}/memory-proposals/${encodeURIComponent(proposalId)}/${decision}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_version: expectedVersion })
+      }
+    );
+  },
+
   createSessionReview(
     userId: string,
     payload: {
@@ -668,3 +754,18 @@ export const api = {
     );
   }
 };
+
+function memoryLifecycleRequest(
+  userId: string,
+  memoryId: string,
+  action: "archive" | "restore",
+  expectedVersion: number
+) {
+  return request<MemoryMutationResponse>(
+    `/api/users/${encodeURIComponent(userId)}/memories/${encodeURIComponent(memoryId)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_version: expectedVersion })
+    }
+  );
+}

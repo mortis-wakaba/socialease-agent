@@ -6,9 +6,7 @@ from typing import Any
 from app.models import IntentResult, SafetyResult
 from app.models_active_memory import ActiveMemoryPacket
 from app.models_context import SkillContextProjection
-from app.models_exposure import ExposurePlan
 from app.models_intervention import InterventionPlan
-from app.models_memory import MemoryContext, UserPracticeSummary
 from app.models_support_generation import PresentationConstraints
 
 
@@ -23,12 +21,8 @@ class RunContext:
     request_context: dict[str, Any]
     safety_result: SafetyResult | None = None
     intent_result: IntentResult | None = None
-    user_profile: UserPracticeSummary | None = None
-    active_exposure_plan: ExposurePlan | None = None
-    memory_context: MemoryContext | None = None
     skill_context: SkillContextProjection | None = None
     active_memory: ActiveMemoryPacket | None = None
-    consent_state: dict[str, Any] = field(default_factory=dict)
     intervention_plan: InterventionPlan | None = None
     response_constraints: PresentationConstraints = field(
         default_factory=PresentationConstraints

@@ -3,11 +3,12 @@
 from datetime import datetime
 import json
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.exc import IntegrityError
 
 from app.db.config import database_settings
+from app.db.postgres.engine import shared_postgres_engine
 from app.memory.long_term_repository import (
     InvalidMemoryTransitionError,
     MemoryConflictError,
@@ -38,9 +39,8 @@ class PostgresLongTermMemoryRepository:
         database_url: str | None = None,
         engine: Engine | None = None,
     ) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+        self.engine = engine or shared_postgres_engine(
+            database_url or database_settings().database_url
         )
 
     def create_memory(
@@ -371,6 +371,87 @@ class PostgresLongTermMemoryRepository:
             )
         return updated
 
+    def update_memory_summary(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        expected_version: int,
+        summary: str,
+        content_hash: str,
+        idempotency_key: str,
+        reason_code: str,
+        changed_at: datetime | None = None,
+    ) -> EpisodicMemoryRecord:
+        """Update a safe summary with row locking and content-free audit."""
+        timestamp = _aware_now(changed_at)
+        try:
+            with self.engine.begin() as connection:
+                row = connection.execute(
+                    text(
+                        """SELECT * FROM episodic_memories
+                        WHERE memory_id = :memory_id AND user_id = :user_id
+                        FOR UPDATE"""
+                    ),
+                    {"memory_id": memory_id, "user_id": user_id},
+                ).mappings().first()
+                if row is None:
+                    raise MemoryNotFoundError(
+                        "user-scoped episodic memory was not found"
+                    )
+                current = _memory_from_mapping(row)
+                _require_expected_version(current.version, expected_version)
+                updated = current.model_copy(
+                    update={
+                        "summary": summary,
+                        "content_hash": content_hash,
+                        "idempotency_key": idempotency_key,
+                        "updated_at": timestamp,
+                        "version": current.version + 1,
+                    }
+                )
+                result = connection.execute(
+                    text(
+                        """UPDATE episodic_memories
+                        SET summary = :summary, content_hash = :content_hash,
+                            idempotency_key = :idempotency_key,
+                            updated_at = :updated_at, version = :version
+                        WHERE memory_id = :memory_id
+                        AND user_id = :user_id
+                        AND version = :expected_version"""
+                    ),
+                    {
+                        "summary": updated.summary,
+                        "content_hash": updated.content_hash,
+                        "idempotency_key": updated.idempotency_key,
+                        "updated_at": updated.updated_at,
+                        "version": updated.version,
+                        "memory_id": memory_id,
+                        "user_id": user_id,
+                        "expected_version": expected_version,
+                    },
+                )
+                if result.rowcount != 1:
+                    raise MemoryConflictError(
+                        "episodic memory was changed concurrently"
+                    )
+                _insert_postgres_event(
+                    connection,
+                    _memory_event(
+                        record=updated,
+                        event_type=MemoryEventType.MEMORY_UPDATED,
+                        from_status=current.status,
+                        to_status=current.status,
+                        reason_code=reason_code,
+                        created_at=timestamp,
+                    ),
+                )
+        except IntegrityError as error:
+            raise MemoryConflictError(
+                "an equivalent episodic memory already exists"
+            ) from error
+        return updated
+
     def delete_memory(
         self,
         *,
@@ -537,6 +618,28 @@ class PostgresLongTermMemoryRepository:
                 {"thread_id": thread_id, "user_id": user_id},
             ).mappings().first()
         return _checkpoint_from_mapping(row) if row else None
+
+    def list_checkpoints(
+        self,
+        user_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[PracticeThreadCheckpoint]:
+        """Return bounded user-owned checkpoints ordered by latest activity."""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """SELECT * FROM thread_checkpoints
+                    WHERE user_id = :user_id
+                    ORDER BY last_activity_at DESC, thread_id ASC
+                    LIMIT :limit"""
+                ),
+                {
+                    "user_id": user_id,
+                    "limit": min(max(limit, 1), 500),
+                },
+            ).mappings().all()
+        return [_checkpoint_from_mapping(row) for row in rows]
 
     def list_events(
         self,

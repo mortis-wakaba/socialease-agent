@@ -26,6 +26,10 @@ from app.models_memory import UserConsentState
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
     MemoryEvidenceType,
+    MemoryRetrievalDiagnostics,
+    MemoryRetrievalRequest,
+    MemoryRetrievalResult,
+    MemoryRetrievalStrategy,
     MemorySourceType,
     MemoryType,
 )
@@ -83,6 +87,32 @@ class CharacterTokenEstimator:
 
     def count(self, text: str) -> int:
         return max(1, len(text))
+
+
+class CapturingMemoryRetriever:
+    """Capture the application-owned retrieval scope for one role-play turn."""
+
+    def __init__(self) -> None:
+        self.request: MemoryRetrievalRequest | None = None
+
+    def retrieve(
+        self,
+        request: MemoryRetrievalRequest,
+    ) -> MemoryRetrievalResult:
+        self.request = request
+        return MemoryRetrievalResult(
+            hits=[],
+            diagnostics=MemoryRetrievalDiagnostics(
+                strategy=MemoryRetrievalStrategy.SQL_TEXT,
+                candidate_count=0,
+                eligible_count=0,
+                returned_count=0,
+                estimated_tokens=0,
+                token_budget=128,
+                abstained=True,
+                consent_allowed=True,
+            ),
+        )
 
 
 class StaticLLMClient:
@@ -590,6 +620,34 @@ async def test_roleplay_injects_only_relevant_non_conflicting_durable_memory() -
 
     assert summary not in client.user_prompts[-1]
     assert conflicting.context_diagnostics["retrieved_memory_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_roleplay_never_requests_archived_memory() -> None:
+    retriever = CapturingMemoryRetriever()
+    service = RoleplayService(
+        agent=RoleplayAgent(llm_client=CapturingLLMClient()),
+        context_manager=_manager(InMemorySessionContextStore()),
+        memory_retriever=retriever,
+    )
+    start = await service.start_session(
+        RoleplayStartRequest(
+            user_id=f"archived_scope_{uuid4().hex}",
+            scenario=RoleplayScenario.CLASSROOM_SPEECH,
+            difficulty=2,
+        )
+    )
+
+    await service.send_message(
+        RoleplayMessageRequest(
+            session_id=start.session.session_id,
+            user_id=start.session.user_id,
+            message="我想练习一句简短开场。",
+        )
+    )
+
+    assert retriever.request is not None
+    assert retriever.request.include_archived is False
 
 
 @pytest.mark.anyio

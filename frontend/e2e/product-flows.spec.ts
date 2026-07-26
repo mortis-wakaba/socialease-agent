@@ -694,6 +694,139 @@ test("practice summary personalization consent can be revoked", async ({ page })
   ).toBeVisible();
 });
 
+test("memory center separates agent memory and supports archive control", async ({
+  page
+}) => {
+  let archived = false;
+  const memory = {
+    memory_id: "memory_center_1",
+    memory_type: "helpful_strategy",
+    summary: "先写下一个关键词，再尝试表达观点。",
+    scenario_type: "group_discussion",
+    source_type: "user_confirmed",
+    evidence_type: "user_confirmed",
+    confidence: 1,
+    status: "active",
+    saved_reason: "user_confirmed_proposal",
+    occurred_at: "2026-07-26T08:00:00Z",
+    created_at: "2026-07-26T08:00:00Z",
+    updated_at: "2026-07-26T08:00:00Z",
+    last_retrieved_at: null,
+    expires_at: "2027-07-26T08:00:00Z",
+    version: 1
+  };
+  const doctor = {
+    user_id: "demo_user",
+    policy_version: "memory-doctor-v1",
+    generated_at: "2026-07-26T08:30:00Z",
+    scanned_counts: {
+      episodic_memories: 1,
+      thread_checkpoints: 0,
+      pending_proposals: 0
+    },
+    thresholds: {
+      stale_memory_days: 180,
+      stale_checkpoint_days: 180,
+      pending_proposal_days: 7,
+      active_memory_token_budget: 512,
+      conflict_term_overlap: 2
+    },
+    checks: [
+      {
+        code: "stale_unused_memory",
+        status: "issues_found",
+        issue_count: 1,
+        detail_code: null
+      },
+      {
+        code: "orphan_embedding",
+        status: "not_applicable",
+        issue_count: 0,
+        detail_code: "embedding_index_disabled"
+      }
+    ],
+    issues: [
+      {
+        issue_id: "1234567890abcdef",
+        code: "stale_unused_memory",
+        severity: "info",
+        subject_type: "episodic_memory",
+        subject_id_hashes: ["fedcba0987654321"],
+        affected_count: 1,
+        metadata: { unused_days: 190 },
+        recommendation_code: "consider_archiving_stale_memory"
+      }
+    ],
+    issues_truncated: false,
+    auto_fix_applied: false,
+    contains_memory_content: false
+  };
+  await page.route(`${API}/users/demo_user/memories`, async (route) => {
+    await route.fulfill({
+      json: {
+        user_id: "demo_user",
+        stable_memory: {
+          consent_state: {
+            consent_to_practice_summary: true,
+            consent_to_save_preferences: false,
+            do_not_store_raw_messages: true,
+            allow_sensitive_memory: false
+          },
+          practice_preferences: {
+            preferred_roleplay_difficulty: null,
+            preferred_feedback_style: null,
+            preferred_practice_scenarios: []
+          },
+          onboarding_profile: emptyOnboardingProfile(),
+          disabled_memory_types: []
+        },
+        active_threads: [],
+        memories: [
+          {
+            ...memory,
+            status: archived ? "archived" : "active",
+            version: archived ? 2 : 1
+          }
+        ],
+        pending_proposals: [],
+        doctor,
+        memory_history_distinction:
+          "Agent Memory 是经授权后用于未来个性化的摘要；聊天历史是原会话记录。"
+      }
+    });
+  });
+  await page.route(
+    `${API}/users/demo_user/memories/memory_center_1/archive`,
+    async (route) => {
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().postDataJSON()).toEqual({ expected_version: 1 });
+      archived = true;
+      await route.fulfill({
+        json: {
+          user_id: "demo_user",
+          memory: { ...memory, status: "archived", version: 2 },
+          deleted: false
+        }
+      });
+    }
+  );
+
+  await page.goto("/memory");
+
+  await expect(page.getByRole("heading", { name: "记忆中心" })).toBeVisible();
+  await expect(page.getByText("Agent Memory 与聊天历史")).toBeVisible();
+  await expect(page.getByText("Memory Doctor（只读检查）")).toBeVisible();
+  await expect(page.getByText("有长期未使用的记忆")).toBeVisible();
+  await expect(page.getByText(/向量索引完整性：当前未启用/)).toBeVisible();
+  await expect(page.getByText("fedcba0987654321")).toHaveCount(0);
+  await expect(page.locator("textarea").first()).toHaveValue(memory.summary);
+  await page.getByRole("button", { name: "归档" }).click();
+  await expect(
+    page.getByText("已归档；普通检索将不再使用这条记忆。")
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "恢复" })).toBeVisible();
+});
+
 test("cross-user denied surfaces as a retryable error", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("socialease.demoUserId", "other_user");

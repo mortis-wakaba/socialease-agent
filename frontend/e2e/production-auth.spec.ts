@@ -10,6 +10,7 @@ const protectedPages = [
   "/onboarding",
   "/dashboard",
   "/history",
+  "/memory",
   "/settings",
   "/trace"
 ];

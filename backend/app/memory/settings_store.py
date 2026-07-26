@@ -8,6 +8,7 @@ from app.db.engine import connect
 from app.db.providers import DatabaseProvider, resolve_database_provider
 from app.db.session import initialize_database
 from app.models_memory import (
+    AgentMemoryType,
     PracticePreferences,
     UserOnboardingProfile,
     UserConsentState,
@@ -27,6 +28,7 @@ class UserMemorySettingsRepository(Protocol):
         consent_state: UserConsentState | None = None,
         practice_preferences: PracticePreferences | None = None,
         onboarding_profile: UserOnboardingProfile | None = None,
+        disabled_memory_types: list[AgentMemoryType] | None = None,
     ) -> UserMemorySettings: ...
 
 
@@ -53,6 +55,7 @@ class SQLiteUserMemorySettingsRepository:
         consent_state: UserConsentState | None = None,
         practice_preferences: PracticePreferences | None = None,
         onboarding_profile: UserOnboardingProfile | None = None,
+        disabled_memory_types: list[AgentMemoryType] | None = None,
     ) -> UserMemorySettings:
         """Persist explicit user memory settings."""
         current = self.get(user_id)
@@ -60,6 +63,11 @@ class SQLiteUserMemorySettingsRepository:
             consent_state=consent_state or current.consent_state,
             practice_preferences=practice_preferences or current.practice_preferences,
             onboarding_profile=onboarding_profile or current.onboarding_profile,
+            disabled_memory_types=(
+                disabled_memory_types
+                if disabled_memory_types is not None
+                else current.disabled_memory_types
+            ),
         )
         with connect() as connection:
             connection.execute(
@@ -72,33 +80,3 @@ class SQLiteUserMemorySettingsRepository:
                 ),
             )
         return settings
-
-
-class UserMemorySettingsStore:
-    """Persist low-sensitivity memory settings separately from raw traces."""
-
-    def __init__(self, repository: UserMemorySettingsRepository | None = None) -> None:
-        self.repository = repository or SQLiteUserMemorySettingsRepository()
-
-    def get(self, user_id: str) -> UserMemorySettings:
-        """Return memory settings or privacy-preserving defaults."""
-        return self.repository.get(user_id)
-
-    def save(
-        self,
-        *,
-        user_id: str,
-        consent_state: UserConsentState | None = None,
-        practice_preferences: PracticePreferences | None = None,
-        onboarding_profile: UserOnboardingProfile | None = None,
-    ) -> UserMemorySettings:
-        """Persist explicit user memory settings."""
-        return self.repository.save(
-            user_id=user_id,
-            consent_state=consent_state,
-            practice_preferences=practice_preferences,
-            onboarding_profile=onboarding_profile,
-        )
-
-
-user_memory_settings_store = UserMemorySettingsStore()

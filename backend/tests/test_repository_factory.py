@@ -126,6 +126,23 @@ def test_postgres_url_selects_postgres_memory_settings_repository() -> None:
     repository.engine.dispose()
 
 
+def test_postgres_memory_repositories_share_one_engine_pool() -> None:
+    database_url = (
+        "postgresql+psycopg://socialease:socialease@127.0.0.1:5432/"
+        "socialease_shared_memory_pool"
+    )
+    factory = RepositoryFactory(database_url=database_url)
+    repositories = [
+        factory.long_term_memory_repository(),
+        factory.memory_proposal_repository(),
+        factory.user_memory_settings_repository(),
+        factory.user_profile_repository(),
+    ]
+
+    assert len({id(repository.engine) for repository in repositories}) == 1
+    repositories[0].engine.dispose()
+
+
 def test_postgres_url_selects_postgres_session_review_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"

@@ -6,6 +6,11 @@ import re
 
 from app.memory.long_term_repository import LongTermMemoryRepository
 from app.memory.settings_store import UserMemorySettingsRepository
+from app.memory.text_semantics import (
+    lexical_terms,
+    memories_conflict,
+    sql_query_terms,
+)
 from app.memory.token_estimator import ConservativeTokenEstimator, TokenEstimator
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
@@ -21,46 +26,6 @@ from app.privacy.redaction import detect_sensitive_categories
 
 
 logger = logging.getLogger(__name__)
-_STOP_TERMS = {
-    "一个",
-    "一下",
-    "可以",
-    "怎么",
-    "怎样",
-    "什么",
-    "现在",
-    "这次",
-    "还是",
-    "觉得",
-    "练习",
-    "帮助",
-    "用户",
-}
-_SCENARIO_TERMS: dict[str, tuple[str, ...]] = {
-    "classroom_speech": ("课堂", "发言", "开场", "开口", "观点"),
-    "group_discussion": ("小组", "讨论", "组会", "观点", "意见"),
-    "dorm_conflict": ("宿舍", "室友", "边界", "请求", "沟通"),
-    "club_icebreaking": ("社团", "破冰", "开场", "寒暄"),
-    "invite_classmate_meal": ("邀请", "同学", "吃饭", "时间", "地点"),
-    "ask_teacher_question": ("老师", "提问", "问题", "尝试"),
-    "interview_self_intro": ("面试", "自我介绍", "经历"),
-    "refuse_request": ("拒绝", "边界", "请求", "理由"),
-    "express_disagreement": ("不同意见", "不同看法", "观点", "理由"),
-}
-_NEGATION_MARKERS = (
-    "不再",
-    "不要",
-    "不想",
-    "不适合",
-    "没用",
-    "没有帮助",
-    "不是",
-    "别再",
-    "stop",
-    "no longer",
-    "do not",
-    "don't",
-)
 _PROHIBITED_PATTERNS = (
     re.compile(r"(?:诊断|确诊|患有).{0,12}(?:症|障碍|疾病)"),
     re.compile(r"(?:自杀|自伤|不想活|结束生命|伤害自己|伤害他人)"),
@@ -96,12 +61,27 @@ class EpisodicMemoryRetriever:
     ) -> MemoryRetrievalResult:
         """Return bounded hits; provider or model output never controls filters."""
         timestamp = _as_utc(now or datetime.now(timezone.utc))
-        consent = self.settings_repository.get(request.user_id).consent_state
+        settings = self.settings_repository.get(request.user_id)
+        consent = settings.consent_state
         if not consent.consent_to_practice_summary:
             return _empty_result(
                 request,
                 token_budget=self.context_token_budget,
                 consent_allowed=False,
+            )
+        disabled_types = {
+            memory_type.value for memory_type in settings.disabled_memory_types
+        }
+        allowed_memory_types = tuple(
+            memory_type
+            for memory_type in dict.fromkeys(request.allowed_memory_types)
+            if memory_type.value not in disabled_types
+        )
+        if not allowed_memory_types:
+            return _empty_result(
+                request,
+                token_budget=self.context_token_budget,
+                consent_allowed=True,
             )
         statuses = (MemoryRecordStatus.ACTIVE,)
         if request.include_archived:
@@ -114,7 +94,7 @@ class EpisodicMemoryRetriever:
         candidates = self.repository.search_memory_candidates(
             user_id=request.user_id,
             statuses=statuses,
-            memory_types=tuple(dict.fromkeys(request.allowed_memory_types)),
+            memory_types=allowed_memory_types,
             scenario_type=(
                 request.scenario_type.value if request.scenario_type else None
             ),
@@ -273,42 +253,9 @@ def candidate_is_eligible(
             return False
     if not _retrieval_safe(record.summary):
         return False
-    if _conflicts_with_current(request.query, record.summary):
+    if memories_conflict(request.query, record.summary):
         return False
     return True
-
-
-def lexical_terms(text: str, scenario_type: str | None = None) -> set[str]:
-    """Tokenize mixed Chinese/ASCII text with bounded domain expansion."""
-    normalized = text.casefold()
-    ascii_terms = re.findall(r"[a-z0-9]+", normalized)
-    cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", normalized)
-    terms: list[str] = [*ascii_terms]
-    for run in cjk_runs:
-        terms.append(run)
-        terms.extend(run[index : index + 2] for index in range(len(run) - 1))
-    if scenario_type is not None:
-        terms.extend(_SCENARIO_TERMS.get(scenario_type, ()))
-    return {
-        term
-        for term in terms
-        if 2 <= len(term) <= 48 and term not in _STOP_TERMS
-    }
-
-
-def sql_query_terms(query: str, scenario_type: str | None) -> tuple[str, ...]:
-    """Return selective bounded terms suitable for parameterized SQL LIKE."""
-    del scenario_type  # Scenario is an independent hard filter, not lexical evidence.
-    terms = lexical_terms(query)
-    ranked = sorted(
-        terms,
-        key=lambda term: (
-            len(term),
-            term,
-        ),
-        reverse=True,
-    )
-    return tuple(ranked[:16])
 
 
 def _score_record(
@@ -362,17 +309,6 @@ def _score_record(
         confidence=round(record.confidence, 6),
         total=round(min(1.0, total), 6),
     )
-
-
-def _conflicts_with_current(current: str, stored: str) -> bool:
-    current_negative = any(marker in current.casefold() for marker in _NEGATION_MARKERS)
-    stored_negative = any(marker in stored.casefold() for marker in _NEGATION_MARKERS)
-    if current_negative == stored_negative:
-        return False
-    current_terms = lexical_terms(current)
-    stored_terms = lexical_terms(stored)
-    overlap = current_terms.intersection(stored_terms)
-    return len(overlap) >= 2
 
 
 def _retrieval_safe(summary: str) -> bool:
