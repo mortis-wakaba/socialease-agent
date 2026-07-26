@@ -1,0 +1,49 @@
+frontend/lib/api.ts
+  s_f8dae88ec33b77::t_b85e25db9728f8 6,53-56,166-260,344-350
+  s_f8dae88ec33b77::t_003b46c6bdf469 351-352
+backend/tests/test_harness_architecture.py
+  s_f8dae88ec33b77::t_39c2d189540b71 26,220-276
+  s_f8dae88ec33b77::t_a04c1cbe6da63b 277-278
+frontend/lib/types.ts
+  s_f8dae88ec33b77::t_b85e25db9728f8 112-126
+backend/app/api/routes.py
+  s_f8dae88ec33b77::t_8b4310b860b7c2 3-7,9,34,63-122
+  s_f8dae88ec33b77::t_97e07a67da22ba 123-124
+frontend/app/chat/page.tsx
+  s_f8dae88ec33b77::t_8aa645534306e0 3,10-14,40-61,74-78,101-144,147-149,157,166,170-175,177,192-193,211-221,223,237-239,334-336,343,352-355,365-370,431-484,519-535,540-558
+  s_f8dae88ec33b77::t_99074bd07768ee 559
+backend/app/workflow/events.py
+  s_f8dae88ec33b77::t_8b4310b860b7c2 1-31
+backend/app/workflow/engine.py
+  s_f8dae88ec33b77::t_8b4310b860b7c2 48-52,98-102,106-114,157-164,184-191,286-294,325-332,606-613,637-669
+  s_f8dae88ec33b77::t_f7fce2016e279b 670-671
+frontend/e2e/product-flows.spec.ts
+  s_f8dae88ec33b77::t_823fd539eea175 566-569,580,678-681,690
+  s_f8dae88ec33b77::t_75cc6172500df3 158-181
+  s_f8dae88ec33b77::t_1f157742552a88 1148-1180
+backend/tests/test_chat_api.py
+  s_f8dae88ec33b77::t_9329323f12d5b1 3-4,120
+  s_f8dae88ec33b77::t_39c2d189540b71 96-119,121-124
+  s_f8dae88ec33b77::t_45faaba3c6fa3e 95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "700037c4597918748d2e9beb9a2b055e080153ef",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_f8dae88ec33b77": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f4ada-36e8-7591-a8fa-1c31496abcc3",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
