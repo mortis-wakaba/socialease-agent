@@ -1,0 +1,190 @@
+backend/app/services/roleplay_service.py
+  s_b1a568f0ed8744::t_df5ddae43512a8 286,487-499
+  s_b1a568f0ed8744::t_875f0645dc4af1 17,21,64,72-76,97-102,140-148,190-198,206,216,232-236,248,273-285,287,322-330,343-351,384-392,428-436
+  s_b1a568f0ed8744::t_bbf280be725863 500-501
+backend/app/models_session_context.py
+  s_b1a568f0ed8744::t_4ad00912e3d18b 64-67,86-94
+  s_b1a568f0ed8744::t_c8b634bf090426 95-96
+backend/tests/test_memory_write_pipeline.py
+  s_b1a568f0ed8744::t_95bfddbc648625 74,78,131-199,203-243
+  s_b1a568f0ed8744::t_c21951eed4a9ed 200,202
+  s_b1a568f0ed8744::t_ca9ca259f4596f 373-377
+  s_b1a568f0ed8744::t_082ef276835992 201,244-290
+  s_b1a568f0ed8744::t_37ee80fdc2a534 1-22,24-73,75-77,79-130,291-367,369-372,378-479
+  s_b1a568f0ed8744::t_beab0f788bee20 23,368
+frontend/app/settings/page.tsx
+  s_b1a568f0ed8744::t_df58a4aeb109cb 228-260,412-414,417-441
+backend/app/api/profile.py
+  s_b1a568f0ed8744::t_4734abb973bafa 10-11,137-151
+  s_b1a568f0ed8744::t_9c3aaefe4e1d68 152-153
+backend/app/llm/prompts.py
+  s_b1a568f0ed8744::t_ba81a84f1a9b06 86-102,105-107,114-129,131-142,145-149
+  s_b1a568f0ed8744::t_53a18a453fa25d 56-57
+  s_b1a568f0ed8744::t_0ac0eda5156988 108-113,130,143-144
+  s_b1a568f0ed8744::t_cae1f6113bfb06 103-104
+backend/migrations/versions/0007_add_long_term_memory.py
+  s_b1a568f0ed8744::t_38b6edbf550981 1-48,69-103,108-130,135-165
+  s_b1a568f0ed8744::t_feb76b5d619b57 49-50,52-54,56-68,104-107,131-132,134
+  s_b1a568f0ed8744::t_a20227ef8f7a23 51,55,133
+backend/app/db/session.py
+  s_b1a568f0ed8744::t_44ad1a68090c3a 14,44-47,115-117,119-132,238
+  s_b1a568f0ed8744::t_ea1b402aa866c1 48-67,118,133-237,239-244
+backend/tests/test_thread_checkpoint_service.py
+  s_b1a568f0ed8744::t_925afc6f9d712c 9,52
+  s_b1a568f0ed8744::t_1f26946080f303 1-8,10-51,53-265
+backend/tests/test_harness_architecture.py
+  s_b1a568f0ed8744::t_7e4fdb95479a9d 10,129-139,451-475
+  s_b1a568f0ed8744::t_888f3df9c2973d 386-389
+  s_b1a568f0ed8744::t_da701a7d1cf8e9 476-477
+backend/app/memory/proposal_extractor.py
+  s_b1a568f0ed8744::t_312a9e77dd173b 1-2,4-14,16-33,35-58,61-72,86-136,138-144
+  s_b1a568f0ed8744::t_63cc94b23f8973 3,59,137
+  s_b1a568f0ed8744::t_bc62212ff8b0a2 15,34,60,73-85
+backend/app/memory/long_term_repository.py
+  s_b1a568f0ed8744::t_44ad1a68090c3a 181-182
+  s_b1a568f0ed8744::t_a283b0dd28274d 183,531
+  s_b1a568f0ed8744::t_60e0864026a93e 1-52,67-180,184-203,244-530,532-635
+  s_b1a568f0ed8744::t_cbfae220b7077d 60-66,219-243
+  s_b1a568f0ed8744::t_3c9938c3509b68 53-59,204-218
+frontend/e2e/product-flows.spec.ts
+  s_b1a568f0ed8744::t_a2864f70185abb 663-696
+backend/app/memory/session_context_settings.py
+  s_b1a568f0ed8744::t_5f8db1571d8a44 23,66-70
+  s_b1a568f0ed8744::t_4b619177ddddb1 71
+backend/app/memory/roleplay_context_manager.py
+  s_b1a568f0ed8744::t_5f8db1571d8a44 18,94,103,109,112-116,123,166,177-181,198,203,208,211-233,282,292,307,311,338,340-344,372,378-394,421-422,425
+  s_b1a568f0ed8744::t_ad5cd8e946908c 345-369
+  s_b1a568f0ed8744::t_00bfbffb1c0789 19,161
+backend/migrations/versions/0008_add_memory_proposals.py
+  s_b1a568f0ed8744::t_ab75683abb5128 1-19,54-101,108-116,188
+  s_b1a568f0ed8744::t_acd32b26ff651b 20-53,102-107,117-187,189-236
+backend/app/memory/write_pipeline.py
+  s_b1a568f0ed8744::t_b51f21dcf4b1d9 78-81,87,133-167,218-222,303,333-351,353-375
+  s_b1a568f0ed8744::t_082ef276835992 99,105,381-406
+  s_b1a568f0ed8744::t_7af21fc3521b46 108-120
+  s_b1a568f0ed8744::t_95bfddbc648625 304-332
+  s_b1a568f0ed8744::t_67d69856bfc824 5,34,200,202-205
+  s_b1a568f0ed8744::t_2c7282a0b9d150 24,289
+  s_b1a568f0ed8744::t_33d3915634dc42 1-4,6-23,25-33,35-77,82-86,88-98,100-104,106-107,121-132,168-199,201,206-217,223-288,290-302,352,376-380,407-437
+frontend/lib/api.ts
+  s_b1a568f0ed8744::t_aade68e299fbc6 617-626
+  s_b1a568f0ed8744::t_df58a4aeb109cb 16
+backend/app/workflow/engine.py
+  s_b1a568f0ed8744::t_e2377baf59b86c 500-507,513
+  s_b1a568f0ed8744::t_95bfddbc648625 487
+  s_b1a568f0ed8744::t_36197a93f1359b 22-25,87,102-108,466-486,488-499,508-512,514-529,565-568
+backend/app/db/models.py
+  s_b1a568f0ed8744::t_ab75683abb5128 129,132-154,220-223
+  s_b1a568f0ed8744::t_a283b0dd28274d 91,94
+  s_b1a568f0ed8744::t_feb76b5d619b57 93,96-99,114-116,128,130
+  s_b1a568f0ed8744::t_35fbec545101c4 73-90,92,100-113,117-127,131,208-219
+  s_b1a568f0ed8744::t_cae1f6113bfb06 95
+backend/app/models_long_term_memory.py
+  s_b1a568f0ed8744::t_00551ab28dd716 5,86-89,91-100,104-111,115-116,124-132,185-197,199-281,283-304,307-309
+  s_b1a568f0ed8744::t_33d3915634dc42 305-306
+  s_b1a568f0ed8744::t_697cf9dbf09bcf 138-142,317-321,382-385
+  s_b1a568f0ed8744::t_ab75683abb5128 58,72-74
+  s_b1a568f0ed8744::t_f9caaa1679fea2 8,136-137,314-315,352-353
+  s_b1a568f0ed8744::t_725403d11702d7 90,112,114,117-123,198
+  s_b1a568f0ed8744::t_2fd144abd8eef9 20-21,159
+  s_b1a568f0ed8744::t_8a5d6484645807 101-103
+  s_b1a568f0ed8744::t_082ef276835992 113
+  s_b1a568f0ed8744::t_733eceb91ce6a6 1-4,6-7,9-19,22-26,28-57,59-71,75-85,133-135,143-158,160-184,282,310-313,316,322-351,354-381,386-410
+  s_b1a568f0ed8744::t_cae1f6113bfb06 27
+backend/tests/test_migration_discipline.py
+  s_b1a568f0ed8744::t_7e4fdb95479a9d 65,74,84
+  s_b1a568f0ed8744::t_bb68402caa11d0 4,7-8,46-64,66-73,75-83,85-94
+backend/app/tracing/versions.py
+  s_b1a568f0ed8744::t_36197a93f1359b 47,64-65
+  s_b1a568f0ed8744::t_0ac0eda5156988 28
+  s_b1a568f0ed8744::t_53a18a453fa25d 22
+backend/app/llm/prompt_version_check.py
+  s_b1a568f0ed8744::t_ba81a84f1a9b06 80-89
+backend/app/memory/thread_checkpoint_service.py
+  s_b1a568f0ed8744::t_4ad00912e3d18b 1-84,86-123,130-252,269-274
+  s_b1a568f0ed8744::t_e6fbcc46e9bf54 85,124-129,253-268
+backend/app/models_memory.py
+  s_b1a568f0ed8744::t_4734abb973bafa 12-14,138-148
+  s_b1a568f0ed8744::t_1a343959124791 149-150
+backend/app/workflow/recovery.py
+  s_b1a568f0ed8744::t_36197a93f1359b 20
+backend/app/db/factory.py
+  s_b1a568f0ed8744::t_7c78afbf869da5 42-45,184-195
+  s_b1a568f0ed8744::t_9d504c5962f0d1 38-41,173-183
+  s_b1a568f0ed8744::t_c99101abc58bd9 196
+backend/tests/test_roleplay_session_context.py
+  s_b1a568f0ed8744::t_4a35c4943e51e7 10,24
+  s_b1a568f0ed8744::t_1f26946080f303 19,592-607,609-649
+  s_b1a568f0ed8744::t_280cbf4db42acc 32-36,551-591
+  s_b1a568f0ed8744::t_925afc6f9d712c 608
+  s_b1a568f0ed8744::t_12fdefe29ebaa4 650-651
+backend/tests/test_profile_api.py
+  s_b1a568f0ed8744::t_565b72acb5fce0 57-58
+  s_b1a568f0ed8744::t_888f3df9c2973d 213-261
+backend/app/memory/context_builder.py
+  s_b1a568f0ed8744::t_4734abb973bafa 24,26-34,36-45,48-55,57-61,67,76-80,83-85,91-93,95-101,132-151
+  s_b1a568f0ed8744::t_ba9d45b8227a3c 152-153
+backend/app/db/postgres/long_term_memory_repository.py
+  s_b1a568f0ed8744::t_4d2def534bcfe3 335-336,368,370
+  s_b1a568f0ed8744::t_3c9938c3509b68 104-124
+  s_b1a568f0ed8744::t_5ec722bdc4cd13 1-68,71-75,77-103,152-334,337-367,369,371-465,467-542
+  s_b1a568f0ed8744::t_cbfae220b7077d 125-151
+  s_b1a568f0ed8744::t_44ad1a68090c3a 69-70
+  s_b1a568f0ed8744::t_a283b0dd28274d 76,466
+frontend/lib/types.ts
+  s_b1a568f0ed8744::t_aade68e299fbc6 278-282
+backend/migrations/env.py
+  s_b1a568f0ed8744::t_d100b5f15ec1c0 12
+backend/app/llm/prompt_versions.json
+  s_b1a568f0ed8744::t_1193f88dad30a0 7,10
+  s_b1a568f0ed8744::t_d39d7cce619e31 8-9
+  s_b1a568f0ed8744::t_3ff6f37555a8c1 24-25
+backend/tests/test_long_term_memory_repository.py
+  s_b1a568f0ed8744::t_250054d95feba0 24,231-255
+  s_b1a568f0ed8744::t_2fd144abd8eef9 48
+  s_b1a568f0ed8744::t_61b6ab0da86bc4 1-23,25-47,49-230
+backend/tests/test_postgres_long_term_memory_repository.py
+  s_b1a568f0ed8744::t_bfc3f374f28ccc 1-13,20,26-27,29-33,35-37,40-126,224,228,230-246,248-265
+  s_b1a568f0ed8744::t_32e18c3f8c0ac9 14-19,21,24-25,28,34,38,171-223,225-227,229,266-278
+  s_b1a568f0ed8744::t_9927b3a426a16a 22-23,39,127-170
+  s_b1a568f0ed8744::t_2fd144abd8eef9 247
+backend/app/services/memory_privacy_service.py
+  s_b1a568f0ed8744::t_4734abb973bafa 14,155-177
+  s_b1a568f0ed8744::t_7c78afbf869da5 38,42
+  s_b1a568f0ed8744::t_d04d54730d2668 35-37,41,43-44
+backend/app/memory/policy_engine.py
+  s_b1a568f0ed8744::t_082ef276835992 44,81-86
+  s_b1a568f0ed8744::t_8a5d6484645807 1-11,13-43,45-79,106-176
+  s_b1a568f0ed8744::t_151e5afe762832 12,80,87-105
+backend/app/memory/proposal_repository.py
+  s_b1a568f0ed8744::t_7af21fc3521b46 3,51-58,60,180-204
+  s_b1a568f0ed8744::t_98f8faad3b3b53 1-2,5-50,59,61-122,125-179
+  s_b1a568f0ed8744::t_3c1aa7439ec39a 4,123-124
+backend/app/db/postgres/memory_proposal_repository.py
+  s_b1a568f0ed8744::t_7af21fc3521b46 3,142-165,167
+  s_b1a568f0ed8744::t_98f8faad3b3b53 1-2,4-141,166,168-218
+backend/tests/test_context_engineering.py
+  s_b1a568f0ed8744::t_888f3df9c2973d 18,167-170,191-257
+  s_b1a568f0ed8744::t_a9f18ae6bd842c 258-259
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "22fbdd9b1c4ead717bee7f20a56aa308b954fe00",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_b1a568f0ed8744": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9860-1f9a-7a53-9121-919c0b2b9a7b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
