@@ -23,6 +23,7 @@ from app.workflow.context import RunContext
 from app.workflow.default_hooks import MetricsHook, PrivacyGuardHook
 from app.workflow import engine as workflow_engine
 from app.workflow.hooks import HookDecision
+from app.workflow.events import WorkflowProgressEvent
 
 
 class RecordingHook:
@@ -214,6 +215,65 @@ async def test_agent_harness_runs_lifecycle_hooks() -> None:
         "after_skill",
         "after_trace:lead_harness",
     ]
+
+
+@pytest.mark.anyio
+async def test_agent_harness_emits_privacy_safe_progress_in_execution_order() -> None:
+    events: list[WorkflowProgressEvent] = []
+    harness = AgentHarness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
+    )
+
+    response = await harness.run(
+        ChatRequest(
+            user_id="progress_user",
+            message="我想模拟课堂发言",
+            context={},
+        ),
+        event_sink=events.append,
+    )
+
+    assert [event.type for event in events] == [
+        "run_started",
+        "stage_completed",
+        "stage_completed",
+        "stage_completed",
+        "stage_completed",
+        "stage_completed",
+    ]
+    assert [event.stage.value for event in events[1:] if event.stage is not None] == [
+        "safety",
+        "routing",
+        "skill",
+        "output_guardrail",
+        "trace",
+    ]
+    assert all(event.run_id == response.run_id for event in events)
+    assert all(event.elapsed_ms >= 0 for event in events)
+    assert all(event.stage_latency_ms is not None for event in events[1:])
+    assert "progress_user" not in "".join(event.model_dump_json() for event in events)
+
+
+@pytest.mark.anyio
+async def test_agent_harness_progress_sink_failure_does_not_break_run() -> None:
+    harness = AgentHarness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
+    )
+
+    def failing_sink(_event: WorkflowProgressEvent) -> None:
+        raise RuntimeError("disconnected client")
+
+    response = await harness.run(
+        ChatRequest(
+            user_id="progress_sink_user",
+            message="今天有点紧张，想先整理一下",
+            context={},
+        ),
+        event_sink=failing_sink,
+    )
+
+    assert response.response
+    assert response.trace.product_safe is True
 
 
 @pytest.mark.anyio

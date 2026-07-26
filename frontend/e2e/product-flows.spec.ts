@@ -155,6 +155,30 @@ test("chat uses backend onboarding state instead of stale local cache", async ({
   await expect(page.getByRole("link", { name: "去设置" })).toBeVisible();
 });
 
+test("chat shows safe workflow progress and blocks duplicate submission", async ({
+  page
+}) => {
+  await page.route(`${API}/chat/stream`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await fulfillChatStream(route, {
+      run_id: "run_progress_1",
+      risk_level: "low",
+      intent: "emotional_support",
+      response: "我们可以先把现在最紧张的一点说清楚。",
+      structured_data: { action: "general_support" },
+      trace: trace("run_progress_1", "low", "emotional_support")
+    });
+  });
+
+  await page.goto("/chat");
+  await page.getByRole("button", { name: "发送" }).click();
+
+  await expect(page.getByText("最终回复会在输出安全检查完成后展示")).toBeVisible();
+  await expect(page.getByPlaceholder("输入一个社交压力场景...")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "发送中..." })).toBeDisabled();
+  await expect(page.getByText("我们可以先把现在最紧张的一点说清楚")).toBeVisible();
+});
+
 test("settings resets onboarding through backend", async ({ page }) => {
   let resetCalled = false;
   await mockProfile(page);
@@ -539,9 +563,10 @@ test("pause failure does not show saved paused state", async ({ page }) => {
       }
     });
   });
-  await page.route(`${API}/chat`, async (route) => {
-    await route.fulfill({
-      json: {
+  await page.route(`${API}/chat/stream`, async (route) => {
+    await fulfillChatStream(
+      route,
+      {
         run_id: "run_pause_1",
         risk_level: "low",
         intent: "roleplay_practice",
@@ -552,7 +577,7 @@ test("pause failure does not show saved paused state", async ({ page }) => {
           intervention_plan_id: "intervention_pause_1"
         }
       }
-    });
+    );
   });
   await page.route(`${API}/intervention-plans/intervention_pause_1/pause?user_id=demo_user`, async (route) => {
     await route.fulfill({ status: 503, json: { detail: "pause backend unavailable" } });
@@ -650,9 +675,10 @@ test("cross-user denied surfaces as a retryable error", async ({ page }) => {
 });
 
 test("crisis chat flow shows safety-first response", async ({ page }) => {
-  await page.route(`${API}/chat`, async (route) => {
-    await route.fulfill({
-      json: {
+  await page.route(`${API}/chat/stream`, async (route) => {
+    await fulfillChatStream(
+      route,
+      {
         run_id: "run_crisis_1",
         risk_level: "crisis",
         intent: "crisis",
@@ -661,7 +687,7 @@ test("crisis chat flow shows safety-first response", async ({ page }) => {
         structured_data: {},
         trace: trace("run_crisis_1", "crisis", "crisis")
       }
-    });
+    );
   });
 
   await page.goto("/chat");
@@ -1118,4 +1144,37 @@ function worksheetCreateResponse() {
     response: "已生成结构化反思表。",
     llm_usage: { used: false, fallback_used: false }
   };
+}
+
+async function fulfillChatStream(
+  route: Route,
+  response: Record<string, unknown>
+): Promise<void> {
+  const runId = String(response.run_id ?? "test_run");
+  const progress = [
+    "safety",
+    "routing",
+    "skill",
+    "output_guardrail",
+    "trace"
+  ]
+    .map(
+      (stage, index) =>
+        `event: progress\ndata: ${JSON.stringify({
+          type: "stage_completed",
+          run_id: runId,
+          stage,
+          stage_latency_ms: 5,
+          elapsed_ms: (index + 1) * 5
+        })}\n\n`
+    )
+    .join("");
+  await route.fulfill({
+    status: 200,
+    contentType: "text/event-stream",
+    headers: { "Cache-Control": "no-cache" },
+    body: `${progress}event: final\ndata: ${JSON.stringify(
+      response
+    )}\n\nevent: done\ndata: {}\n\n`
+  });
 }

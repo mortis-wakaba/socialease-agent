@@ -45,6 +45,11 @@ from app.privacy.policy import PersistenceKind
 from app.request_context import get_request_id
 from app.services.intervention_plan_service import intervention_plan_service
 from app.workflow.context import RunContext
+from app.workflow.events import (
+    WorkflowEventSink,
+    WorkflowProgressEvent,
+    WorkflowStage,
+)
 from app.workflow.hooks import AgentHarnessHook, HookDecision
 from app.workflow.recovery import (
     ErrorCategory,
@@ -90,10 +95,23 @@ class AgentHarness:
             memory_settings_repository or factory.user_memory_settings_repository()
         )
 
-    async def run(self, request: ChatRequest) -> ChatResponse:
+    async def run(
+        self,
+        request: ChatRequest,
+        event_sink: WorkflowEventSink | None = None,
+    ) -> ChatResponse:
         """Execute one full harness run and store a trace."""
         started = perf_counter()
         run_id = str(uuid4())
+        _emit_progress(
+            event_sink,
+            WorkflowProgressEvent(
+                type="run_started",
+                run_id=run_id,
+                elapsed_ms=0.0,
+            ),
+        )
+        stage_started = perf_counter()
         errors: list[str] = []
         request_id = _optional_string(request.context.get("request_id")) or get_request_id()
         user_profile = self.user_profile_repository.get_summary(request.user_id)
@@ -136,6 +154,14 @@ class AgentHarness:
             method = getattr(hook, "after_safety", None)
             if method is not None:
                 method(request, safety_result)
+        _emit_stage_completed(
+            event_sink,
+            run_id=run_id,
+            stage=WorkflowStage.SAFETY,
+            stage_started=stage_started,
+            run_started=started,
+        )
+        stage_started = perf_counter()
 
         crisis_decision = self.permission_gate.decide(
             safety_result,
@@ -155,6 +181,14 @@ class AgentHarness:
             method = getattr(hook, "after_routing", None)
             if method is not None:
                 method(request, intent_result)
+        _emit_stage_completed(
+            event_sink,
+            run_id=run_id,
+            stage=WorkflowStage.ROUTING,
+            stage_started=stage_started,
+            run_started=started,
+        )
+        stage_started = perf_counter()
 
         harness_action = _action_for_intent(intent_result.intent)
         permission_decision = self.permission_gate.decide(safety_result, harness_action)
@@ -249,6 +283,15 @@ class AgentHarness:
                     category=category,
                 )
 
+        _emit_stage_completed(
+            event_sink,
+            run_id=run_id,
+            stage=WorkflowStage.SKILL,
+            stage_started=stage_started,
+            run_started=started,
+        )
+        stage_started = perf_counter()
+
         output_guardrail_result = await self.output_guardrail.evaluate(
             user_message=request.message,
             response=skill_result.response,
@@ -279,6 +322,14 @@ class AgentHarness:
                     f"{output_guardrail_result.semantic_schema_error_field}"
                 )
             errors.append(f"OUTPUT_GUARDRAIL_SEMANTIC_FAILURE:{semantic_error}")
+        _emit_stage_completed(
+            event_sink,
+            run_id=run_id,
+            stage=WorkflowStage.OUTPUT_GUARDRAIL,
+            stage_started=stage_started,
+            run_started=started,
+        )
+        stage_started = perf_counter()
 
         _run_after_action_hooks(
             hooks=self.hooks,
@@ -552,6 +603,14 @@ class AgentHarness:
             trace = _append_trace_error(trace, marker)
         observability_hook_failed = observability_hook_failed or bool(stop_hook_errors)
 
+        _emit_stage_completed(
+            event_sink,
+            run_id=run_id,
+            stage=WorkflowStage.TRACE,
+            stage_started=stage_started,
+            run_started=started,
+        )
+
         return ChatResponse(
             run_id=run_id,
             risk_level=safety_result.risk_level,
@@ -573,6 +632,41 @@ class AgentHarness:
         if llm_client is not None:
             return LlmIntentRouter(llm_client=llm_client)
         return IntentRouter()
+
+
+def _emit_stage_completed(
+    event_sink: WorkflowEventSink | None,
+    *,
+    run_id: str,
+    stage: WorkflowStage,
+    stage_started: float,
+    run_started: float,
+) -> None:
+    """Emit timing for one completed stage without exposing workflow content."""
+    now = perf_counter()
+    _emit_progress(
+        event_sink,
+        WorkflowProgressEvent(
+            type="stage_completed",
+            run_id=run_id,
+            stage=stage,
+            stage_latency_ms=(now - stage_started) * 1000,
+            elapsed_ms=(now - run_started) * 1000,
+        ),
+    )
+
+
+def _emit_progress(
+    event_sink: WorkflowEventSink | None,
+    event: WorkflowProgressEvent,
+) -> None:
+    """Keep optional UI progress reporting from affecting the Agent run."""
+    if event_sink is None:
+        return
+    try:
+        event_sink(event)
+    except Exception as exc:
+        logger.warning("Workflow progress sink failed: %s", exc.__class__.__name__)
 
 
 def _optional_string(value: object) -> str | None:

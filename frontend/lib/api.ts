@@ -3,6 +3,7 @@ import type {
   AuthConfigResponse,
   AuthMeResponse,
   AuthResponse,
+  ChatProgressEvent,
   ChatResponse,
   ConsentRequiredDetail,
   ExposureCompleteResponse,
@@ -48,6 +49,10 @@ import {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const PROTOCOL_HEADER_NAME = "X-SocialEase-Protocol-Id";
+
+export type ChatStreamHandlers = {
+  onProgress?: (event: ChatProgressEvent) => void;
+};
 
 export class ConsentRequiredError extends Error {
   detail: ConsentRequiredDetail;
@@ -158,6 +163,101 @@ async function parseApiError(
   return { message: text || fallback };
 }
 
+async function requestChatStream(
+  userId: string,
+  message: string,
+  context: Record<string, unknown>,
+  handlers: ChatStreamHandlers,
+  retryOnUnauthorized = true
+): Promise<ChatResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      ...authHeaders(),
+      ...csrfHeaders()
+    },
+    body: JSON.stringify({ user_id: userId, message, context })
+  });
+
+  if (response.status === 401 && retryOnUnauthorized) {
+    const refreshed = await tryRefreshSession();
+    if (refreshed) {
+      return requestChatStream(userId, message, context, handlers, false);
+    }
+  }
+  if (!response.ok) {
+    const parsed = await parseApiError(response);
+    throw new Error(parsed.message);
+  }
+  if (!response.body) {
+    throw new Error("当前浏览器无法读取流式响应。");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResponse: ChatResponse | null = null;
+  let streamError: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const event = parseSseBlock(block);
+      if (event) {
+        if (event.name === "progress") {
+          handlers.onProgress?.(event.payload as ChatProgressEvent);
+        } else if (event.name === "final") {
+          finalResponse = event.payload as ChatResponse;
+        } else if (event.name === "error") {
+          const payload = event.payload as { message?: unknown };
+          streamError =
+            typeof payload.message === "string"
+              ? payload.message
+              : "Agent 工作流未能生成安全回复。";
+        }
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+    if (done) {
+      break;
+    }
+  }
+
+  if (streamError) {
+    throw new Error(streamError);
+  }
+  if (!finalResponse) {
+    throw new Error("连接已结束，但没有收到最终回复。");
+  }
+  return finalResponse;
+}
+
+function parseSseBlock(
+  block: string
+): { name: string; payload: unknown } | null {
+  let name = "message";
+  const data: string[] = [];
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) {
+      name = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      data.push(line.slice(5).trimStart());
+    }
+  }
+  if (data.length === 0) {
+    return null;
+  }
+  return { name, payload: JSON.parse(data.join("\n")) as unknown };
+}
+
 function isConsentRequiredDetail(value: unknown): value is ConsentRequiredDetail {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -239,6 +339,15 @@ export const api = {
         context
       })
     });
+  },
+
+  chatStream(
+    userId: string,
+    message: string,
+    context: Record<string, unknown> = {},
+    handlers: ChatStreamHandlers = {}
+  ) {
+    return requestChatStream(userId, message, context, handlers);
   },
 
   respondToProtocol(protocolId: string, userId: string, approved: boolean) {

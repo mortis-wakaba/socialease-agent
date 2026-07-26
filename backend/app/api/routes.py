@@ -1,6 +1,12 @@
 """FastAPI routes for the SocialEase Agent API."""
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import suppress
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.api.auth import router as auth_router
 from app.api.calendar import router as calendar_router
@@ -25,6 +31,7 @@ from app.models import ChatRequest, ChatResponse, TraceRecord
 from app.tracing.logger import trace_logger
 from app.workflow.default_hooks import create_default_hooks
 from app.workflow.engine import AgentHarness
+from app.workflow.events import WorkflowProgressEvent
 
 router = APIRouter(prefix="/api")
 workflow = AgentHarness(trace_logger=trace_logger, hooks=create_default_hooks())
@@ -51,6 +58,68 @@ async def chat(
         update={"user_id": resolve_request_user_id(request.user_id, current_user)}
     )
     return await workflow.run(effective_request)
+
+
+@router.post("/chat/stream")
+async def chat_stream(
+    request: ChatRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream privacy-safe workflow progress, then one fully guarded response."""
+    effective_request = request.model_copy(
+        update={"user_id": resolve_request_user_id(request.user_id, current_user)}
+    )
+
+    async def event_stream() -> AsyncIterator[str]:
+        queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+
+        def publish_progress(event: WorkflowProgressEvent) -> None:
+            queue.put_nowait(("progress", event.model_dump(mode="json")))
+
+        async def run_workflow() -> None:
+            try:
+                result = await workflow.run(effective_request, event_sink=publish_progress)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                queue.put_nowait(
+                    (
+                        "error",
+                        {"message": "Agent workflow failed before producing a safe response."},
+                    )
+                )
+            else:
+                queue.put_nowait(("final", result.model_dump(mode="json")))
+            finally:
+                queue.put_nowait(("done", {}))
+
+        task = asyncio.create_task(run_workflow())
+        try:
+            while True:
+                event_name, payload = await queue.get()
+                yield _format_sse(event_name, payload)
+                if event_name == "done":
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _format_sse(event_name: str, payload: object) -> str:
+    """Serialize one compact server-sent event."""
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event_name}\ndata: {data}\n\n"
 
 
 @router.get("/runs/{run_id}", response_model=TraceRecord)

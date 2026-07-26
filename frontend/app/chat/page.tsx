@@ -1,13 +1,17 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { currentUserId } from "@/lib/auth";
 import { showDiagnostics } from "@/lib/diagnostics";
 import { getOnboardingState } from "@/lib/onboarding";
 import { useRequireAuth } from "@/lib/use-require-auth";
-import type { ChatResponse } from "@/lib/types";
+import type {
+  ChatProgressEvent,
+  ChatResponse,
+  ChatWorkflowStage
+} from "@/lib/types";
 import { AuthGuard } from "@/components/auth-guard";
 import { HarnessActionCard } from "@/components/harness-action-card";
 import { PausePracticePanel } from "@/components/pause-practice-panel";
@@ -33,6 +37,28 @@ type ChatMessage = {
   };
 };
 
+type RunProgress = {
+  runId: string | null;
+  completedStages: ChatWorkflowStage[];
+  stageLatencies: Partial<Record<ChatWorkflowStage, number>>;
+  elapsedMs: number;
+};
+
+const EMPTY_PROGRESS: RunProgress = {
+  runId: null,
+  completedStages: [],
+  stageLatencies: {},
+  elapsedMs: 0
+};
+
+const WORKFLOW_STAGES: ChatWorkflowStage[] = [
+  "safety",
+  "routing",
+  "skill",
+  "output_guardrail",
+  "trace"
+];
+
 const SHOW_DIAGNOSTICS = showDiagnostics();
 
 export default function ChatPage() {
@@ -45,6 +71,11 @@ export default function ChatPage() {
   const [onboardingDone, setOnboardingDone] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
+  const [activeProgress, setActiveProgress] = useState<RunProgress>(EMPTY_PROGRESS);
+  const [latestProgress, setLatestProgress] = useState<RunProgress | null>(null);
+  const [waitingMs, setWaitingMs] = useState(0);
+  const progressRef = useRef<RunProgress>(EMPTY_PROGRESS);
+  const requestStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!auth.ready || !auth.authenticated || !auth.userId) {
@@ -67,8 +98,55 @@ export default function ChatPage() {
       window.removeEventListener("socialease:onboarding", handleOnboardingChanged);
   }, [auth.ready, auth.authenticated, auth.userId]);
 
+  useEffect(() => {
+    if (!loading) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (requestStartedAtRef.current !== null) {
+        setWaitingMs(Date.now() - requestStartedAtRef.current);
+      }
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [loading]);
+
+  function beginProgress() {
+    const progress = { ...EMPTY_PROGRESS, stageLatencies: {} };
+    progressRef.current = progress;
+    setActiveProgress(progress);
+    setWaitingMs(0);
+    requestStartedAtRef.current = Date.now();
+  }
+
+  function handleProgress(event: ChatProgressEvent) {
+    const previous = progressRef.current;
+    const completedStages =
+      event.type === "stage_completed" && event.stage
+        ? Array.from(new Set([...previous.completedStages, event.stage]))
+        : previous.completedStages;
+    const stageLatencies = { ...previous.stageLatencies };
+    if (
+      event.type === "stage_completed" &&
+      event.stage &&
+      event.stage_latency_ms !== null
+    ) {
+      stageLatencies[event.stage] = event.stage_latency_ms;
+    }
+    const next: RunProgress = {
+      runId: event.run_id,
+      completedStages,
+      stageLatencies,
+      elapsedMs: event.elapsed_ms
+    };
+    progressRef.current = next;
+    setActiveProgress(next);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading || approvingProtocolId) {
+      return;
+    }
     const trimmed = input.trim();
     if (!trimmed) {
       setError("发送前请先输入一段内容。");
@@ -76,6 +154,7 @@ export default function ChatPage() {
     }
     const sourceRequest = { message: trimmed, context: {} };
     setMessages((items) => [...items, { role: "user", content: trimmed }]);
+    setInput("");
     await sendChatRequest(sourceRequest);
   }
 
@@ -84,16 +163,22 @@ export default function ChatPage() {
     context: Record<string, unknown>;
   }) {
     setLoading(true);
+    beginProgress();
     setError(null);
     setRetryAction(null);
     try {
-      const result = await api.chat(currentUserId(), sourceRequest.message, sourceRequest.context);
+      const result = await api.chatStream(
+        currentUserId(),
+        sourceRequest.message,
+        sourceRequest.context,
+        { onProgress: handleProgress }
+      );
       setLatest(result);
+      setLatestProgress(progressRef.current);
       setMessages((items) => [
         ...items,
         { role: "agent", content: result.response, result, sourceRequest }
       ]);
-      setInput("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "请求失败");
       setRetryAction({
@@ -104,6 +189,8 @@ export default function ChatPage() {
       });
     } finally {
       setLoading(false);
+      setActiveProgress(EMPTY_PROGRESS);
+      requestStartedAtRef.current = null;
     }
   }
 
@@ -121,11 +208,19 @@ export default function ChatPage() {
         ...items,
         { role: "user", content: "同意继续这个练习。" }
       ]);
-      const result = await api.chat(userId, sourceRequest.message, {
-        ...sourceRequest.context,
-        protocol_id: protocolId
-      });
+      setLoading(true);
+      beginProgress();
+      const result = await api.chatStream(
+        userId,
+        sourceRequest.message,
+        {
+          ...sourceRequest.context,
+          protocol_id: protocolId
+        },
+        { onProgress: handleProgress }
+      );
       setLatest(result);
+      setLatestProgress(progressRef.current);
       setMessages((items) => [
         ...items,
         { role: "agent", content: result.response, result, sourceRequest }
@@ -139,6 +234,9 @@ export default function ChatPage() {
         }
       });
     } finally {
+      setLoading(false);
+      setActiveProgress(EMPTY_PROGRESS);
+      requestStartedAtRef.current = null;
       setApprovingProtocolId(null);
     }
   }
@@ -233,12 +331,16 @@ export default function ChatPage() {
                 </div>
               ))
             )}
+            {loading ? (
+              <RunStatusCard progress={activeProgress} waitingMs={waitingMs} />
+            ) : null}
           </div>
           <form onSubmit={handleSubmit} className="space-y-3">
             <TextArea
               value={input}
               onChange={(event) => setInput(event.target.value)}
               placeholder="输入一个社交压力场景..."
+              disabled={loading || Boolean(approvingProtocolId)}
             />
             <div className="flex items-center justify-between gap-3">
               <ErrorBox
@@ -247,7 +349,10 @@ export default function ChatPage() {
                 retrying={loading || Boolean(approvingProtocolId)}
                 retryLabel={retryAction?.label}
               />
-              <Button type="submit" disabled={loading}>
+              <Button
+                type="submit"
+                disabled={loading || Boolean(approvingProtocolId)}
+              >
                 {loading ? "发送中..." : "发送"}
               </Button>
             </div>
@@ -257,7 +362,12 @@ export default function ChatPage() {
         <Panel title={SHOW_DIAGNOSTICS ? "开发诊断" : "练习状态"}>
           {latest ? (
             SHOW_DIAGNOSTICS ? (
-              <DeveloperDiagnosticsPanel latest={latest} />
+              <DeveloperDiagnosticsPanel
+                latest={latest}
+                progress={
+                  latestProgress?.runId === latest.run_id ? latestProgress : null
+                }
+              />
             ) : (
               <ProductStatusPanel latest={latest} />
             )
@@ -318,7 +428,60 @@ function ProductStatusPanel({ latest }: { latest: ChatResponse }) {
   );
 }
 
-function DeveloperDiagnosticsPanel({ latest }: { latest: ChatResponse }) {
+function RunStatusCard({
+  progress,
+  waitingMs
+}: {
+  progress: RunProgress;
+  waitingMs: number;
+}) {
+  const nextStage = WORKFLOW_STAGES.find(
+    (stage) => !progress.completedStages.includes(stage)
+  );
+  const status = nextStage ? stageActiveLabel(nextStage) : "正在准备安全回复";
+
+  return (
+    <div
+      className="mr-auto max-w-[90%] rounded-lg border border-emerald-200 bg-emerald-50 p-3"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="mb-2 flex items-center gap-2 text-sm font-medium text-emerald-900">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-600" />
+        {status}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {WORKFLOW_STAGES.map((stage) => {
+          const completed = progress.completedStages.includes(stage);
+          return (
+            <span
+              key={stage}
+              className={`rounded-full px-2 py-1 text-xs ${
+                completed
+                  ? "bg-emerald-100 text-emerald-800"
+                  : "bg-white text-slate-500"
+              }`}
+            >
+              {completed ? "✓ " : ""}
+              {stageShortLabel(stage)}
+            </span>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-xs leading-5 text-slate-600">
+        已等待 {(waitingMs / 1000).toFixed(1)} 秒。最终回复会在输出安全检查完成后展示。
+      </p>
+    </div>
+  );
+}
+
+function DeveloperDiagnosticsPanel({
+  latest,
+  progress
+}: {
+  latest: ChatResponse;
+  progress: RunProgress | null;
+}) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
@@ -353,8 +516,45 @@ function DeveloperDiagnosticsPanel({ latest }: { latest: ChatResponse }) {
           {latest.trace.latency_ms.toFixed(2)} ms
         </div>
       </div>
+      {progress ? (
+        <div className="rounded-md border border-line p-3 text-sm">
+          <div className="font-medium text-ink">工作流阶段耗时</div>
+          <dl className="mt-2 space-y-1 text-slate-700">
+            {WORKFLOW_STAGES.map((stage) => (
+              <div key={stage} className="flex justify-between gap-3">
+                <dt>{stageShortLabel(stage)}</dt>
+                <dd>
+                  {progress.stageLatencies[stage] !== undefined
+                    ? `${progress.stageLatencies[stage]!.toFixed(2)} ms`
+                    : "—"}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function stageShortLabel(stage: ChatWorkflowStage): string {
+  return {
+    safety: "安全检查",
+    routing: "意图路由",
+    skill: "执行任务",
+    output_guardrail: "输出检查",
+    trace: "运行记录"
+  }[stage];
+}
+
+function stageActiveLabel(stage: ChatWorkflowStage): string {
+  return {
+    safety: "正在进行安全检查",
+    routing: "正在理解你的需求",
+    skill: "正在执行合适的支持步骤",
+    output_guardrail: "正在检查回复安全性",
+    trace: "正在完成运行记录"
+  }[stage];
 }
 
 function readString(value: unknown): string | null {

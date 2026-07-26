@@ -109,6 +109,21 @@ export type ChatResponse = {
   trace: TraceRecord;
 };
 
+export type ChatWorkflowStage =
+  | "safety"
+  | "routing"
+  | "skill"
+  | "output_guardrail"
+  | "trace";
+
+export type ChatProgressEvent = {
+  type: "run_started" | "stage_completed";
+  run_id: string;
+  stage: ChatWorkflowStage | null;
+  stage_latency_ms: number | null;
+  elapsed_ms: number;
+};
+
 export type AuthUser = {
   user_id: string;
   email: string;

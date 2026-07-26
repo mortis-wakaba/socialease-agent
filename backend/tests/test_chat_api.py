@@ -1,5 +1,7 @@
 """API tests for the SocialEase chat workflow."""
 
+import json
+
 import httpx
 import pytest
 
@@ -88,6 +90,36 @@ async def test_chat_trace_preserves_incoming_request_id(
     assert payload["trace"]["error_categories"] == []
     assert payload["structured_data"]["request_id"] == request_id
     assert payload["structured_data"]["error_categories"] == []
+
+
+@pytest.mark.anyio
+async def test_chat_stream_emits_progress_before_one_guarded_final_response(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/api/chat/stream",
+        json={
+            "user_id": "stream_user",
+            "message": "我想模拟课堂发言，先从一句开场开始",
+            "context": {},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert body.count("event: final\n") == 1
+    assert body.index("event: progress\n") < body.index("event: final\n")
+    assert body.rstrip().endswith("data: {}")
+    for stage in ("safety", "routing", "skill", "output_guardrail", "trace"):
+        assert f'"stage":"{stage}"' in body
+    final_block = next(
+        block for block in body.split("\n\n") if block.startswith("event: final\n")
+    )
+    final_payload = final_block.removeprefix("event: final\ndata: ")
+    parsed = json.loads(final_payload)
+    assert parsed["trace"]["product_safe"] is True
+    assert parsed["response"]
 
 
 @pytest.mark.anyio
