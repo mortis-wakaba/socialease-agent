@@ -61,6 +61,10 @@ class RoleplayContextDiagnostics(BaseModel):
     compact_state_used: bool = False
     compaction_triggered: bool = False
     compacted_message_count: int = Field(default=0, ge=0)
+    durable_checkpoint_used: bool = False
+    durable_checkpoint_version: int | None = Field(default=None, ge=1)
+    active_memory_estimated_tokens: int = Field(default=0, ge=0)
+    active_memory_token_budget: int = Field(default=0, ge=0)
     estimated_input_tokens: int = Field(default=0, ge=0)
     input_token_budget: int = Field(default=0, ge=0)
     budget_utilization: float = Field(default=0.0, ge=0.0)
@@ -77,6 +81,17 @@ class RoleplayPromptContext(BaseModel):
     recent_messages: list[str] = Field(default_factory=list, max_length=20)
     compact_state: RoleplayCompactState | None = None
     diagnostics: RoleplayContextDiagnostics
+
+
+class DurableCheckpointContext(BaseModel):
+    """Token-bounded active memory reconstructed from one exact thread."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    compact_state: RoleplayCompactState
+    checkpoint_version: int = Field(ge=1)
+    estimated_tokens: int = Field(ge=0)
+    token_budget: int = Field(ge=1)
 
 
 class CompactGenerationPayload(BaseModel):

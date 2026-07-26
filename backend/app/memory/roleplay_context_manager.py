@@ -15,6 +15,8 @@ from app.memory.session_context_store import (
 from app.memory.token_estimator import TokenEstimator, create_token_estimator
 from app.models_roleplay import RoleplayMessageRole
 from app.models_session_context import (
+    DurableCheckpointContext,
+    RoleplayCompactState,
     RoleplayContextDiagnostics,
     RoleplayPromptContext,
     RoleplaySessionContext,
@@ -89,6 +91,7 @@ class RoleplayContextManager:
         guidance: str,
         current_user_message: str,
         fallback_recent_messages: list[str],
+        durable_checkpoint: DurableCheckpointContext | None = None,
     ) -> RoleplayPromptContext:
         """Return compact state and recent messages within the configured budget."""
         try:
@@ -97,19 +100,27 @@ class RoleplayContextManager:
             return self._fallback_context(
                 fallback_recent_messages,
                 error_category="SESSION_CONTEXT_UNAVAILABLE",
+                durable_checkpoint=durable_checkpoint,
             )
         if context is None:
             return self._fallback_context(
                 fallback_recent_messages,
                 error_category="SESSION_CONTEXT_EXPIRED",
+                durable_checkpoint=durable_checkpoint,
             )
 
+        effective_compact_state = context.compact_state or (
+            durable_checkpoint.compact_state
+            if durable_checkpoint is not None
+            else None
+        )
         compaction_triggered = self._should_compact(
             context=context,
             scenario=scenario,
             difficulty=difficulty,
             guidance=guidance,
             current_user_message=current_user_message,
+            compact_state=effective_compact_state,
         )
         compacted_count = 0
         if compaction_triggered:
@@ -147,10 +158,12 @@ class RoleplayContextManager:
                     return self._fallback_context(
                         fallback_recent_messages,
                         error_category="SESSION_CONTEXT_UNAVAILABLE_DURING_COMPACTION",
+                        durable_checkpoint=durable_checkpoint,
                     )
                 if replaced:
                     candidate.version = context.version + 1
                     context = candidate
+                    effective_compact_state = candidate.compact_state
                 else:
                     try:
                         latest = await self.store.get(
@@ -161,6 +174,11 @@ class RoleplayContextManager:
                         latest = None
                     if latest is not None:
                         context = latest
+                        effective_compact_state = latest.compact_state or (
+                            durable_checkpoint.compact_state
+                            if durable_checkpoint is not None
+                            else None
+                        )
                     compacted_count = 0
 
         history_messages = list(context.messages)
@@ -177,18 +195,42 @@ class RoleplayContextManager:
             difficulty=difficulty,
             guidance=guidance,
             current_user_message=current_user_message,
+            compact_state=effective_compact_state,
         )
         budget = self.settings.max_input_tokens
         return RoleplayPromptContext(
             recent_messages=recent,
-            compact_state=context.compact_state,
+            compact_state=effective_compact_state,
             diagnostics=RoleplayContextDiagnostics(
                 backend=self.store.backend_name,
                 available=True,
                 recent_message_count=len(recent),
-                compact_state_used=context.compact_state is not None,
+                compact_state_used=effective_compact_state is not None,
                 compaction_triggered=compaction_triggered,
                 compacted_message_count=compacted_count,
+                durable_checkpoint_used=(
+                    durable_checkpoint is not None
+                    and context.compact_state is None
+                    and effective_compact_state is not None
+                ),
+                durable_checkpoint_version=(
+                    durable_checkpoint.checkpoint_version
+                    if durable_checkpoint is not None
+                    and context.compact_state is None
+                    else None
+                ),
+                active_memory_estimated_tokens=(
+                    durable_checkpoint.estimated_tokens
+                    if durable_checkpoint is not None
+                    and context.compact_state is None
+                    else 0
+                ),
+                active_memory_token_budget=(
+                    durable_checkpoint.token_budget
+                    if durable_checkpoint is not None
+                    and context.compact_state is None
+                    else 0
+                ),
                 estimated_input_tokens=estimated_tokens,
                 input_token_budget=budget,
                 budget_utilization=min(1.0, estimated_tokens / budget),
@@ -237,6 +279,7 @@ class RoleplayContextManager:
         difficulty: int,
         guidance: str,
         current_user_message: str,
+        compact_state: RoleplayCompactState | None,
     ) -> bool:
         if len(context.messages) > self.settings.recent_max_messages:
             return True
@@ -246,7 +289,7 @@ class RoleplayContextManager:
         estimated = self.token_estimator.count(
             _fixed_prompt_text(scenario, difficulty, guidance, current_user_message)
             + all_messages
-            + _compact_text(context)
+            + _compact_text(compact_state)
         )
         return estimated >= math.floor(
             self.settings.max_input_tokens * self.settings.compact_trigger_ratio
@@ -261,10 +304,11 @@ class RoleplayContextManager:
         difficulty: int,
         guidance: str,
         current_user_message: str,
+        compact_state: RoleplayCompactState | None,
     ) -> tuple[list[str], int]:
         fixed_tokens = self.token_estimator.count(
             _fixed_prompt_text(scenario, difficulty, guidance, current_user_message)
-            + _compact_text(context)
+            + _compact_text(compact_state)
         )
         remaining = max(1, self.settings.max_input_tokens - fixed_tokens)
         selected_reversed: list[str] = []
@@ -291,16 +335,63 @@ class RoleplayContextManager:
         recent_messages: list[str],
         *,
         error_category: str,
+        durable_checkpoint: DurableCheckpointContext | None = None,
     ) -> RoleplayPromptContext:
-        bounded = recent_messages[-self.settings.recent_max_messages :]
-        estimated = sum(self.token_estimator.count(message) for message in bounded)
+        compact_state = (
+            durable_checkpoint.compact_state
+            if durable_checkpoint is not None
+            else None
+        )
+        compact_tokens = self.token_estimator.count(_compact_text(compact_state))
+        remaining = max(1, self.settings.max_input_tokens - compact_tokens)
+        selected_reversed: list[str] = []
+        used = 0
+        for message in reversed(
+            recent_messages[-self.settings.recent_max_messages :]
+        ):
+            cost = self.token_estimator.count(message)
+            if selected_reversed and used + cost > remaining:
+                break
+            rendered = message
+            if not selected_reversed and cost > remaining:
+                rendered = _truncate_to_token_budget(
+                    message,
+                    remaining,
+                    estimator=self.token_estimator,
+                )
+                cost = self.token_estimator.count(rendered)
+            selected_reversed.append(rendered)
+            used += cost
+        bounded = list(reversed(selected_reversed))
+        estimated = min(
+            self.settings.max_input_tokens,
+            compact_tokens + used,
+        )
         return RoleplayPromptContext(
             recent_messages=bounded,
+            compact_state=compact_state,
             diagnostics=RoleplayContextDiagnostics(
                 backend=self.store.backend_name,
                 available=False,
                 fallback_used=True,
                 recent_message_count=len(bounded),
+                compact_state_used=compact_state is not None,
+                durable_checkpoint_used=durable_checkpoint is not None,
+                durable_checkpoint_version=(
+                    durable_checkpoint.checkpoint_version
+                    if durable_checkpoint is not None
+                    else None
+                ),
+                active_memory_estimated_tokens=(
+                    durable_checkpoint.estimated_tokens
+                    if durable_checkpoint is not None
+                    else 0
+                ),
+                active_memory_token_budget=(
+                    durable_checkpoint.token_budget
+                    if durable_checkpoint is not None
+                    else 0
+                ),
                 estimated_input_tokens=estimated,
                 input_token_budget=self.settings.max_input_tokens,
                 budget_utilization=min(
@@ -327,11 +418,11 @@ def _fixed_prompt_text(
     )
 
 
-def _compact_text(context: RoleplaySessionContext) -> str:
-    if context.compact_state is None:
+def _compact_text(compact_state: RoleplayCompactState | None) -> str:
+    if compact_state is None:
         return ""
     return json.dumps(
-        context.compact_state.model_dump(mode="json"),
+        compact_state.model_dump(mode="json"),
         ensure_ascii=False,
     )
 

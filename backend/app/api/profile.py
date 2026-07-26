@@ -7,6 +7,8 @@ from app.auth.dependencies import get_current_user, require_owner_path_user
 from app.models_memory import (
     MemoryPreferencesUpdateRequest,
     MemoryPreferencesUpdateResponse,
+    PracticeSummaryConsentUpdateRequest,
+    PracticeSummaryConsentUpdateResponse,
     UserOnboardingProfileResponse,
     UserOnboardingProfileUpdateRequest,
     UserMemoryDeleteResponse,
@@ -130,6 +132,23 @@ async def disable_memory_preferences(
     response = memory_privacy_service.disable_preferences(user_id)
     record_memory_preferences_disabled()
     return response
+
+
+@router.put(
+    "/users/{user_id}/memory/consent/practice-summary",
+    response_model=PracticeSummaryConsentUpdateResponse,
+)
+async def update_practice_summary_consent(
+    user_id: str,
+    request: PracticeSummaryConsentUpdateRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> PracticeSummaryConsentUpdateResponse:
+    """Enable or revoke use of product practice summaries in future agent runs."""
+    require_owner_path_user(user_id, current_user)
+    return memory_privacy_service.update_practice_summary_consent(
+        user_id=user_id,
+        consent_to_practice_summary=request.consent_to_practice_summary,
+    )
 
 
 @router.get(

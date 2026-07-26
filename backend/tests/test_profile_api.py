@@ -54,7 +54,8 @@ async def test_profile_returns_empty_demo_summary(client: httpx.AsyncClient) -> 
         "preferred_feedback_style": None,
         "preferred_practice_scenarios": [],
     }
-    assert "仅保存轻量练习状态" in payload["privacy_notice"]
+    assert "练习记录与跨会话个性化分开管理" in payload["privacy_notice"]
+    assert "随时撤回授权" in payload["privacy_notice"]
     assert "导出或删除自己拥有的练习记录" in payload["privacy_notice"]
     assert payload["memory_export_available"] is True
     assert payload["memory_delete_available"] is True
@@ -207,6 +208,55 @@ async def test_memory_preferences_can_be_disabled(
         "preferred_feedback_style": None,
         "preferred_practice_scenarios": [],
     }
+
+
+@pytest.mark.anyio
+async def test_practice_summary_personalization_consent_is_reversible(
+    client: httpx.AsyncClient,
+) -> None:
+    """Consent controls future use without deleting the underlying product record."""
+    user_id = f"memory_summary_consent_{uuid4().hex}"
+    await client.post(
+        "/api/roleplay/start",
+        json={
+            "user_id": user_id,
+            "scenario": "classroom_speech",
+            "difficulty": 3,
+        },
+    )
+
+    enabled = await client.put(
+        f"/api/users/{user_id}/memory/consent/practice-summary",
+        json={"consent_to_practice_summary": True},
+    )
+    disabled = await client.put(
+        f"/api/users/{user_id}/memory/consent/practice-summary",
+        json={"consent_to_practice_summary": False},
+    )
+    profile = await client.get(f"/api/users/{user_id}/profile")
+
+    assert enabled.status_code == 200
+    assert enabled.json()["consent_state"]["consent_to_practice_summary"] is True
+    assert disabled.status_code == 200
+    assert disabled.json()["consent_state"]["consent_to_practice_summary"] is False
+    assert profile.json()["practice_summary"]["roleplay_session_count"] == 1
+    assert profile.json()["consent_state"]["consent_to_practice_summary"] is False
+
+
+@pytest.mark.anyio
+async def test_practice_summary_consent_rejects_cross_user_access(
+    client: httpx.AsyncClient,
+) -> None:
+    owner_id = f"memory_summary_owner_{uuid4().hex}"
+    other_id = f"memory_summary_other_{uuid4().hex}"
+
+    response = await client.put(
+        f"/api/users/{owner_id}/memory/consent/practice-summary",
+        headers={"X-Demo-User-Id": other_id},
+        json={"consent_to_practice_summary": True},
+    )
+
+    assert response.status_code == 403
 
 
 @pytest.mark.anyio

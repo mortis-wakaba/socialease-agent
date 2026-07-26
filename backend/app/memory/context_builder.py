@@ -21,25 +21,50 @@ def build_memory_context(
     practice_summary_ttl: timedelta = timedelta(days=90),
     active_plan_ttl: timedelta = timedelta(days=30),
 ) -> MemoryContext:
-    """Return a bounded memory packet for one agent run."""
+    """Return a consent-filtered, bounded memory packet for one agent run."""
     selected_at = _as_utc(now or datetime.now(timezone.utc))
-    practice_observed_at = _as_utc_or_none(practice_summary.latest_practice_at)
+    consent = memory_settings.consent_state
+    summary_allowed = consent.consent_to_practice_summary
+    preferences_allowed = consent.consent_to_save_preferences
+
+    practice_observed_at = (
+        _as_utc_or_none(practice_summary.latest_practice_at)
+        if summary_allowed
+        else None
+    )
     practice_expires_at = _expiry(practice_observed_at, practice_summary_ttl)
-    practice_summary_stale = _is_expired(practice_expires_at, selected_at)
-    active_plan_updated_at = _as_utc_or_none(
-        active_exposure_plan.updated_at if active_exposure_plan is not None else None
+    practice_summary_stale = summary_allowed and _is_expired(
+        practice_expires_at, selected_at
+    )
+    active_plan_allowed = summary_allowed
+    active_plan_updated_at = (
+        _as_utc_or_none(
+            active_exposure_plan.updated_at if active_exposure_plan is not None else None
+        )
+        if active_plan_allowed
+        else None
     )
     active_plan_expires_at = _expiry(active_plan_updated_at, active_plan_ttl)
-    active_plan_stale = _is_expired(active_plan_expires_at, selected_at)
-    usable_active_plan = None if active_plan_stale else active_exposure_plan
+    active_plan_stale = active_plan_allowed and _is_expired(
+        active_plan_expires_at, selected_at
+    )
+    usable_active_plan = (
+        active_exposure_plan
+        if active_plan_allowed and not active_plan_stale
+        else None
+    )
 
-    preferences = _redact_preferences(memory_settings.practice_preferences)
+    preferences = (
+        _redact_preferences(memory_settings.practice_preferences)
+        if preferences_allowed
+        else PracticePreferences()
+    )
     recent_scenarios = _dedupe(
         [
             *preferences.preferred_practice_scenarios,
             *(
                 []
-                if practice_summary_stale
+                if not summary_allowed or practice_summary_stale
                 else [_redact_text(value) for value in practice_summary.recent_scenarios]
             ),
         ],
@@ -48,18 +73,32 @@ def build_memory_context(
     preferred_difficulty = (
         preferences.preferred_roleplay_difficulty
         if preferences.preferred_roleplay_difficulty is not None
-        else None if practice_summary_stale else practice_summary.preferred_difficulty
+        else (
+            practice_summary.preferred_difficulty
+            if summary_allowed and not practice_summary_stale
+            else None
+        )
     )
     latest_anxiety_level = (
-        None if practice_summary_stale else practice_summary.latest_anxiety_level
+        practice_summary.latest_anxiety_level
+        if summary_allowed and not practice_summary_stale
+        else None
     )
     onboarding_profile = memory_settings.onboarding_profile
     context_notes: list[str] = []
     dropped_context: list[str] = []
 
-    if practice_summary_stale:
+    if not summary_allowed and _has_practice_summary(practice_summary):
+        dropped_context.append("practice_summary_consent_required")
+    elif practice_summary_stale:
         dropped_context.append("practice_summary_expired")
-    if active_plan_stale:
+    if not preferences_allowed and _has_practice_preferences(
+        memory_settings.practice_preferences
+    ):
+        dropped_context.append("practice_preferences_consent_required")
+    if not active_plan_allowed and active_exposure_plan is not None:
+        dropped_context.append("active_exposure_plan_consent_required")
+    elif active_plan_stale:
         dropped_context.append("active_exposure_plan_expired")
 
     if recent_scenarios:
@@ -87,6 +126,28 @@ def build_memory_context(
         active_exposure_plan_updated_at=active_plan_updated_at,
         active_exposure_plan_expires_at=active_plan_expires_at,
         dropped_context=dropped_context,
+    )
+
+
+def _has_practice_summary(summary: UserPracticeSummary) -> bool:
+    """Return whether a product summary contains any historical practice signal."""
+    return bool(
+        summary.recent_scenarios
+        or summary.roleplay_session_count
+        or summary.worksheet_count
+        or summary.exposure_attempt_count
+        or summary.latest_anxiety_level is not None
+        or summary.preferred_difficulty is not None
+        or summary.latest_practice_at is not None
+    )
+
+
+def _has_practice_preferences(preferences: PracticePreferences) -> bool:
+    """Return whether stored preference content exists behind its consent gate."""
+    return bool(
+        preferences.preferred_roleplay_difficulty is not None
+        or preferences.preferred_feedback_style is not None
+        or preferences.preferred_practice_scenarios
     )
 
 

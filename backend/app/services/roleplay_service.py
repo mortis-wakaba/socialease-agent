@@ -14,9 +14,11 @@ from app.memory.session_context_store import (
     DisabledSessionContextStore,
     RedisSessionContextStore,
 )
+from app.memory.thread_checkpoint_service import ThreadCheckpointService
 from app.memory.token_estimator import create_token_estimator
 from app.models import RiskLevel
 from app.models_knowledge import KnowledgeBaseType
+from app.models_long_term_memory import PracticeThreadStatus
 from app.models_roleplay import (
     RoleplayFeedbackRequest,
     RoleplayFeedbackResponse,
@@ -59,6 +61,7 @@ class RoleplayService:
         knowledge: KnowledgeService | None = None,
         safety_classifier: BaseSafetyClassifier | None = None,
         context_manager: RoleplayContextManager | None = None,
+        checkpoint_service: ThreadCheckpointService | None = None,
     ) -> None:
         self.agent = agent or RoleplayAgent(llm_client=create_llm_client())
         self.store = store or RoleplaySessionStore(
@@ -66,12 +69,12 @@ class RoleplayService:
         )
         self.knowledge = knowledge or KnowledgeService()
         self.safety_classifier = safety_classifier or create_safety_classifier()
+        settings = roleplay_session_context_settings()
+        token_estimator = create_token_estimator(
+            backend=settings.tokenizer_backend,
+            model_name=settings.tokenizer_model,
+        )
         if context_manager is None:
-            settings = roleplay_session_context_settings()
-            token_estimator = create_token_estimator(
-                backend=settings.tokenizer_backend,
-                model_name=settings.tokenizer_model,
-            )
             context_store = (
                 RedisSessionContextStore(
                     redis_url=settings.redis_url,
@@ -91,6 +94,12 @@ class RoleplayService:
                 token_estimator=token_estimator,
             )
         self.context_manager = context_manager
+        self.checkpoint_service = checkpoint_service or ThreadCheckpointService(
+            repository=repository_factory().long_term_memory_repository(),
+            settings_repository=repository_factory().user_memory_settings_repository(),
+            token_estimator=token_estimator,
+            active_memory_token_budget=settings.active_checkpoint_max_tokens,
+        )
 
     async def start_session(self, request: RoleplayStartRequest) -> RoleplayStartResponse:
         """Create a grounded role-play session for one supported scenario."""
@@ -127,6 +136,15 @@ class RoleplayService:
             user_id=request.user_id,
             session_id=session.session_id,
             opening_message=persisted_opening_message,
+        )
+        self.checkpoint_service.record_roleplay(
+            user_id=request.user_id,
+            thread_id=session.session_id,
+            scenario=session.scenario,
+            current_stage="roleplay_started",
+            status=PracticeThreadStatus.ACTIVE,
+            reason_code="roleplay_started",
+            unresolved_next_step="发送一轮练习回复。",
         )
         return RoleplayStartResponse(
             session=session,
@@ -169,6 +187,15 @@ class RoleplayService:
             )
             if updated_session is None:
                 raise ServiceNotFoundError("Role-play session not found")
+            self.checkpoint_service.record_roleplay(
+                user_id=request.user_id,
+                thread_id=request.session_id,
+                scenario=session.scenario,
+                current_stage="paused",
+                status=PracticeThreadStatus.PAUSED,
+                reason_code="safety_pause",
+                unresolved_next_step=None,
+            )
             return RoleplayMessageResponse(
                 session=updated_session,
                 response=persisted_crisis_response,
@@ -176,6 +203,7 @@ class RoleplayService:
                 blocked=True,
             )
 
+        message_features = derive_roleplay_message_features(request.message)
         session = self.store.append_message(
             session_id=request.session_id,
             user_id=request.user_id,
@@ -185,7 +213,7 @@ class RoleplayService:
                 kind=PersistenceKind.ROLEPLAY_MESSAGE,
                 text=request.message,
             ).persisted_text,
-            features=derive_roleplay_message_features(request.message),
+            features=message_features,
         )
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
@@ -201,6 +229,11 @@ class RoleplayService:
             if not session.retrieved_guidance.no_guidance_found
             else "No specific guidance found; use general safe role-play scaffolding."
         )
+        durable_checkpoint = self.checkpoint_service.restore_roleplay_context(
+            user_id=request.user_id,
+            thread_id=request.session_id,
+            expected_scenario=session.scenario,
+        )
         prompt_context = await self.context_manager.build_prompt_context(
             user_id=request.user_id,
             session_id=request.session_id,
@@ -212,6 +245,7 @@ class RoleplayService:
                 f"{message.role.value}: {message.content}"
                 for message in session.messages
             ],
+            durable_checkpoint=durable_checkpoint,
         )
         agent_response, llm_usage = await self.agent.next_turn(
             session=session,
@@ -235,6 +269,21 @@ class RoleplayService:
             session_id=request.session_id,
             role=RoleplayMessageRole.AGENT,
             content=persisted_agent_response[:8000],
+        )
+        self.checkpoint_service.record_roleplay(
+            user_id=request.user_id,
+            thread_id=request.session_id,
+            scenario=session.scenario,
+            current_stage="practice_turn_completed",
+            status=PracticeThreadStatus.ACTIVE,
+            reason_code=(
+                "redis_compaction"
+                if prompt_context.diagnostics.compaction_triggered
+                else "practice_turn_completed"
+            ),
+            helpful_strategy_codes=_strategy_codes(message_features),
+            unresolved_next_step="继续当前练习，或在准备好后获取反馈。",
+            touch_if_unchanged=True,
         )
 
         return RoleplayMessageResponse(
@@ -270,6 +319,15 @@ class RoleplayService:
                 user_id=request.user_id,
                 session_id=request.session_id,
             )
+            self.checkpoint_service.record_roleplay(
+                user_id=request.user_id,
+                thread_id=request.session_id,
+                scenario=session.scenario,
+                current_stage="feedback_completed",
+                status=PracticeThreadStatus.COMPLETED,
+                reason_code="feedback_completed",
+                unresolved_next_step=None,
+            )
             return RoleplayFeedbackResponse(session=session, feedback=feedback)
         updated_session = self.store.update_status(
             session_id=request.session_id,
@@ -281,6 +339,15 @@ class RoleplayService:
         await self.context_manager.delete(
             user_id=request.user_id,
             session_id=request.session_id,
+        )
+        self.checkpoint_service.record_roleplay(
+            user_id=request.user_id,
+            thread_id=request.session_id,
+            scenario=updated_session.scenario,
+            current_stage="feedback_completed",
+            status=PracticeThreadStatus.COMPLETED,
+            reason_code="feedback_completed",
+            unresolved_next_step=None,
         )
         return RoleplayFeedbackResponse(session=updated_session, feedback=feedback)
 
@@ -313,6 +380,15 @@ class RoleplayService:
         await self.context_manager.pause(
             user_id=request.user_id,
             session_id=request.session_id,
+        )
+        self.checkpoint_service.record_roleplay(
+            user_id=request.user_id,
+            thread_id=request.session_id,
+            scenario=session.scenario,
+            current_stage="paused",
+            status=PracticeThreadStatus.PAUSED,
+            reason_code="practice_paused",
+            unresolved_next_step="恢复后继续当前角色扮演练习。",
         )
         return RoleplayPauseResponse(
             session=session,
@@ -348,6 +424,15 @@ class RoleplayService:
         await self.context_manager.resume(
             user_id=request.user_id,
             session_id=request.session_id,
+        )
+        self.checkpoint_service.record_roleplay(
+            user_id=request.user_id,
+            thread_id=request.session_id,
+            scenario=session.scenario,
+            current_stage="resumed",
+            status=PracticeThreadStatus.ACTIVE,
+            reason_code="practice_resumed",
+            unresolved_next_step="发送一轮练习回复。",
         )
         return RoleplayResumeResponse(
             session=session,
@@ -397,6 +482,21 @@ def _persist_roleplay_agent_message(user_id: str, message: str) -> str:
 def _has_user_turn(session) -> bool:
     """Return whether a session has at least one user practice message."""
     return any(message.role == RoleplayMessageRole.USER for message in session.messages)
+
+
+def _strategy_codes(features: RoleplayMessageFeatures) -> list[str]:
+    """Map derived non-verbatim practice signals to controlled checkpoint codes."""
+    candidates = (
+        ("reason_given", features.has_reason),
+        ("clear_request", features.has_request),
+        ("boundary_statement", features.has_boundary_statement),
+        ("empathy_marker", features.has_empathy_marker),
+        ("specific_anchor", features.has_specific_time_or_place),
+        ("polite_opening", features.has_polite_opening),
+        ("collaborative_offer", features.has_collaborative_offer),
+        ("repair_acknowledgement", features.has_repair_or_acknowledgement),
+    )
+    return [code for code, present in candidates if present][:8]
 
 
 def derive_roleplay_message_features(message: str) -> RoleplayMessageFeatures:

@@ -275,6 +275,11 @@ export type MemoryPreferencesUpdateResponse = {
   practice_preferences: PracticePreferences;
 };
 
+export type PracticeSummaryConsentUpdateResponse = {
+  user_id: string;
+  consent_state: UserConsentState;
+};
+
 export type RetrievalHit = {
   title: string;
   score: number;

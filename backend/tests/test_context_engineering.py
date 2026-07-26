@@ -15,6 +15,7 @@ from app.models_exposure import ExposurePlan, ExposureTask
 from app.models_memory import (
     MemoryContext,
     PracticePreferences,
+    UserConsentState,
     UserMemorySettings,
     UserOnboardingProfile,
     UserPracticeSummary,
@@ -163,6 +164,10 @@ def test_stale_behavior_and_active_plan_expire_but_explicit_preferences_remain()
             latest_practice_at=NOW - timedelta(days=91),
         ),
         memory_settings=UserMemorySettings(
+            consent_state=UserConsentState(
+                consent_to_practice_summary=True,
+                consent_to_save_preferences=True,
+            ),
             practice_preferences=PracticePreferences(
                 preferred_roleplay_difficulty=3,
                 preferred_practice_scenarios=["dorm_conflict"],
@@ -180,6 +185,75 @@ def test_stale_behavior_and_active_plan_expire_but_explicit_preferences_remain()
     assert context.dropped_context == [
         "practice_summary_expired",
         "active_exposure_plan_expired",
+    ]
+
+
+def test_memory_builder_blocks_historical_context_without_purpose_consent() -> None:
+    """Persisted product records must not silently become agent memory."""
+    context = build_memory_context(
+        practice_summary=UserPracticeSummary(
+            recent_scenarios=["group_discussion"],
+            latest_anxiety_level=8,
+            preferred_difficulty=5,
+            latest_practice_at=NOW,
+        ),
+        memory_settings=UserMemorySettings(
+            consent_state=UserConsentState(
+                consent_to_practice_summary=False,
+                consent_to_save_preferences=False,
+            ),
+            practice_preferences=PracticePreferences(
+                preferred_roleplay_difficulty=3,
+                preferred_feedback_style="brief_actionable",
+                preferred_practice_scenarios=["dorm_conflict"],
+            ),
+        ),
+        active_exposure_plan=_exposure_plan(updated_at=NOW),
+        now=NOW,
+    )
+
+    assert context.recent_scenarios == []
+    assert context.preferred_difficulty is None
+    assert context.latest_anxiety_level is None
+    assert context.practice_preferences == PracticePreferences()
+    assert context.active_exposure_plan_id is None
+    assert context.practice_summary_observed_at is None
+    assert context.dropped_context == [
+        "practice_summary_consent_required",
+        "practice_preferences_consent_required",
+        "active_exposure_plan_consent_required",
+    ]
+
+
+def test_memory_builder_injects_only_each_consented_memory_purpose() -> None:
+    """Summary and explicit preferences have independent consent scopes."""
+    summary_only = build_memory_context(
+        practice_summary=UserPracticeSummary(
+            recent_scenarios=["group_discussion"],
+            latest_anxiety_level=7,
+            preferred_difficulty=4,
+            latest_practice_at=NOW,
+        ),
+        memory_settings=UserMemorySettings(
+            consent_state=UserConsentState(
+                consent_to_practice_summary=True,
+                consent_to_save_preferences=False,
+            ),
+            practice_preferences=PracticePreferences(
+                preferred_roleplay_difficulty=2,
+                preferred_practice_scenarios=["dorm_conflict"],
+            ),
+        ),
+        active_exposure_plan=None,
+        now=NOW,
+    )
+
+    assert summary_only.recent_scenarios == ["group_discussion"]
+    assert summary_only.preferred_difficulty == 4
+    assert summary_only.latest_anxiety_level == 7
+    assert summary_only.practice_preferences == PracticePreferences()
+    assert summary_only.dropped_context == [
+        "practice_preferences_consent_required"
     ]
 
 

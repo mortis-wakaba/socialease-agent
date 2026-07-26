@@ -9,8 +9,9 @@ from app.models_roleplay import RoleplayScenario
 
 
 MEMORY_PRIVACY_NOTICE = (
-    "仅保存轻量练习状态和低敏感度偏好，不保存诊断结论，也不需要保存危机原文副本。"
-    "你可以导出或删除自己拥有的练习记录。"
+    "练习记录与跨会话个性化分开管理；只有在你开启对应用途后，历史练习摘要或"
+    "低敏感度偏好才会进入未来对话。不保存诊断结论，也不保存危机原文副本。"
+    "你可以随时撤回授权，并导出或删除自己拥有的练习记录。"
 )
 
 
@@ -132,6 +133,19 @@ class MemoryPreferencesUpdateResponse(BaseModel):
     user_id: str
     consent_state: UserConsentState
     practice_preferences: PracticePreferences
+
+
+class PracticeSummaryConsentUpdateRequest(BaseModel):
+    """User choice for using saved practice summaries in future agent runs."""
+
+    consent_to_practice_summary: bool
+
+
+class PracticeSummaryConsentUpdateResponse(BaseModel):
+    """Response returned after changing practice-summary personalization consent."""
+
+    user_id: str
+    consent_state: UserConsentState
 
 
 class UserMemoryExportResponse(BaseModel):

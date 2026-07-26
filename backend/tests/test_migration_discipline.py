@@ -1,8 +1,11 @@
 """Tests for Alembic migration discipline checks."""
 
 from pathlib import Path
+import sqlite3
 
 import pytest
+from alembic import command
+from alembic.config import Config
 
 from app.db.migration_check import (
     list_revision_files,
@@ -40,3 +43,52 @@ def test_duplicate_migration_prefix_is_reported(tmp_path: Path) -> None:
     errors = validate_revision_filenames([first, second])
 
     assert errors == ["0002_add_protocols.py: duplicate numeric migration prefix 0002"]
+
+
+def test_long_term_memory_migration_round_trip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Phase 1 migration must upgrade, downgrade, and re-upgrade cleanly."""
+    database_path = tmp_path / "migration-round-trip.db"
+    monkeypatch.setenv(
+        "SOCIALEASE_DATABASE_URL",
+        f"sqlite:///{database_path}",
+    )
+    config = Config("alembic.ini")
+
+    command.upgrade(config, "head")
+    assert _table_names(database_path) >= {
+        "episodic_memories",
+        "thread_checkpoints",
+        "memory_events",
+        "memory_proposals",
+    }
+
+    command.downgrade(config, "0006_add_session_reviews")
+    assert not (
+        {
+            "episodic_memories",
+            "thread_checkpoints",
+            "memory_events",
+            "memory_proposals",
+        }
+        & _table_names(database_path)
+    )
+
+    command.upgrade(config, "head")
+    assert _table_names(database_path) >= {
+        "episodic_memories",
+        "thread_checkpoints",
+        "memory_events",
+        "memory_proposals",
+    }
+
+
+def _table_names(database_path: Path) -> set[str]:
+    """Return SQLite table names for migration assertions."""
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    return {row[0] for row in rows}

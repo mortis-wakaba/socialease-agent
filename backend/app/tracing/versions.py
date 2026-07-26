@@ -19,12 +19,13 @@ PROMPT_VERSIONS: dict[str, str] = {
     "safety_classifier": "safety-v1",
     "intent_router": "intent-v3",
     "support_generation": "support-v3",
-    "roleplay": "roleplay-v2",
+    "roleplay": "roleplay-v3",
     "worksheet_extraction": "worksheet-v2",
     "resource_agent_loop": "resource-loop-v2",
     "output_guardrail": "output-guardrail-v4",
     "output_repair": "output-repair-v2",
     "roleplay_compaction": "roleplay-compaction-v1",
+    "memory_extraction": "memory-extraction-v2",
 }
 
 _PROMPTS_BY_SKILL: dict[str, tuple[str, ...]] = {
@@ -43,6 +44,7 @@ def build_execution_version_info(
     skill_llm_used: bool = False,
     output_semantic_checked: bool = False,
     output_repair_attempted: bool = False,
+    memory_extraction_used: bool = False,
     eval_dataset_version: str | None = None,
     llm_config: LLMConfig | None = None,
 ) -> ExecutionVersionInfo:
@@ -59,6 +61,8 @@ def build_execution_version_info(
         prompt_names.append("output_guardrail")
     if output_repair_attempted:
         prompt_names.append("output_repair")
+    if memory_extraction_used:
+        prompt_names.append("memory_extraction")
     prompt_versions = {
         name: PROMPT_VERSIONS[name]
         for name in dict.fromkeys(prompt_names)

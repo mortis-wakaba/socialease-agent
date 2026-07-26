@@ -1,0 +1,542 @@
+"""PostgreSQL durable memory repository with transactional audit events."""
+
+from datetime import datetime
+import json
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection, Engine, RowMapping
+from sqlalchemy.exc import IntegrityError
+
+from app.db.config import database_settings
+from app.memory.long_term_repository import (
+    InvalidMemoryTransitionError,
+    MemoryConflictError,
+    MemoryNotFoundError,
+    _TRANSITION_EVENTS,
+    _aware_now,
+    _memory_event,
+    _require_expected_version,
+    _require_memory_transition,
+)
+from app.models_long_term_memory import (
+    EpisodicMemoryRecord,
+    MemoryEvent,
+    MemoryEventType,
+    MemoryRecordStatus,
+    MemorySubjectType,
+    PracticeThreadCheckpoint,
+)
+
+
+class PostgresLongTermMemoryRepository:
+    """PostgreSQL adapter with row locking and user-scoped mutations."""
+
+    def __init__(
+        self,
+        database_url: str | None = None,
+        engine: Engine | None = None,
+    ) -> None:
+        self.engine = engine or create_engine(
+            database_url or database_settings().database_url,
+            pool_pre_ping=True,
+        )
+
+    def create_memory(
+        self,
+        record: EpisodicMemoryRecord,
+        *,
+        reason_code: str,
+    ) -> EpisodicMemoryRecord:
+        """Create an active episodic memory and audit event atomically."""
+        if record.version != 1 or record.status != MemoryRecordStatus.ACTIVE:
+            raise MemoryConflictError("new episodic memory must be active at version 1")
+        event = _memory_event(
+            record=record,
+            event_type=MemoryEventType.MEMORY_COMMITTED,
+            from_status=None,
+            to_status=record.status,
+            reason_code=reason_code,
+            created_at=record.created_at,
+        )
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """INSERT INTO episodic_memories (
+                        memory_id, user_id, memory_type, summary, scenario_type,
+                        source_type, source_id, evidence_type, confidence, status,
+                        occurred_at, created_at, updated_at, last_retrieved_at,
+                        expires_at, consent_version, content_hash, supersedes_id,
+                        version, idempotency_key
+                        ) VALUES (
+                        :memory_id, :user_id, :memory_type, :summary, :scenario_type,
+                        :source_type, :source_id, :evidence_type, :confidence, :status,
+                        :occurred_at, :created_at, :updated_at, :last_retrieved_at,
+                        :expires_at, :consent_version, :content_hash, :supersedes_id,
+                        :version, :idempotency_key
+                        )"""
+                    ),
+                    _postgres_memory_values(record),
+                )
+                _insert_postgres_event(connection, event)
+        except IntegrityError as error:
+            raise MemoryConflictError(
+                f"episodic memory {record.memory_id!r} already exists"
+            ) from error
+        return record
+
+    def get_memory(
+        self,
+        memory_id: str,
+        user_id: str,
+    ) -> EpisodicMemoryRecord | None:
+        """Return one memory only when both identifier and owner match."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT * FROM episodic_memories
+                    WHERE memory_id = :memory_id AND user_id = :user_id"""
+                ),
+                {"memory_id": memory_id, "user_id": user_id},
+            ).mappings().first()
+        return _memory_from_mapping(row) if row else None
+
+    def get_memory_by_idempotency_key(
+        self,
+        *,
+        user_id: str,
+        idempotency_key: str,
+    ) -> EpisodicMemoryRecord | None:
+        """Resolve a safely retried write inside the same user scope."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT * FROM episodic_memories
+                    WHERE user_id = :user_id
+                    AND idempotency_key = :idempotency_key"""
+                ),
+                {
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                },
+            ).mappings().first()
+        return _memory_from_mapping(row) if row else None
+
+    def get_memory_by_content_hash(
+        self,
+        *,
+        user_id: str,
+        content_hash: str,
+    ) -> EpisodicMemoryRecord | None:
+        """Return one exact-content match, preferring a currently usable record."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT * FROM episodic_memories
+                    WHERE user_id = :user_id AND content_hash = :content_hash
+                    ORDER BY
+                        CASE status
+                            WHEN 'active' THEN 0
+                            WHEN 'inactive' THEN 1
+                            WHEN 'archived' THEN 2
+                            WHEN 'revoked' THEN 3
+                            ELSE 4
+                        END,
+                        updated_at DESC
+                    LIMIT 1"""
+                ),
+                {"user_id": user_id, "content_hash": content_hash},
+            ).mappings().first()
+        return _memory_from_mapping(row) if row else None
+
+    def list_memories(
+        self,
+        user_id: str,
+        *,
+        statuses: tuple[MemoryRecordStatus, ...] | None = None,
+        limit: int = 100,
+    ) -> list[EpisodicMemoryRecord]:
+        """Return bounded user-owned memories ordered by occurrence time."""
+        bounded_limit = min(max(limit, 1), 500)
+        parameters: dict[str, object] = {
+            "user_id": user_id,
+            "limit": bounded_limit,
+        }
+        status_clause = ""
+        if statuses:
+            names: list[str] = []
+            for index, status in enumerate(statuses):
+                name = f"status_{index}"
+                names.append(f":{name}")
+                parameters[name] = status.value
+            status_clause = f" AND status IN ({', '.join(names)})"
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""SELECT * FROM episodic_memories
+                    WHERE user_id = :user_id{status_clause}
+                    ORDER BY occurred_at DESC, created_at DESC
+                    LIMIT :limit"""
+                ),
+                parameters,
+            ).mappings().all()
+        return [_memory_from_mapping(row) for row in rows]
+
+    def transition_memory(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        expected_version: int,
+        target_status: MemoryRecordStatus,
+        reason_code: str,
+        changed_at: datetime | None = None,
+    ) -> EpisodicMemoryRecord:
+        """Apply one row-locked compare-and-swap lifecycle transition."""
+        timestamp = _aware_now(changed_at)
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT * FROM episodic_memories
+                    WHERE memory_id = :memory_id AND user_id = :user_id
+                    FOR UPDATE"""
+                ),
+                {"memory_id": memory_id, "user_id": user_id},
+            ).mappings().first()
+            if row is None:
+                raise MemoryNotFoundError("user-scoped episodic memory was not found")
+            current = _memory_from_mapping(row)
+            _require_expected_version(current.version, expected_version)
+            _require_memory_transition(current.status, target_status)
+            updated = current.model_copy(
+                update={
+                    "status": target_status,
+                    "updated_at": timestamp,
+                    "version": current.version + 1,
+                }
+            )
+            result = connection.execute(
+                text(
+                    """UPDATE episodic_memories
+                    SET status = :status, updated_at = :updated_at, version = :version
+                    WHERE memory_id = :memory_id
+                    AND user_id = :user_id
+                    AND version = :expected_version"""
+                ),
+                {
+                    "status": updated.status.value,
+                    "updated_at": updated.updated_at,
+                    "version": updated.version,
+                    "memory_id": memory_id,
+                    "user_id": user_id,
+                    "expected_version": expected_version,
+                },
+            )
+            if result.rowcount != 1:
+                raise MemoryConflictError("episodic memory was changed concurrently")
+            _insert_postgres_event(
+                connection,
+                _memory_event(
+                    record=updated,
+                    event_type=_TRANSITION_EVENTS[target_status],
+                    from_status=current.status,
+                    to_status=target_status,
+                    reason_code=reason_code,
+                    created_at=timestamp,
+                ),
+            )
+        return updated
+
+    def delete_memory(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        expected_version: int,
+        reason_code: str,
+        changed_at: datetime | None = None,
+    ) -> None:
+        """Physically delete memory content while retaining a content-free event."""
+        timestamp = _aware_now(changed_at)
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT * FROM episodic_memories
+                    WHERE memory_id = :memory_id AND user_id = :user_id
+                    FOR UPDATE"""
+                ),
+                {"memory_id": memory_id, "user_id": user_id},
+            ).mappings().first()
+            if row is None:
+                raise MemoryNotFoundError("user-scoped episodic memory was not found")
+            current = _memory_from_mapping(row)
+            _require_expected_version(current.version, expected_version)
+            event = _memory_event(
+                record=current.model_copy(update={"version": current.version + 1}),
+                event_type=MemoryEventType.MEMORY_DELETED,
+                from_status=current.status,
+                to_status=None,
+                reason_code=reason_code,
+                created_at=timestamp,
+            )
+            result = connection.execute(
+                text(
+                    """DELETE FROM episodic_memories
+                    WHERE memory_id = :memory_id
+                    AND user_id = :user_id
+                    AND version = :expected_version"""
+                ),
+                {
+                    "memory_id": memory_id,
+                    "user_id": user_id,
+                    "expected_version": expected_version,
+                },
+            )
+            if result.rowcount != 1:
+                raise MemoryConflictError("episodic memory was changed concurrently")
+            _insert_postgres_event(connection, event)
+
+    def save_checkpoint(
+        self,
+        checkpoint: PracticeThreadCheckpoint,
+        *,
+        expected_version: int | None,
+        reason_code: str,
+        changed_at: datetime | None = None,
+    ) -> PracticeThreadCheckpoint:
+        """Create or row-lock and update a user-scoped checkpoint."""
+        timestamp = _aware_now(changed_at or checkpoint.updated_at)
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT * FROM thread_checkpoints
+                    WHERE thread_id = :thread_id AND user_id = :user_id
+                    FOR UPDATE"""
+                ),
+                {"thread_id": checkpoint.thread_id, "user_id": checkpoint.user_id},
+            ).mappings().first()
+            current = _checkpoint_from_mapping(row) if row else None
+            if current is None:
+                if expected_version is not None or checkpoint.version != 1:
+                    raise MemoryConflictError(
+                        "new checkpoint requires expected_version=None and version=1"
+                    )
+                saved = checkpoint
+                try:
+                    connection.execute(
+                        text(
+                            """INSERT INTO thread_checkpoints (
+                            thread_id, user_id, current_goal, current_stage,
+                            current_scenario, helpful_strategy_codes,
+                            attempted_skill_names, unresolved_next_step, status,
+                            version, last_activity_at, created_at, updated_at
+                            ) VALUES (
+                            :thread_id, :user_id, :current_goal, :current_stage,
+                            :current_scenario, CAST(:helpful_strategy_codes AS json),
+                            CAST(:attempted_skill_names AS json),
+                            :unresolved_next_step, :status, :version,
+                            :last_activity_at, :created_at, :updated_at
+                            )"""
+                        ),
+                        _postgres_checkpoint_values(saved),
+                    )
+                except IntegrityError as error:
+                    raise MemoryConflictError(
+                        f"checkpoint {checkpoint.thread_id!r} already exists"
+                    ) from error
+                from_status = None
+            else:
+                if expected_version is None:
+                    raise MemoryConflictError("existing checkpoint requires a version")
+                _require_expected_version(current.version, expected_version)
+                saved = checkpoint.model_copy(
+                    update={
+                        "created_at": current.created_at,
+                        "updated_at": timestamp,
+                        "version": current.version + 1,
+                    }
+                )
+                values = _postgres_checkpoint_values(saved)
+                values["expected_version"] = expected_version
+                result = connection.execute(
+                    text(
+                        """UPDATE thread_checkpoints SET
+                        current_goal = :current_goal,
+                        current_stage = :current_stage,
+                        current_scenario = :current_scenario,
+                        helpful_strategy_codes =
+                            CAST(:helpful_strategy_codes AS json),
+                        attempted_skill_names =
+                            CAST(:attempted_skill_names AS json),
+                        unresolved_next_step = :unresolved_next_step,
+                        status = :status,
+                        version = :version,
+                        last_activity_at = :last_activity_at,
+                        updated_at = :updated_at
+                        WHERE thread_id = :thread_id
+                        AND user_id = :user_id
+                        AND version = :expected_version"""
+                    ),
+                    values,
+                )
+                if result.rowcount != 1:
+                    raise MemoryConflictError("checkpoint was changed concurrently")
+                from_status = current.status.value
+            _insert_postgres_event(
+                connection,
+                MemoryEvent(
+                    user_id=saved.user_id,
+                    subject_type=MemorySubjectType.THREAD_CHECKPOINT,
+                    subject_id=saved.thread_id,
+                    event_type=MemoryEventType.CHECKPOINT_UPDATED,
+                    from_status=from_status,
+                    to_status=saved.status.value,
+                    reason_code=reason_code,
+                    subject_version=saved.version,
+                    created_at=timestamp,
+                ),
+            )
+        return saved
+
+    def get_checkpoint(
+        self,
+        thread_id: str,
+        user_id: str,
+    ) -> PracticeThreadCheckpoint | None:
+        """Return a checkpoint only when both thread and owner match."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT * FROM thread_checkpoints
+                    WHERE thread_id = :thread_id AND user_id = :user_id"""
+                ),
+                {"thread_id": thread_id, "user_id": user_id},
+            ).mappings().first()
+        return _checkpoint_from_mapping(row) if row else None
+
+    def list_events(
+        self,
+        *,
+        user_id: str,
+        subject_id: str | None = None,
+        limit: int = 100,
+    ) -> list[MemoryEvent]:
+        """Return content-free audit events within one user scope."""
+        bounded_limit = min(max(limit, 1), 500)
+        subject_clause = ""
+        parameters: dict[str, object] = {
+            "user_id": user_id,
+            "limit": bounded_limit,
+        }
+        if subject_id is not None:
+            subject_clause = " AND subject_id = :subject_id"
+            parameters["subject_id"] = subject_id
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""SELECT * FROM memory_events
+                    WHERE user_id = :user_id{subject_clause}
+                    ORDER BY created_at ASC, event_id ASC
+                    LIMIT :limit"""
+                ),
+                parameters,
+            ).mappings().all()
+        return [_event_from_mapping(row) for row in rows]
+
+
+def _postgres_memory_values(record: EpisodicMemoryRecord) -> dict[str, object]:
+    return {
+        "memory_id": record.memory_id,
+        "user_id": record.user_id,
+        "memory_type": record.memory_type.value,
+        "summary": record.summary,
+        "scenario_type": record.scenario_type.value if record.scenario_type else None,
+        "source_type": record.source_type.value,
+        "source_id": record.source_id,
+        "evidence_type": record.evidence_type.value,
+        "confidence": record.confidence,
+        "status": record.status.value,
+        "occurred_at": record.occurred_at,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "last_retrieved_at": record.last_retrieved_at,
+        "expires_at": record.expires_at,
+        "consent_version": record.consent_version,
+        "content_hash": record.content_hash,
+        "idempotency_key": record.idempotency_key,
+        "supersedes_id": record.supersedes_id,
+        "version": record.version,
+    }
+
+
+def _postgres_checkpoint_values(
+    checkpoint: PracticeThreadCheckpoint,
+) -> dict[str, object]:
+    return {
+        "thread_id": checkpoint.thread_id,
+        "user_id": checkpoint.user_id,
+        "current_goal": (
+            checkpoint.current_goal.value if checkpoint.current_goal else None
+        ),
+        "current_stage": checkpoint.current_stage,
+        "current_scenario": (
+            checkpoint.current_scenario.value
+            if checkpoint.current_scenario
+            else None
+        ),
+        "helpful_strategy_codes": json.dumps(checkpoint.helpful_strategy_codes),
+        "attempted_skill_names": json.dumps(checkpoint.attempted_skill_names),
+        "unresolved_next_step": checkpoint.unresolved_next_step,
+        "status": checkpoint.status.value,
+        "version": checkpoint.version,
+        "last_activity_at": checkpoint.last_activity_at,
+        "created_at": checkpoint.created_at,
+        "updated_at": checkpoint.updated_at,
+    }
+
+
+def _insert_postgres_event(
+    connection: Connection,
+    event: MemoryEvent,
+) -> None:
+    connection.execute(
+        text(
+            """INSERT INTO memory_events (
+            event_id, user_id, subject_type, subject_id, event_type,
+            from_status, to_status, reason_code, subject_version, created_at
+            ) VALUES (
+            :event_id, :user_id, :subject_type, :subject_id, :event_type,
+            :from_status, :to_status, :reason_code, :subject_version, :created_at
+            )"""
+        ),
+        {
+            "event_id": event.event_id,
+            "user_id": event.user_id,
+            "subject_type": event.subject_type.value,
+            "subject_id": event.subject_id,
+            "event_type": event.event_type.value,
+            "from_status": event.from_status,
+            "to_status": event.to_status,
+            "reason_code": event.reason_code,
+            "subject_version": event.subject_version,
+            "created_at": event.created_at,
+        },
+    )
+
+
+def _memory_from_mapping(row: RowMapping) -> EpisodicMemoryRecord:
+    return EpisodicMemoryRecord.model_validate(dict(row))
+
+
+def _checkpoint_from_mapping(row: RowMapping) -> PracticeThreadCheckpoint:
+    return PracticeThreadCheckpoint.model_validate(dict(row))
+
+
+def _event_from_mapping(row: RowMapping) -> MemoryEvent:
+    return MemoryEvent.model_validate(dict(row))
+
+
+__all__ = [
+    "InvalidMemoryTransitionError",
+    "PostgresLongTermMemoryRepository",
+]

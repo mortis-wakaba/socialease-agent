@@ -35,6 +35,14 @@ from app.db.repositories import (
 )
 from app.models_protocols import ProtocolRecord, ProtocolStatus, ProtocolType
 from app.memory.intervention_plan_store import InterventionPlanStore
+from app.memory.long_term_repository import (
+    LongTermMemoryRepository,
+    SQLiteLongTermMemoryRepository,
+)
+from app.memory.proposal_repository import (
+    MemoryProposalRepository,
+    SQLiteMemoryProposalRepository,
+)
 from app.memory.settings_store import (
     SQLiteUserMemorySettingsRepository,
     UserMemorySettingsRepository,
@@ -161,6 +169,30 @@ class RepositoryFactory:
         if self.provider == DatabaseProvider.POSTGRES:
             return PostgresSessionReviewRepository(database_url=self.database_url)
         raise self._not_implemented("session review")
+
+    def long_term_memory_repository(self) -> LongTermMemoryRepository:
+        """Return the durable episodic-memory and checkpoint repository."""
+        if self.provider == DatabaseProvider.SQLITE:
+            return SQLiteLongTermMemoryRepository()
+        if self.provider == DatabaseProvider.POSTGRES:
+            from app.db.postgres.long_term_memory_repository import (
+                PostgresLongTermMemoryRepository,
+            )
+
+            return PostgresLongTermMemoryRepository(database_url=self.database_url)
+        raise self._not_implemented("long-term memory")
+
+    def memory_proposal_repository(self) -> MemoryProposalRepository:
+        """Return the confirmation-gated memory proposal repository."""
+        if self.provider == DatabaseProvider.SQLITE:
+            return SQLiteMemoryProposalRepository()
+        if self.provider == DatabaseProvider.POSTGRES:
+            from app.db.postgres.memory_proposal_repository import (
+                PostgresMemoryProposalRepository,
+            )
+
+            return PostgresMemoryProposalRepository(database_url=self.database_url)
+        raise self._not_implemented("memory proposal")
 
     def protocol_repository(self) -> ProtocolRepository:
         """Return the protocol repository for the configured provider."""

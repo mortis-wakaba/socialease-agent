@@ -11,6 +11,7 @@ from app.memory.settings_store import UserMemorySettingsRepository
 from app.models_memory import (
     MemoryPreferencesUpdateRequest,
     MemoryPreferencesUpdateResponse,
+    PracticeSummaryConsentUpdateResponse,
     PracticePreferences,
     UserOnboardingProfile,
     UserOnboardingProfileResponse,
@@ -31,8 +32,16 @@ USER_MEMORY_TABLES = (
     "intervention_plans",
     "user_memory_settings",
     "session_reviews",
+    "episodic_memories",
+    "thread_checkpoints",
+    "memory_events",
+    "memory_proposals",
 )
 USER_MEMORY_DELETE_ORDER = (
+    "memory_events",
+    "memory_proposals",
+    "thread_checkpoints",
+    "episodic_memories",
     "runs",
     "roleplay_sessions",
     "worksheets",
@@ -142,6 +151,29 @@ class MemoryPrivacyService:
             user_id=user_id,
             consent_state=settings.consent_state,
             practice_preferences=settings.practice_preferences,
+        )
+
+    def update_practice_summary_consent(
+        self,
+        *,
+        user_id: str,
+        consent_to_practice_summary: bool,
+    ) -> PracticeSummaryConsentUpdateResponse:
+        """Enable or revoke future agent use of saved practice summaries."""
+        current = self.settings_repository.get(user_id)
+        consent_state = UserConsentState(
+            consent_to_practice_summary=consent_to_practice_summary,
+            consent_to_save_preferences=current.consent_state.consent_to_save_preferences,
+            do_not_store_raw_messages=True,
+            allow_sensitive_memory=False,
+        )
+        settings = self.settings_repository.save(
+            user_id=user_id,
+            consent_state=consent_state,
+        )
+        return PracticeSummaryConsentUpdateResponse(
+            user_id=user_id,
+            consent_state=settings.consent_state,
         )
 
     def get_onboarding_profile(self, user_id: str) -> UserOnboardingProfileResponse:

@@ -7,6 +7,7 @@ import pytest
 
 from app.models import ChatRequest, Intent, RiskLevel, SafetyResult, TraceRecord
 from app.models_exposure import ExposurePlan, ExposureTask
+from app.models_long_term_memory import MemoryPipelineResult
 from app.models_memory import PracticePreferences, UserConsentState, UserPracticeSummary
 from app.memory.context_builder import build_memory_context
 from app.memory.settings_store import user_memory_settings_store
@@ -123,6 +124,17 @@ class FailingSafetyClassifier:
 
     async def classify(self, message: str) -> SafetyResult:
         raise RuntimeError("safety provider unavailable")
+
+
+class FailingMemoryPipeline:
+    """Return a categorized extraction failure without raising."""
+
+    async def process_messages(self, **kwargs: object) -> MemoryPipelineResult:
+        del kwargs
+        return MemoryPipelineResult(
+            status="extraction_failed",
+            error_category="TRANSIENT_PROVIDER_ERROR",
+        )
 
 
 class FailingSkill:
@@ -371,6 +383,10 @@ def test_memory_context_builder_combines_profile_preferences_and_active_plan() -
         ),
         memory_settings=user_memory_settings_store.get("memory_context_empty").model_copy(
             update={
+                "consent_state": UserConsentState(
+                    consent_to_practice_summary=True,
+                    consent_to_save_preferences=True,
+                ),
                 "practice_preferences": PracticePreferences(
                     preferred_roleplay_difficulty=4,
                     preferred_feedback_style="gentle_specific",
@@ -430,6 +446,33 @@ async def test_roleplay_skill_uses_memory_context_after_consent() -> None:
         "selected_fields"
     ]
     assert "dorm_conflict" not in str(response.structured_data["memory_context"])
+
+
+@pytest.mark.anyio
+async def test_memory_extraction_failure_does_not_change_safe_chat_response() -> None:
+    harness = AgentHarness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
+        memory_write_pipeline=FailingMemoryPipeline(),
+    )
+
+    response = await harness.run(
+        ChatRequest(
+            user_id=f"memory_failure_{uuid4().hex}",
+            message="小组讨论前我有点紧张。",
+        )
+    )
+
+    assert response.response
+    assert response.risk_level == RiskLevel.LOW
+    assert response.structured_data["memory_pipeline"] == {
+        "status": "extraction_failed",
+        "item_count": 0,
+        "committed_count": 0,
+        "confirmation_count": 0,
+        "rejected_count": 0,
+        "error_category": "TRANSIENT_PROVIDER_ERROR",
+    }
+    assert "MEMORY_EXTRACTION_FAILURE" in response.trace.error_categories
 
 
 @pytest.mark.anyio

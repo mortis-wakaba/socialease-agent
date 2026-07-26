@@ -660,6 +660,40 @@ test("privacy settings can export and delete memory", async ({ page }) => {
   await expect(page.getByText("已删除当前用户的 1 条已保存记录。")).toBeVisible();
 });
 
+test("practice summary personalization consent can be revoked", async ({ page }) => {
+  await mockProfile(page);
+  await page.route(
+    `${API}/users/demo_user/memory/consent/practice-summary`,
+    async (route) => {
+      expect(route.request().method()).toBe("PUT");
+      expect(route.request().postDataJSON()).toEqual({
+        consent_to_practice_summary: false
+      });
+      await route.fulfill({
+        json: {
+          user_id: "demo_user",
+          consent_state: {
+            consent_to_practice_summary: false,
+            consent_to_save_preferences: false,
+            do_not_store_raw_messages: true,
+            allow_sensitive_memory: false
+          }
+        }
+      });
+    }
+  );
+
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "停止用于未来个性化" }).click();
+
+  await expect(
+    page.getByText("已停止在未来练习中使用历史练习摘要；原有练习记录仍保留。")
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "允许用于未来个性化" })
+  ).toBeVisible();
+});
+
 test("cross-user denied surfaces as a retryable error", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("socialease.demoUserId", "other_user");

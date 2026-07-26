@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.agents.roleplay import RoleplayAgent
+from app.db.factory import repository_factory
 from app.memory.roleplay_compactor import RoleplayCompactor
 from app.memory.roleplay_context_manager import RoleplayContextManager
 from app.memory.session_context_settings import RoleplaySessionContextSettings
@@ -15,10 +16,12 @@ from app.memory.session_context_store import (
     InMemorySessionContextStore,
     RedisSessionContextStore,
 )
+from app.memory.thread_checkpoint_service import ThreadCheckpointService
 from app.memory.token_estimator import (
     ConservativeTokenEstimator,
     create_token_estimator,
 )
+from app.models_memory import UserConsentState
 from app.models_roleplay import (
     RoleplayFeedbackRequest,
     RoleplayMessageRequest,
@@ -26,7 +29,11 @@ from app.models_roleplay import (
     RoleplayScenario,
     RoleplayStartRequest,
 )
-from app.models_session_context import RoleplayCompactState, SessionContextMessage
+from app.models_session_context import (
+    DurableCheckpointContext,
+    RoleplayCompactState,
+    SessionContextMessage,
+)
 from app.services.roleplay_service import RoleplayService
 
 
@@ -539,6 +546,107 @@ async def test_roleplay_degrades_safely_when_redis_context_is_disabled() -> None
     assert response.context_diagnostics["error_category"] == (
         "SESSION_CONTEXT_UNAVAILABLE"
     )
+
+
+@pytest.mark.anyio
+async def test_fallback_history_and_active_memory_share_total_input_budget() -> None:
+    settings = _settings(max_tokens=1200)
+    estimator = CharacterTokenEstimator()
+    manager = RoleplayContextManager(
+        store=DisabledSessionContextStore(),
+        settings=settings,
+        compactor=RoleplayCompactor(token_estimator=estimator),
+        token_estimator=estimator,
+    )
+    compact_state = RoleplayCompactState(
+        current_topic="scenario:group_discussion;stage:paused",
+        unresolved_question="恢复后继续表达一个核心观点。",
+        version=2,
+        updated_at=datetime.now(timezone.utc),
+    )
+    durable = DurableCheckpointContext(
+        compact_state=compact_state,
+        checkpoint_version=2,
+        estimated_tokens=estimator.count(compact_state.model_dump_json()),
+        token_budget=512,
+    )
+
+    prompt_context = await manager.build_prompt_context(
+        user_id="budget-owner",
+        session_id="budget-thread",
+        scenario="group_discussion",
+        difficulty=3,
+        guidance="先说观点，再补充理由。",
+        current_user_message="这次我想说得更简短。",
+        fallback_recent_messages=["agent:" + ("较长历史。" * 400)] * 8,
+        durable_checkpoint=durable,
+    )
+
+    rendered_tokens = estimator.count(
+        compact_state.model_dump_json()
+        + "\n".join(prompt_context.recent_messages)
+    )
+    assert prompt_context.diagnostics.estimated_input_tokens <= 1200
+    assert rendered_tokens <= 1200
+    assert prompt_context.diagnostics.durable_checkpoint_used is True
+
+
+@pytest.mark.anyio
+async def test_expired_redis_context_restores_exact_durable_checkpoint() -> None:
+    user_id = f"durable_restore_{uuid4().hex}"
+    repository_factory().user_memory_settings_repository().save(
+        user_id=user_id,
+        consent_state=UserConsentState(consent_to_practice_summary=True),
+    )
+    clock = MutableClock()
+    store = InMemorySessionContextStore(now=clock.now)
+    manager = _manager(store)
+    client = CapturingLLMClient()
+    checkpoint_service = ThreadCheckpointService(
+        repository=repository_factory().long_term_memory_repository(),
+        settings_repository=repository_factory().user_memory_settings_repository(),
+        token_estimator=ConservativeTokenEstimator(),
+        active_memory_token_budget=256,
+    )
+    service = RoleplayService(
+        agent=RoleplayAgent(llm_client=client),
+        context_manager=manager,
+        checkpoint_service=checkpoint_service,
+    )
+    start = await service.start_session(
+        RoleplayStartRequest(
+            user_id=user_id,
+            scenario=RoleplayScenario.CLASSROOM_SPEECH,
+            difficulty=2,
+        )
+    )
+    clock.advance(3601)
+    assert await store.get(
+        user_id=user_id,
+        session_id=start.session.session_id,
+    ) is None
+
+    current_message = "不，我现在想先练习一个更简短的开场。"
+    response = await service.send_message(
+        RoleplayMessageRequest(
+            session_id=start.session.session_id,
+            user_id=user_id,
+            message=current_message,
+        )
+    )
+    prompt = client.user_prompts[-1]
+
+    assert response.context_diagnostics["durable_checkpoint_used"] is True
+    assert response.context_diagnostics["durable_checkpoint_version"] == 1
+    assert (
+        response.context_diagnostics["active_memory_estimated_tokens"]
+        <= response.context_diagnostics["active_memory_token_budget"]
+    )
+    assert "stage:roleplay_started" in prompt
+    assert "发送一轮练习回复" in prompt
+    assert current_message in prompt
+    assert "overrides any conflicting or stale detail" in prompt
+    assert prompt.index("stage:roleplay_started") < prompt.index(current_message)
 
 
 @pytest.mark.anyio

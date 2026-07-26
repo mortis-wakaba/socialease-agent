@@ -19,6 +19,10 @@ from app.guardrails.output import (
 from app.db.factory import repository_factory
 from app.db.repositories import ExposureRepository, UserProfileRepository
 from app.memory.settings_store import UserMemorySettingsRepository
+from app.memory.policy_engine import MemoryPolicyEngine
+from app.memory.proposal_extractor import MemoryProposalExtractor
+from app.memory.write_pipeline import MemoryWritePipeline
+from app.models_long_term_memory import MemorySourceType
 from app.models import (
     ChatRequest,
     ChatResponse,
@@ -80,6 +84,7 @@ class AgentHarness:
         exposure_repository: ExposureRepository | None = None,
         memory_settings_repository: UserMemorySettingsRepository | None = None,
         output_guardrail: OutputGuardrail | None = None,
+        memory_write_pipeline: MemoryWritePipeline | None = None,
     ) -> None:
         self.trace_logger = trace_logger
         self.safety_classifier = safety_classifier or create_safety_classifier()
@@ -93,6 +98,13 @@ class AgentHarness:
         self.exposure_repository = exposure_repository or factory.exposure_repository()
         self.memory_settings_repository = (
             memory_settings_repository or factory.user_memory_settings_repository()
+        )
+        self.memory_write_pipeline = memory_write_pipeline or MemoryWritePipeline(
+            extractor=MemoryProposalExtractor(create_llm_client()),
+            policy_engine=MemoryPolicyEngine(),
+            memory_repository=factory.long_term_memory_repository(),
+            proposal_repository=factory.memory_proposal_repository(),
+            settings_repository=self.memory_settings_repository,
         )
 
     async def run(
@@ -451,6 +463,70 @@ class AgentHarness:
                 intervention_plan.model_dump(mode="json"),
             )
 
+        memory_pipeline_result = None
+        if intent_result.intent in {
+            Intent.EMOTIONAL_SUPPORT,
+            Intent.ROLEPLAY_PRACTICE,
+            Intent.CBT_WORKSHEET,
+            Intent.EXPOSURE_PLANNING,
+            Intent.PROGRESS_REVIEW,
+        }:
+            try:
+                memory_pipeline_result = await self.memory_write_pipeline.process_messages(
+                    user_id=request.user_id,
+                    messages=[{"role": "user", "content": request.message}],
+                    source_type=MemorySourceType.CHAT,
+                    source_id=(request_id or run_id)[:128],
+                    occurred_at=datetime.now(timezone.utc),
+                    risk_level=safety_result.risk_level,
+                )
+                skill_result.structured_data["memory_pipeline"] = {
+                    "status": memory_pipeline_result.status,
+                    "item_count": len(memory_pipeline_result.items),
+                    "committed_count": sum(
+                        item.action.value in {"auto_commit", "revoke"}
+                        for item in memory_pipeline_result.items
+                    ),
+                    "confirmation_count": sum(
+                        item.action.value == "require_confirmation"
+                        for item in memory_pipeline_result.items
+                    ),
+                    "rejected_count": sum(
+                        item.action.value == "reject"
+                        for item in memory_pipeline_result.items
+                    ),
+                    "error_category": memory_pipeline_result.error_category,
+                }
+                if memory_pipeline_result.status == "extraction_failed":
+                    errors.append(
+                        format_trace_error(
+                            ErrorCategory.MEMORY_EXTRACTION_FAILURE,
+                            memory_pipeline_result.error_category or "reported_error",
+                        )
+                    )
+                elif memory_pipeline_result.status in {
+                    "write_failed",
+                    "partial_failure",
+                }:
+                    errors.append(
+                        format_trace_error(
+                            ErrorCategory.MEMORY_WRITE_FAILURE,
+                            memory_pipeline_result.error_category or "reported_error",
+                        )
+                    )
+            except Exception as exc:
+                errors.append(
+                    format_trace_error(
+                        ErrorCategory.MEMORY_EXTRACTION_FAILURE,
+                        exc,
+                    )
+                )
+                skill_result.structured_data["memory_pipeline"] = {
+                    "status": "write_failed",
+                    "item_count": 0,
+                    "error_category": "MEMORY_PIPELINE_ERROR",
+                }
+
         latency_ms = (perf_counter() - started) * 1000
         input_decision = persistence_gate.persist_text(
             user_id=request.user_id,
@@ -486,6 +562,10 @@ class AgentHarness:
                     or output_guardrail_result.semantic_check_failed
                 ),
                 output_repair_attempted=output_guardrail_result.repair_attempted,
+                memory_extraction_used=(
+                    memory_pipeline_result is not None
+                    and memory_pipeline_result.status != "skipped"
+                ),
             ),
             input=input_decision.persisted_text,
             safety_result=safety_result,

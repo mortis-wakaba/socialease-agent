@@ -70,6 +70,88 @@ CREATE TABLE IF NOT EXISTS session_reviews (
     payload TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS episodic_memories (
+    memory_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    memory_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    scenario_type TEXT,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    evidence_type TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    status TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_retrieved_at TEXT,
+    expires_at TEXT,
+    consent_version TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    supersedes_id TEXT,
+    version INTEGER NOT NULL,
+    CHECK (memory_type IN ('practice_experience', 'helpful_strategy', 'practice_milestone', 'social_context', 'recurring_pattern')),
+    CHECK (source_type IN ('chat', 'roleplay', 'worksheet', 'exposure', 'session_review', 'user_confirmed')),
+    CHECK (evidence_type IN ('explicit_user_statement', 'completed_product_action', 'user_confirmed')),
+    CHECK (confidence >= 0 AND confidence <= 1),
+    CHECK (status IN ('active', 'inactive', 'archived', 'superseded', 'revoked')),
+    CHECK (version >= 1)
+);
+CREATE TABLE IF NOT EXISTS thread_checkpoints (
+    thread_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    current_goal TEXT,
+    current_stage TEXT,
+    current_scenario TEXT,
+    helpful_strategy_codes TEXT NOT NULL,
+    attempted_skill_names TEXT NOT NULL,
+    unresolved_next_step TEXT,
+    status TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    last_activity_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (status IN ('active', 'paused', 'completed', 'archived')),
+    CHECK (version >= 1)
+);
+CREATE TABLE IF NOT EXISTS memory_events (
+    event_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    from_status TEXT,
+    to_status TEXT,
+    reason_code TEXT NOT NULL,
+    subject_version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    CHECK (subject_type IN ('episodic_memory', 'thread_checkpoint', 'memory_proposal')),
+    CHECK (subject_version >= 1)
+);
+CREATE TABLE IF NOT EXISTS memory_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    memory_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    scenario_type TEXT,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    evidence_type TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    occurred_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    policy_reason TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    CHECK (confidence >= 0 AND confidence <= 1),
+    CHECK (status IN ('pending_confirmation', 'confirmed', 'rejected', 'expired')),
+    CHECK (version >= 1)
+);
 CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
@@ -123,6 +205,22 @@ CREATE INDEX IF NOT EXISTS idx_intervention_plans_session_id ON intervention_pla
 CREATE INDEX IF NOT EXISTS idx_intervention_plans_status ON intervention_plans(user_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_session_reviews_user_id ON session_reviews(user_id);
 CREATE INDEX IF NOT EXISTS idx_session_reviews_user_created ON session_reviews(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_episodic_memories_user_status
+ON episodic_memories(user_id, status, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_episodic_memories_user_hash
+ON episodic_memories(user_id, content_hash);
+CREATE INDEX IF NOT EXISTS idx_episodic_memories_source
+ON episodic_memories(user_id, source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_thread_checkpoints_user_status
+ON thread_checkpoints(user_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_memory_events_user_created
+ON memory_events(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_events_subject
+ON memory_events(user_id, subject_type, subject_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_proposals_user_status
+ON memory_proposals(user_id, status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_proposals_user_idempotency
+ON memory_proposals(user_id, idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_access_token ON user_sessions(access_token_id);

@@ -20,6 +20,7 @@ class RoleplaySessionContextSettings:
     redis_socket_timeout_seconds: float
     tokenizer_backend: str = "auto"
     tokenizer_model: str | None = None
+    active_checkpoint_max_tokens: int = 256
 
 
 def roleplay_session_context_settings() -> RoleplaySessionContextSettings:
@@ -61,6 +62,12 @@ def roleplay_session_context_settings() -> RoleplaySessionContextSettings:
             os.getenv("ROLEPLAY_TOKENIZER_MODEL", "").strip()
             or os.getenv("LLM_MODEL", "").strip()
             or None
+        ),
+        active_checkpoint_max_tokens=_int_env(
+            "ROLEPLAY_ACTIVE_CHECKPOINT_MAX_TOKENS",
+            256,
+            minimum=128,
+            maximum=1024,
         ),
     )
 

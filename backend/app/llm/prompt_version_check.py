@@ -77,6 +77,16 @@ PROMPT_SOURCES: dict[str, tuple[PromptSource, ...]] = {
             ),
         ),
     ),
+    "memory_extraction": (
+        PromptSource(
+            "app/llm/prompts.py",
+            (
+                "COMMON_SAFETY_INSTRUCTIONS",
+                "build_memory_extraction_system_prompt",
+                "build_memory_extraction_user_prompt",
+            ),
+        ),
+    ),
     "resource_agent_loop": (
         PromptSource(
             "app/llm/prompts.py",

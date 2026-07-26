@@ -225,6 +225,39 @@ export default function SettingsPage() {
     }
   }
 
+  async function updatePracticeSummaryConsent(enabled: boolean) {
+    if (!userId) {
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setRetryAction(null);
+    setStatusMessage(null);
+    try {
+      const result = await api.updatePracticeSummaryConsent(userId, enabled);
+      setProfile((current) =>
+        current
+          ? { ...current, consent_state: result.consent_state }
+          : current
+      );
+      setStatusMessage(
+        enabled
+          ? "已允许在未来练习中使用历史练习摘要。"
+          : "已停止在未来练习中使用历史练习摘要；原有练习记录仍保留。"
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法更新练习摘要授权");
+      setRetryAction({
+        label: "重试更新",
+        run: () => {
+          void updatePracticeSummaryConsent(enabled);
+        }
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function resetOnboarding() {
     if (!userId) {
       return;
@@ -376,8 +409,36 @@ export default function SettingsPage() {
                   <Badge tone={profile.consent_state.consent_to_save_preferences ? "good" : "neutral"}>
                     偏好保存同意
                   </Badge>
+                  <Badge tone={profile.consent_state.consent_to_practice_summary ? "good" : "neutral"}>
+                    历史摘要个性化
+                  </Badge>
                 </div>
                 <p>{profile.privacy_notice}</p>
+                <div className="space-y-2 rounded-md border border-line bg-white p-3">
+                  <p>
+                    练习记录用于历史、进度和导出；下面的授权只控制这些记录的摘要
+                    是否可以进入未来的 Agent 上下文。
+                  </p>
+                  <Button
+                    type="button"
+                    variant={
+                      profile.consent_state.consent_to_practice_summary
+                        ? "secondary"
+                        : "primary"
+                    }
+                    disabled={loading}
+                    aria-pressed={profile.consent_state.consent_to_practice_summary}
+                    onClick={() =>
+                      void updatePracticeSummaryConsent(
+                        !profile.consent_state.consent_to_practice_summary
+                      )
+                    }
+                  >
+                    {profile.consent_state.consent_to_practice_summary
+                      ? "停止用于未来个性化"
+                      : "允许用于未来个性化"}
+                  </Button>
+                </div>
                 <dl className="grid grid-cols-2 gap-2 rounded-md border border-line bg-white p-3">
                   <Metric label="Role-play sessions" value={profile.practice_summary.roleplay_session_count} />
                   <Metric label="Worksheets" value={profile.practice_summary.worksheet_count} />

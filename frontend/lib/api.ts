@@ -13,6 +13,7 @@ import type {
   ProtocolResponse,
   MemoryPreferencesUpdateResponse,
   PracticePreferences,
+  PracticeSummaryConsentUpdateResponse,
   SessionReviewCompletion,
   SessionReviewCreateResponse,
   SessionReviewListResponse,
@@ -610,6 +611,16 @@ export const api = {
     return request<MemoryPreferencesUpdateResponse>(
       `/api/users/${encodeURIComponent(userId)}/memory/preferences`,
       { method: "DELETE" }
+    );
+  },
+
+  updatePracticeSummaryConsent(userId: string, enabled: boolean) {
+    return request<PracticeSummaryConsentUpdateResponse>(
+      `/api/users/${encodeURIComponent(userId)}/memory/consent/practice-summary`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ consent_to_practice_summary: enabled })
+      }
     );
   },
 
