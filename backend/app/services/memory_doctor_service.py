@@ -49,7 +49,6 @@ from app.models_memory_doctor import (
     MemoryDoctorSubjectType,
     MemoryDoctorThresholds,
 )
-from app.models_roleplay import RoleplayScenario
 
 
 class EmbeddingIntegrityInspector(Protocol):
@@ -255,9 +254,7 @@ class MemoryDoctorService:
                         metadata={
                             "memory_type": left.memory_type.value,
                             "scenario_type": (
-                                left.scenario_type.value
-                                if left.scenario_type is not None
-                                else "none"
+                                left.scenario_type or "none"
                             ),
                             "overlap_term_count": overlap,
                         },
@@ -480,7 +477,7 @@ class MemoryDoctorService:
         packet = self.active_memory_assembler.assemble(
             user_id=owner_id,
             skill_context=projection,
-            current_request=scenario.value if scenario is not None else "practice",
+            current_request=scenario if scenario is not None else "practice",
             durable_checkpoint=durable_checkpoint,
             memory_retrieval=retrieval,
             retrieval_user_id=owner_id,
@@ -642,7 +639,7 @@ class MemoryDoctorService:
 
 
 def _doctor_skill_projection(
-    scenario: RoleplayScenario | None,
+    scenario: str | None,
     *,
     now: datetime,
 ) -> SkillContextProjection:
@@ -654,7 +651,7 @@ def _doctor_skill_projection(
         )
     return SkillContextProjection(
         skill_name="roleplay_skill",
-        values={"scenario": scenario.value},
+        values={"scenario": scenario},
         selected_fields=["scenario"],
         field_metadata={
             "scenario": ContextFieldMetadata(

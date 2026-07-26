@@ -12,11 +12,41 @@ from app.models_roleplay import (
     RoleplayMessageFeatures,
     RoleplayRubricBreakdown,
     RoleplayRubricSignal,
-    RoleplayScenario,
     RoleplaySession,
 )
 from app.models_llm import LLMUsage
+from app.models_scenario import ScenarioSpec, SocialSkillCode
 from app.models_session_context import RoleplayPromptContext
+from app.services.scenario_interpreter import ScenarioInterpreter
+from app.services.legacy_scenario_migration import project_legacy_scenario
+
+
+_SKILL_QUERY_TERMS = {
+    SocialSkillCode.CONVERSATION_INITIATION: "自然开场 开放式问题",
+    SocialSkillCode.QUESTION_ASKING: "具体提问 说明已有尝试",
+    SocialSkillCode.ASSERTIVE_EXPRESSION: "清楚表达 核心观点 理由",
+    SocialSkillCode.BOUNDARY_SETTING: "表达边界 礼貌拒绝",
+    SocialSkillCode.SPECIFIC_REQUEST: "描述事实 提出具体请求",
+    SocialSkillCode.DISAGREEMENT: "尊重地表达不同意见",
+    SocialSkillCode.EMPATHY: "表达理解 保持尊重",
+    SocialSkillCode.CONFLICT_REPAIR: "降低冲突 修复沟通",
+    SocialSkillCode.INVITATION: "自然邀请 具体安排",
+    SocialSkillCode.SELF_INTRODUCTION: "简短自我介绍 相关经历",
+    SocialSkillCode.CONVERSATION_EXIT: "自然结束对话",
+    SocialSkillCode.COLLABORATIVE_PROBLEM_SOLVING: "协商 分工 共同方案",
+}
+
+_FALLBACK_PROMPTS = {
+    SocialSkillCode.BOUNDARY_SETTING: "我理解你的顾虑。你能先清楚说出自己目前不能接受的部分吗？",
+    SocialSkillCode.SPECIFIC_REQUEST: "你希望对方具体做出什么调整？",
+    SocialSkillCode.DISAGREEMENT: "我有不同看法。你能先说出核心观点，再补充一个理由吗？",
+    SocialSkillCode.CONVERSATION_INITIATION: "你好。你可以先用一句轻量开场，再问一个开放式问题。",
+    SocialSkillCode.QUESTION_ASKING: "你能先提出具体问题，再说明自己已经尝试到哪一步吗？",
+    SocialSkillCode.INVITATION: "听起来可以。你能给出一个具体而有退路的邀请吗？",
+    SocialSkillCode.SELF_INTRODUCTION: "谢谢。你能用一句话说明最相关的一段经历吗？",
+    SocialSkillCode.CONFLICT_REPAIR: "我愿意继续沟通。你能先描述事实，再提出一个可执行的调整吗？",
+    SocialSkillCode.ASSERTIVE_EXPRESSION: "我在听。你能先用一句话说出核心意思吗？",
+}
 
 
 class RoleplayAgent:
@@ -25,54 +55,26 @@ class RoleplayAgent:
     def __init__(self, llm_client: BaseLLMClient | None = None) -> None:
         self.llm_client = llm_client
 
-    scenario_openings: dict[RoleplayScenario, str] = {
-        RoleplayScenario.CLASSROOM_SPEECH: "你现在在课堂上准备发言。我会扮演同学，先看着你，等你开口。",
-        RoleplayScenario.GROUP_DISCUSSION: "我们正在小组讨论。我会扮演组员，问你：你觉得这个方案哪里最重要？",
-        RoleplayScenario.DORM_CONFLICT: "我会扮演室友。你想和我沟通一个让你不舒服的宿舍问题。",
-        RoleplayScenario.CLUB_ICEBREAKING: "我会扮演社团新同学。我们刚见面，你可以先做一个轻松开场。",
-        RoleplayScenario.INVITE_CLASSMATE_MEAL: "我会扮演同学。你想自然地邀请我一起吃饭。",
-        RoleplayScenario.ASK_TEACHER_QUESTION: "我会扮演老师。你可以向我提出一个具体问题。",
-        RoleplayScenario.INTERVIEW_SELF_INTRO: "我会扮演面试官。请你做一个简短自我介绍。",
-        RoleplayScenario.REFUSE_REQUEST: "我会扮演提出请求的人。你可以练习清楚、礼貌地拒绝。",
-        RoleplayScenario.EXPRESS_DISAGREEMENT: "我会扮演持不同意见的同学。你可以练习表达不同看法。",
-    }
-
-    scenario_prompts: dict[RoleplayScenario, str] = {
-        RoleplayScenario.CLASSROOM_SPEECH: "我听到了。你能用一句话先说出你的核心观点吗？",
-        RoleplayScenario.GROUP_DISCUSSION: "这个想法有意思。你能补充一个理由，帮助小组理解你的判断吗？",
-        RoleplayScenario.DORM_CONFLICT: "我可能没意识到这影响你了。你希望我们具体怎么调整？",
-        RoleplayScenario.CLUB_ICEBREAKING: "你好，我也刚来。你可以问我一个轻松的问题，让对话继续。",
-        RoleplayScenario.INVITE_CLASSMATE_MEAL: "听起来可以。你可以给我一个具体时间或地点吗？",
-        RoleplayScenario.ASK_TEACHER_QUESTION: "这个问题可以。你能说明你已经尝试到哪一步了吗？",
-        RoleplayScenario.INTERVIEW_SELF_INTRO: "谢谢。你能再补一句你和这个机会最相关的经历吗？",
-        RoleplayScenario.REFUSE_REQUEST: "我有点失望。你能在保持边界的同时表达理解吗？",
-        RoleplayScenario.EXPRESS_DISAGREEMENT: "我不太同意。你能用更具体的例子说明你的观点吗？",
-    }
-
-    scenario_queries: dict[RoleplayScenario, str] = {
-        RoleplayScenario.CLASSROOM_SPEECH: "课堂发言 准备 核心观点 开场",
-        RoleplayScenario.GROUP_DISCUSSION: "小组讨论 表达观点 补充理由 社交练习",
-        RoleplayScenario.DORM_CONFLICT: "宿舍沟通 冲突 事实 影响 请求",
-        RoleplayScenario.CLUB_ICEBREAKING: "社团迎新 寒暄 兴趣交换 活动签到",
-        RoleplayScenario.INVITE_CLASSMATE_MEAL: "邀请同学吃饭 具体时间 地点 自然表达",
-        RoleplayScenario.ASK_TEACHER_QUESTION: "向老师提问 具体问题 已经尝试",
-        RoleplayScenario.INTERVIEW_SELF_INTRO: "面试 自我介绍 相关经历 简短表达",
-        RoleplayScenario.REFUSE_REQUEST: "拒绝请求 表达边界 礼貌 理解",
-        RoleplayScenario.EXPRESS_DISAGREEMENT: "表达不同意见 具体例子 清楚表达",
-    }
-
-    def guidance_query(self, scenario: RoleplayScenario) -> str:
-        """Return the Social Skills RAG query for a scenario."""
-        return self.scenario_queries[scenario]
+    def guidance_query(self, scenario: ScenarioSpec) -> str:
+        """Build one bounded RAG query from open scenario facets."""
+        skill_terms = " ".join(
+            _SKILL_QUERY_TERMS[skill] for skill in scenario.skill_codes
+        )
+        return (
+            f"{scenario.safe_summary} {scenario.practice_goal} {skill_terms}"
+        )[:600]
 
     def opening(
         self,
-        scenario: RoleplayScenario,
+        scenario: ScenarioSpec,
         difficulty: int,
         guidance: RoleplayGuidance,
     ) -> str:
         """Return a grounded opening message for a scenario."""
-        base = self.scenario_openings[scenario]
+        base = (
+            f"我们来练习“{scenario.safe_summary}”。"
+            f"我会扮演情境中的对话对象，你可以尝试：{scenario.practice_goal}。"
+        )
         if guidance.no_guidance_found:
             guidance_line = "本次没有检索到足够相关的社交技巧文档，将使用通用、安全的练习脚手架。"
         else:
@@ -140,7 +142,7 @@ class RoleplayAgent:
         return await self.llm_client.generate_text(
             system_prompt=build_roleplay_system_prompt(),
             user_prompt=build_roleplay_user_prompt(
-                scenario=session.scenario.value,
+                scenario=_scenario_spec(session).model_dump(mode="json"),
                 difficulty=session.difficulty,
                 guidance=guidance,
                 recent_messages=recent_messages,
@@ -165,7 +167,8 @@ class RoleplayAgent:
         user_message: str,
     ) -> str:
         """Return the deterministic MVP fallback turn."""
-        prompt = self.scenario_prompts[session.scenario]
+        scenario = _scenario_spec(session)
+        prompt = _fallback_prompt(scenario)
         if session.difficulty >= 4:
             return f"{prompt} 我会稍微追问得更具体一些。"
         if len(user_message) < 12:
@@ -415,3 +418,22 @@ class RoleplayAgent:
         return self._sum(features, "repair_marker_count") > 0 or any(
             item.has_repair_or_acknowledgement for item in features
         )
+
+
+def _scenario_spec(session: RoleplaySession) -> ScenarioSpec:
+    """Read new sessions and safely project legacy rows during migration."""
+    if session.scenario_spec is not None:
+        return session.scenario_spec
+    if session.scenario is None:
+        raise ValueError("role-play session has no scenario contract")
+    return ScenarioInterpreter().interpret(
+        description=project_legacy_scenario(session.scenario)
+    )
+
+
+def _fallback_prompt(scenario: ScenarioSpec) -> str:
+    for skill in scenario.skill_codes:
+        prompt = _FALLBACK_PROMPTS.get(skill)
+        if prompt is not None:
+            return prompt
+    return "我在听。你能先用一句话表达自己的核心意思吗？"

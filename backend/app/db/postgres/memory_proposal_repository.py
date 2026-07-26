@@ -1,6 +1,7 @@
 """PostgreSQL adapter for confirmation-gated memory proposals."""
 
 from datetime import datetime
+import json
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.exc import IntegrityError
@@ -48,12 +49,15 @@ class PostgresMemoryProposalRepository(MemoryProposalRepository):
                     text(
                         """INSERT INTO memory_proposals (
                         proposal_id, user_id, memory_type, summary, scenario_type,
+                        scenario_id, practice_thread_id, skill_codes, context_tags,
                         source_type, source_id, evidence_type, confidence,
                         occurred_at, status, policy_reason, content_hash,
                         idempotency_key, version, created_at, updated_at, expires_at
                         ) VALUES (
                         :proposal_id, :user_id, :memory_type, :summary,
-                        :scenario_type, :source_type, :source_id, :evidence_type,
+                        :scenario_type, :scenario_id, :practice_thread_id,
+                        CAST(:skill_codes AS json), CAST(:context_tags AS json),
+                        :source_type, :source_id, :evidence_type,
                         :confidence, :occurred_at, :status, :policy_reason,
                         :content_hash, :idempotency_key, :version, :created_at,
                         :updated_at, :expires_at
@@ -241,7 +245,11 @@ def _proposal_values(record: PendingMemoryProposalRecord) -> dict[str, object]:
         "user_id": record.user_id,
         "memory_type": record.memory_type.value,
         "summary": record.summary,
-        "scenario_type": record.scenario_type.value if record.scenario_type else None,
+        "scenario_type": record.scenario_type,
+        "scenario_id": record.scenario_id,
+        "practice_thread_id": record.practice_thread_id,
+        "skill_codes": json.dumps([skill.value for skill in record.skill_codes]),
+        "context_tags": json.dumps(record.context_tags),
         "source_type": record.source_type.value,
         "source_id": record.source_id,
         "evidence_type": record.evidence_type.value,

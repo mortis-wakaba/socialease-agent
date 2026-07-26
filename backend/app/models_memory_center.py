@@ -20,7 +20,7 @@ from app.models_memory import (
     UserOnboardingProfile,
 )
 from app.models_memory_doctor import MemoryDoctorReport
-from app.models_roleplay import RoleplayScenario
+from app.models_scenario import SocialSkillCode
 
 
 class StableMemoryView(BaseModel):
@@ -45,7 +45,11 @@ class EpisodicMemoryView(BaseModel):
     memory_id: str
     memory_type: MemoryType
     summary: str
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = None
+    scenario_id: str | None = None
+    practice_thread_id: str | None = None
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
+    context_tags: list[str] = Field(default_factory=list, max_length=5)
     source_type: MemorySourceType
     evidence_type: MemoryEvidenceType
     confidence: float
@@ -67,7 +71,11 @@ class MemoryProposalView(BaseModel):
     proposal_id: str
     memory_type: MemoryType
     summary: str
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = None
+    scenario_id: str | None = None
+    practice_thread_id: str | None = None
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
+    context_tags: list[str] = Field(default_factory=list, max_length=5)
     source_type: MemorySourceType
     evidence_type: MemoryEvidenceType
     confidence: float

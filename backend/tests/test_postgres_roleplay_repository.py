@@ -16,7 +16,6 @@ from app.models_roleplay import (
     RoleplayMessage,
     RoleplayMessageFeatures,
     RoleplayMessageRole,
-    RoleplayScenario,
     RoleplaySession,
 )
 
@@ -57,7 +56,7 @@ def test_postgres_roleplay_save_get_and_owner_scope(
     assert fetched is not None
     assert fetched.session_id == session.session_id
     assert fetched.user_id == session.user_id
-    assert fetched.scenario == RoleplayScenario.REFUSE_REQUEST
+    assert fetched.scenario == "refuse_request"
     assert fetched.retrieved_guidance.citations
     assert fetched.messages[0].role == RoleplayMessageRole.AGENT
     assert wrong_user is None
@@ -126,7 +125,7 @@ def _roleplay_session(*, user_id: str) -> RoleplaySession:
     return RoleplaySession(
         session_id=f"session_{uuid4().hex}",
         user_id=user_id,
-        scenario=RoleplayScenario.REFUSE_REQUEST,
+        scenario="refuse_request",
         difficulty=3,
         messages=[
             RoleplayMessage(

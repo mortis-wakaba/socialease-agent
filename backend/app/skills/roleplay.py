@@ -5,22 +5,9 @@ from typing import Any
 
 from app.models import Intent
 from app.models_context import SkillContextProjection
-from app.models_roleplay import RoleplayScenario, RoleplayStartRequest
+from app.models_roleplay import RoleplayStartRequest
 from app.services.roleplay_service import RoleplayService, roleplay_service
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
-
-
-SCENARIO_KEYWORDS: dict[RoleplayScenario, tuple[str, ...]] = {
-    RoleplayScenario.CLASSROOM_SPEECH: ("课堂", "发言", "上课", "presentation", "speech"),
-    RoleplayScenario.GROUP_DISCUSSION: ("小组", "讨论", "组会", "group"),
-    RoleplayScenario.DORM_CONFLICT: ("宿舍", "室友", "寝室", "dorm"),
-    RoleplayScenario.CLUB_ICEBREAKING: ("社团", "破冰", "迎新", "club"),
-    RoleplayScenario.INVITE_CLASSMATE_MEAL: ("吃饭", "约同学", "邀请", "meal"),
-    RoleplayScenario.ASK_TEACHER_QUESTION: ("老师", "提问", "office hour", "teacher"),
-    RoleplayScenario.INTERVIEW_SELF_INTRO: ("面试", "自我介绍", "interview"),
-    RoleplayScenario.REFUSE_REQUEST: ("拒绝", "不想答应", "边界", "refuse"),
-    RoleplayScenario.EXPRESS_DISAGREEMENT: ("不同意见", "反对", "不同看法", "disagree"),
-}
 
 
 class RoleplaySkill:
@@ -40,7 +27,7 @@ class RoleplaySkill:
 
     async def run(self, context: SkillContext) -> SkillResult:
         """Create a role-play session using context slots or conservative defaults."""
-        scenario = _scenario_from_context(
+        scenario_description = _scenario_description_from_context(
             context.selected_context,
             context.message,
         )
@@ -48,7 +35,7 @@ class RoleplaySkill:
         result = await self.service.start_session(
             RoleplayStartRequest(
                 user_id=context.user_id,
-                scenario=scenario,
+                scenario_description=scenario_description,
                 difficulty=difficulty,
             )
         )
@@ -56,7 +43,9 @@ class RoleplaySkill:
             "agent": "roleplay_agent",
             "action": "roleplay_started",
             "session_id": result.session.session_id,
-            "scenario": result.session.scenario.value,
+            "scenario": result.session.scenario_spec.model_dump(mode="json")
+            if result.session.scenario_spec is not None
+            else None,
             "difficulty": result.session.difficulty,
             "citations": [
                 citation.model_dump(mode="json")
@@ -73,35 +62,16 @@ class RoleplaySkill:
         )
 
 
-def _scenario_from_context(
+def _scenario_description_from_context(
     selected_context: SkillContextProjection | None,
     message: str,
-) -> RoleplayScenario:
+) -> str:
+    """Prefer the current request over potentially stale profile context."""
     values = selected_context.values if selected_context is not None else {}
     raw = values.get("scenario")
-    if isinstance(raw, str):
-        try:
-            return RoleplayScenario(raw)
-        except ValueError:
-            pass
-
-    lowered = message.casefold()
-    for scenario, keywords in SCENARIO_KEYWORDS.items():
-        if any(keyword.casefold() in lowered for keyword in keywords):
-            return scenario
-    recent_scenarios = values.get("recent_scenarios")
-    if isinstance(recent_scenarios, list):
-        for recent in recent_scenarios:
-            if not isinstance(recent, str):
-                continue
-            try:
-                return RoleplayScenario(recent)
-            except ValueError:
-                recent_lowered = recent.casefold()
-                for scenario, keywords in SCENARIO_KEYWORDS.items():
-                    if any(keyword.casefold() in recent_lowered for keyword in keywords):
-                        return scenario
-    return RoleplayScenario.CLASSROOM_SPEECH
+    if isinstance(raw, str) and raw.strip() and raw not in message:
+        return f"{message.strip()}；补充场景：{raw.strip()}"[:1200]
+    return message.strip()[:1200] or "练习一次具体的社交表达"
 
 
 def _difficulty_from_context(selected_context: SkillContextProjection | None) -> int:

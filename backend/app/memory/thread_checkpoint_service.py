@@ -13,7 +13,7 @@ from app.models_long_term_memory import (
     PracticeThreadCheckpoint,
     PracticeThreadStatus,
 )
-from app.models_roleplay import RoleplayScenario
+from app.models_scenario import ScenarioSpec
 from app.models_session_context import (
     DurableCheckpointContext,
     RoleplayCompactState,
@@ -75,7 +75,7 @@ class ThreadCheckpointService:
         *,
         user_id: str,
         thread_id: str,
-        scenario: RoleplayScenario,
+        scenario: ScenarioSpec,
         current_stage: str,
         status: PracticeThreadStatus,
         reason_code: str,
@@ -103,7 +103,12 @@ class ThreadCheckpointService:
                 user_id=user_id,
                 current_goal=current.current_goal if current is not None else None,
                 current_stage=current_stage,
-                current_scenario=scenario,
+                current_scenario=None,
+                current_scenario_id=scenario.scenario_id,
+                current_scenario_summary=scenario.safe_summary,
+                scenario_skill_codes=[
+                    skill.value for skill in scenario.skill_codes
+                ],
                 helpful_strategy_codes=_merge_codes(
                     current.helpful_strategy_codes if current is not None else [],
                     helpful_strategy_codes or [],
@@ -150,7 +155,7 @@ class ThreadCheckpointService:
         *,
         user_id: str,
         thread_id: str,
-        expected_scenario: RoleplayScenario,
+        expected_scenario_id: str,
         now: datetime | None = None,
     ) -> DurableCheckpointContext | None:
         """Return active memory only with consent, exact scope, freshness and budget."""
@@ -160,7 +165,7 @@ class ThreadCheckpointService:
         checkpoint = self.repository.get_checkpoint(thread_id, user_id)
         if checkpoint is None or checkpoint.status not in _RESTORABLE_STATUSES:
             return None
-        if checkpoint.current_scenario != expected_scenario:
+        if checkpoint.current_scenario_id != expected_scenario_id:
             return None
         timestamp = _as_utc(now or datetime.now(timezone.utc))
         if checkpoint.last_activity_at + self.restore_ttl < timestamp:
@@ -250,7 +255,9 @@ def _fit_active_memory(
 def _checkpoint_topic(checkpoint: PracticeThreadCheckpoint) -> str | None:
     parts = []
     if checkpoint.current_scenario is not None:
-        parts.append(f"scenario:{checkpoint.current_scenario.value}")
+        parts.append(f"scenario:{checkpoint.current_scenario}")
+    elif checkpoint.current_scenario_summary is not None:
+        parts.append(f"scenario:{checkpoint.current_scenario_summary}")
     if checkpoint.current_stage is not None:
         parts.append(f"stage:{checkpoint.current_stage}")
     return ";".join(parts) or None
@@ -275,6 +282,9 @@ def _same_checkpoint_state(
         "current_goal",
         "current_stage",
         "current_scenario",
+        "current_scenario_id",
+        "current_scenario_summary",
+        "scenario_skill_codes",
         "helpful_strategy_codes",
         "attempted_skill_names",
         "unresolved_next_step",

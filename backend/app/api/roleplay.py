@@ -65,23 +65,26 @@ async def start_roleplay(
     current_user: AuthContext = Depends(get_current_user),
     protocol_id: str | None = Header(default=None, alias=PROTOCOL_HEADER_NAME),
 ) -> RoleplayStartResponse:
-    """Create a role-play session for one supported social scenario."""
-    effective_request = request.model_copy(
-        update={"user_id": resolve_request_user_id(request.user_id, current_user)}
-    )
-    consent = require_direct_action_consent(
-        user_id=effective_request.user_id,
-        harness_action=HarnessAction.START_ROLEPLAY,
-        payload=effective_request,
-        protocol_id=protocol_id,
-    )
-    response = await roleplay_service.start_session(effective_request)
-    consume_direct_action_consent(
-        user_id=effective_request.user_id,
-        consent=consent,
-        result_summary="Started role-play session.",
-    )
-    return response
+    """Create a role-play session for one open, safety-checked scenario."""
+    try:
+        effective_request = request.model_copy(
+            update={"user_id": resolve_request_user_id(request.user_id, current_user)}
+        )
+        consent = require_direct_action_consent(
+            user_id=effective_request.user_id,
+            harness_action=HarnessAction.START_ROLEPLAY,
+            payload=effective_request,
+            protocol_id=protocol_id,
+        )
+        response = await roleplay_service.start_session(effective_request)
+        consume_direct_action_consent(
+            user_id=effective_request.user_id,
+            consent=consent,
+            result_summary="Started role-play session.",
+        )
+        return response
+    except ServiceStateError as error:
+        raise HTTPException(status_code=409, detail=str(error))
 
 
 @router.post("/message", response_model=RoleplayMessageResponse)

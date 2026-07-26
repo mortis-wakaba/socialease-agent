@@ -147,7 +147,7 @@ async def test_memory_export_delete_with_active_sessions_and_cleanup(
             "/api/roleplay/start",
             json={
                 "user_id": user_id,
-                "scenario": "classroom_speech",
+                "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
                 "difficulty": difficulty,
             },
         )

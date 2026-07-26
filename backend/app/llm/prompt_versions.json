@@ -5,8 +5,8 @@
       "version": "intent-v3"
     },
     "memory_extraction": {
-      "fingerprint": "sha256:9b87fde8f5f468eb",
-      "version": "memory-extraction-v2"
+      "fingerprint": "sha256:b4007005553f3244",
+      "version": "memory-extraction-v3"
     },
     "output_guardrail": {
       "fingerprint": "sha256:f082f0acdf59fd8e",
@@ -21,8 +21,8 @@
       "version": "resource-loop-v2"
     },
     "roleplay": {
-      "fingerprint": "sha256:7dd5635448c6e4f0",
-      "version": "roleplay-v4"
+      "fingerprint": "sha256:47ddbbeff720f28f",
+      "version": "roleplay-v5"
     },
     "roleplay_compaction": {
       "fingerprint": "sha256:a222dd9c1f0de91d",

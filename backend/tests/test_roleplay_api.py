@@ -29,7 +29,7 @@ async def test_roleplay_start_creates_session(client: httpx.AsyncClient) -> None
         "/api/roleplay/start",
         json={
             "user_id": "demo_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -38,7 +38,9 @@ async def test_roleplay_start_creates_session(client: httpx.AsyncClient) -> None
     payload = response.json()
     assert payload["session"]["session_id"]
     assert payload["session"]["user_id"] == "demo_user"
-    assert payload["session"]["scenario"] == "classroom_speech"
+    assert payload["session"]["scenario"] is None
+    assert payload["session"]["scenario_spec"]["safe_summary"]
+    assert payload["session"]["scenario_spec"]["skill_codes"]
     assert payload["session"]["difficulty"] == 2
     assert payload["session"]["status"] == "active"
     assert payload["session"]["retrieved_guidance"]["query"]
@@ -57,7 +59,7 @@ async def test_roleplay_start_uses_reviewed_club_guidance(
         "/api/roleplay/start",
         json={
             "user_id": "demo_user",
-            "scenario": "club_icebreaking",
+            "scenario_description": "在社团破冰活动中与不熟悉的人开始交流",
             "difficulty": 2,
         },
     )
@@ -72,6 +74,48 @@ async def test_roleplay_start_uses_reviewed_club_guidance(
 
 
 @pytest.mark.anyio
+async def test_roleplay_start_accepts_unseen_open_scenario_and_minimizes_it(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/api/roleplay/start",
+        json={
+            "user_id": "open_scenario_user",
+            "scenario_description": (
+                "线上项目群里负责人临时让我接额外任务，"
+                "联系方式 13912345678，我想拒绝但保持合作。"
+            ),
+            "practice_goal": "先表达理解，再清楚说明边界。",
+            "difficulty": 3,
+        },
+    )
+
+    assert response.status_code == 200
+    spec = response.json()["session"]["scenario_spec"]
+    assert spec["scenario_id"].startswith("scenario_")
+    assert "13912345678" not in spec["safe_summary"]
+    assert "boundary_setting" in spec["skill_codes"]
+    assert spec["safe_summary"] != "classroom_speech"
+
+
+@pytest.mark.anyio
+async def test_roleplay_start_blocks_crisis_scenario_before_persistence(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        "/api/roleplay/start",
+        json={
+            "user_id": "open_scenario_crisis_user",
+            "scenario_description": "我不想活了，想在练习里伤害自己。",
+            "difficulty": 2,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "角色扮演会先暂停" in response.json()["detail"]
+
+
+@pytest.mark.anyio
 async def test_roleplay_get_session_restores_existing_session(
     client: httpx.AsyncClient,
 ) -> None:
@@ -79,7 +123,7 @@ async def test_roleplay_get_session_restores_existing_session(
         "/api/roleplay/start",
         json={
             "user_id": "restore_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -109,7 +153,7 @@ async def test_roleplay_message_appends_turns(client: httpx.AsyncClient) -> None
         "/api/roleplay/start",
         json={
             "user_id": "demo_user",
-            "scenario": "ask_teacher_question",
+            "scenario_description": "向老师提出一个具体问题",
             "difficulty": 3,
         },
     )
@@ -144,7 +188,7 @@ async def test_roleplay_pause_persists_session_status(
         "/api/roleplay/start",
         json={
             "user_id": "pause_roleplay_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -185,7 +229,7 @@ async def test_roleplay_pause_is_idempotent_for_paused_session(
         "/api/roleplay/start",
         json={
             "user_id": "pause_idempotent_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -215,7 +259,7 @@ async def test_roleplay_resume_paused_session_allows_message_and_feedback(
         "/api/roleplay/start",
         json={
             "user_id": user_id,
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -259,7 +303,7 @@ async def test_roleplay_resume_active_session_is_idempotent(
         "/api/roleplay/start",
         json={
             "user_id": "resume_active_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -284,7 +328,7 @@ async def test_roleplay_resume_rejects_completed_session(
         "/api/roleplay/start",
         json={
             "user_id": user_id,
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -320,7 +364,7 @@ async def test_roleplay_resume_rejects_cross_user_access(
         headers={"X-Demo-User-Id": "roleplay_resume_owner"},
         json={
             "user_id": "ignored_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -348,7 +392,7 @@ async def test_roleplay_feedback_requires_user_message(
         "/api/roleplay/start",
         json={
             "user_id": "feedback_no_turn_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -371,7 +415,7 @@ async def test_roleplay_feedback_rejects_paused_session(
         "/api/roleplay/start",
         json={
             "user_id": "feedback_paused_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -406,7 +450,7 @@ async def test_roleplay_completed_session_cannot_be_paused(
         "/api/roleplay/start",
         json={
             "user_id": "completed_pause_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -442,7 +486,7 @@ async def test_roleplay_list_returns_recent_session_status(
         "/api/roleplay/start",
         json={
             "user_id": "roleplay_history_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -476,7 +520,7 @@ async def test_roleplay_pause_rejects_cross_user_access(
         headers={"X-Demo-User-Id": "roleplay_pause_owner"},
         json={
             "user_id": "ignored_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -502,7 +546,7 @@ async def test_roleplay_message_persists_privacy_safe_features(
         "/api/roleplay/start",
         json={
             "user_id": "feature_user",
-            "scenario": "refuse_request",
+            "scenario_description": "礼貌而清楚地拒绝一个请求",
             "difficulty": 3,
         },
     )
@@ -571,7 +615,7 @@ async def test_roleplay_feedback_returns_scores(client: httpx.AsyncClient) -> No
         "/api/roleplay/start",
         json={
             "user_id": "demo_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 2,
         },
     )
@@ -618,7 +662,7 @@ async def test_roleplay_message_crisis_is_blocked(
         "/api/roleplay/start",
         json={
             "user_id": "demo_user",
-            "scenario": "group_discussion",
+            "scenario_description": "小组讨论时练习表达观点并参与协作",
             "difficulty": 2,
         },
     )

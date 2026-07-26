@@ -5,7 +5,6 @@ import type React from "react";
 import Link from "next/link";
 import { ConsentRequiredError, api } from "@/lib/api";
 import { currentUserId } from "@/lib/auth";
-import { roleplayScenarios } from "@/lib/constants";
 import { saveOnboardingState } from "@/lib/onboarding";
 import { useRequireAuth } from "@/lib/use-require-auth";
 import { AuthGuard } from "@/components/auth-guard";
@@ -14,7 +13,6 @@ import type {
   ConsentRequiredDetail,
   OnboardingPrimaryGoal,
   PracticePreferences,
-  RoleplayScenario,
   UserOnboardingProfile
 } from "@/lib/types";
 import {
@@ -24,7 +22,8 @@ import {
   FormHint,
   PageHeader,
   Panel,
-  Select
+  Select,
+  TextArea
 } from "@/components/ui";
 
 const goals: Array<{ value: OnboardingPrimaryGoal; label: string }> = [
@@ -42,8 +41,7 @@ export default function OnboardingPage() {
   const [primaryGoal, setPrimaryGoal] = useState<OnboardingPrimaryGoal>(
     goals[0].value
   );
-  const [preferredScenario, setPreferredScenario] =
-    useState<RoleplayScenario>("classroom_speech");
+  const [preferredScenario, setPreferredScenario] = useState("");
   const [anxietyLevel, setAnxietyLevel] = useState(5);
   const [savePreferences, setSavePreferences] = useState(true);
   const [boundaryAcknowledged, setBoundaryAcknowledged] = useState(false);
@@ -68,7 +66,7 @@ export default function OnboardingPage() {
         setPrimaryGoal(profile.primary_goal);
       }
       if (profile.preferred_scenario) {
-        setPreferredScenario(profile.preferred_scenario as RoleplayScenario);
+        setPreferredScenario(profile.preferred_scenario);
       }
       if (profile.current_anxiety_level) {
         setAnxietyLevel(profile.current_anxiety_level);
@@ -215,20 +213,14 @@ export default function OnboardingPage() {
               </Select>
             </label>
             <label className="block text-sm text-slate-700">
-              偏好场景
-              <Select
+              想优先练习的情境
+              <TextArea
                 value={preferredScenario}
-                onChange={(event) =>
-                  setPreferredScenario(event.target.value as RoleplayScenario)
-                }
+                maxLength={240}
+                onChange={(event) => setPreferredScenario(event.target.value)}
                 className="mt-1"
-              >
-                {roleplayScenarios.map((scenario) => (
-                  <option key={scenario.id} value={scenario.id}>
-                    {scenario.title}
-                  </option>
-                ))}
-              </Select>
+                placeholder="例如：小组讨论时表达不同意见"
+              />
             </label>
             <label className="block text-sm text-slate-700">
               当前焦虑强度
@@ -327,7 +319,7 @@ function LinkButton({ href, children }: { href: string; children: React.ReactNod
 
 type OnboardingDraft = {
   primaryGoal: OnboardingPrimaryGoal;
-  preferredScenario: RoleplayScenario;
+  preferredScenario: string;
   anxietyLevel: number;
   savePreferences: boolean;
   boundaryAcknowledged: boolean;

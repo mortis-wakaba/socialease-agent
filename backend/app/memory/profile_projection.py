@@ -15,7 +15,13 @@ def build_user_practice_summary(
 ) -> UserPracticeSummary:
     """Build one provider-independent aggregate from validated records."""
     recent_scenarios = list(
-        dict.fromkeys(session.scenario.value for session in sessions)
+        dict.fromkeys(
+            session.scenario_spec.safe_summary
+            if session.scenario_spec is not None
+            else session.scenario
+            for session in sessions
+            if session.scenario_spec is not None or session.scenario is not None
+        )
     )[:3]
     preferred_difficulty = sessions[0].difficulty if sessions else None
     practice_timestamps = [session.updated_at for session in sessions]

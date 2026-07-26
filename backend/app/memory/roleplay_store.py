@@ -12,10 +12,10 @@ from app.models_roleplay import (
     RoleplayMessage,
     RoleplayMessageFeatures,
     RoleplayMessageRole,
-    RoleplayScenario,
     RoleplaySession,
     RoleplaySessionStatus,
 )
+from app.models_scenario import ScenarioSpec
 
 
 class RoleplaySessionStore:
@@ -27,7 +27,7 @@ class RoleplaySessionStore:
     def create(
         self,
         user_id: str,
-        scenario: RoleplayScenario,
+        scenario_spec: ScenarioSpec,
         difficulty: int,
         opening_message: str,
         retrieved_guidance: RoleplayGuidance,
@@ -37,7 +37,8 @@ class RoleplaySessionStore:
         session = RoleplaySession(
             session_id=str(uuid4()),
             user_id=user_id,
-            scenario=scenario,
+            scenario=None,
+            scenario_spec=scenario_spec,
             difficulty=difficulty,
             retrieved_guidance=retrieved_guidance,
             messages=[

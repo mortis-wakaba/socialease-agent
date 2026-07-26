@@ -219,11 +219,15 @@ class SQLiteLongTermMemoryRepository:
                 connection.execute(
                     """INSERT INTO episodic_memories (
                     memory_id, user_id, memory_type, summary, scenario_type,
+                    scenario_id, practice_thread_id, skill_codes, context_tags,
                     source_type, source_id, evidence_type, confidence, status,
                     occurred_at, created_at, updated_at, last_retrieved_at,
                     expires_at, consent_version, content_hash, supersedes_id,
                     version, idempotency_key
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?
+                    )""",
                     _memory_values(record),
                 )
                 _insert_sqlite_event(connection, event)
@@ -616,10 +620,12 @@ class SQLiteLongTermMemoryRepository:
                     connection.execute(
                         """INSERT INTO thread_checkpoints (
                         thread_id, user_id, current_goal, current_stage,
-                        current_scenario, helpful_strategy_codes,
+                        current_scenario, current_scenario_id,
+                        current_scenario_summary, scenario_skill_codes,
+                        helpful_strategy_codes,
                         attempted_skill_names, unresolved_next_step, status,
                         version, last_activity_at, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         _checkpoint_values(saved),
                     )
                 except sqlite3.IntegrityError as error:
@@ -641,6 +647,8 @@ class SQLiteLongTermMemoryRepository:
                 cursor = connection.execute(
                     """UPDATE thread_checkpoints SET
                     current_goal = ?, current_stage = ?, current_scenario = ?,
+                    current_scenario_id = ?, current_scenario_summary = ?,
+                    scenario_skill_codes = ?,
                     helpful_strategy_codes = ?, attempted_skill_names = ?,
                     unresolved_next_step = ?, status = ?, version = ?,
                     last_activity_at = ?, updated_at = ?
@@ -648,7 +656,10 @@ class SQLiteLongTermMemoryRepository:
                     (
                         saved.current_goal.value if saved.current_goal else None,
                         saved.current_stage,
-                        saved.current_scenario.value if saved.current_scenario else None,
+                        saved.current_scenario,
+                        saved.current_scenario_id,
+                        saved.current_scenario_summary,
+                        json.dumps(saved.scenario_skill_codes),
                         json.dumps(saved.helpful_strategy_codes),
                         json.dumps(saved.attempted_skill_names),
                         saved.unresolved_next_step,
@@ -753,7 +764,11 @@ def _memory_values(record: EpisodicMemoryRecord) -> tuple[object, ...]:
         record.user_id,
         record.memory_type.value,
         record.summary,
-        record.scenario_type.value if record.scenario_type else None,
+        record.scenario_type,
+        record.scenario_id,
+        record.practice_thread_id,
+        json.dumps([skill.value for skill in record.skill_codes]),
+        json.dumps(record.context_tags),
         record.source_type.value,
         record.source_id,
         record.evidence_type.value,
@@ -778,7 +793,10 @@ def _checkpoint_values(checkpoint: PracticeThreadCheckpoint) -> tuple[object, ..
         checkpoint.user_id,
         checkpoint.current_goal.value if checkpoint.current_goal else None,
         checkpoint.current_stage,
-        checkpoint.current_scenario.value if checkpoint.current_scenario else None,
+        checkpoint.current_scenario,
+        checkpoint.current_scenario_id,
+        checkpoint.current_scenario_summary,
+        json.dumps(checkpoint.scenario_skill_codes),
         json.dumps(checkpoint.helpful_strategy_codes),
         json.dumps(checkpoint.attempted_skill_names),
         checkpoint.unresolved_next_step,
@@ -791,11 +809,17 @@ def _checkpoint_values(checkpoint: PracticeThreadCheckpoint) -> tuple[object, ..
 
 
 def _memory_from_row(row: sqlite3.Row) -> EpisodicMemoryRecord:
-    return EpisodicMemoryRecord.model_validate(dict(row))
+    data = dict(row)
+    data["skill_codes"] = json.loads(data.get("skill_codes") or "[]")
+    data["context_tags"] = json.loads(data.get("context_tags") or "[]")
+    return EpisodicMemoryRecord.model_validate(data)
 
 
 def _checkpoint_from_row(row: sqlite3.Row) -> PracticeThreadCheckpoint:
     data = dict(row)
+    data["scenario_skill_codes"] = json.loads(
+        data.get("scenario_skill_codes") or "[]"
+    )
     data["helpful_strategy_codes"] = json.loads(data["helpful_strategy_codes"])
     data["attempted_skill_names"] = json.loads(data["attempted_skill_names"])
     return PracticeThreadCheckpoint.model_validate(data)

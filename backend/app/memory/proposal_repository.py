@@ -1,6 +1,7 @@
 """Persistence contract and SQLite adapter for confirmation-gated proposals."""
 
 from datetime import datetime
+import json
 import sqlite3
 from typing import Protocol
 
@@ -92,16 +93,23 @@ class SQLiteMemoryProposalRepository:
                 connection.execute(
                     """INSERT INTO memory_proposals (
                     proposal_id, user_id, memory_type, summary, scenario_type,
+                    scenario_id, practice_thread_id, skill_codes, context_tags,
                     source_type, source_id, evidence_type, confidence,
                     occurred_at, status, policy_reason, content_hash,
                     idempotency_key, version, created_at, updated_at, expires_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )""",
                     (
                         record.proposal_id,
                         record.user_id,
                         record.memory_type.value,
                         record.summary,
-                        record.scenario_type.value if record.scenario_type else None,
+                        record.scenario_type,
+                        record.scenario_id,
+                        record.practice_thread_id,
+                        json.dumps([skill.value for skill in record.skill_codes]),
+                        json.dumps(record.context_tags),
                         record.source_type.value,
                         record.source_id,
                         record.evidence_type.value,
@@ -147,7 +155,7 @@ class SQLiteMemoryProposalRepository:
                 WHERE proposal_id = ? AND user_id = ?""",
                 (proposal_id, user_id),
             ).fetchone()
-        return PendingMemoryProposalRecord.model_validate(dict(row)) if row else None
+        return _proposal_from_row(row) if row else None
 
     def get_by_idempotency_key(
         self,
@@ -162,7 +170,7 @@ class SQLiteMemoryProposalRepository:
                 WHERE user_id = ? AND idempotency_key = ?""",
                 (user_id, idempotency_key),
             ).fetchone()
-        return PendingMemoryProposalRecord.model_validate(dict(row)) if row else None
+        return _proposal_from_row(row) if row else None
 
     def list_pending(
         self,
@@ -185,7 +193,7 @@ class SQLiteMemoryProposalRepository:
                 ),
             ).fetchall()
         return [
-            PendingMemoryProposalRecord.model_validate(dict(row))
+            _proposal_from_row(row)
             for row in rows
         ]
 
@@ -253,7 +261,6 @@ class SQLiteMemoryProposalRepository:
                     created_at=changed_at,
                 ),
             )
-
     def record_rejection(
         self,
         *,
@@ -278,3 +285,10 @@ class SQLiteMemoryProposalRepository:
                     created_at=created_at,
                 ),
             )
+
+
+def _proposal_from_row(row: sqlite3.Row) -> PendingMemoryProposalRecord:
+    data = dict(row)
+    data["skill_codes"] = json.loads(data.get("skill_codes") or "[]")
+    data["context_tags"] = json.loads(data.get("context_tags") or "[]")
+    return PendingMemoryProposalRecord.model_validate(data)

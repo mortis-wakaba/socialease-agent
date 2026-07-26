@@ -432,7 +432,7 @@ async def test_roleplay_user_message_is_minimized_before_persistence(
         "/api/roleplay/start",
         json={
             "user_id": user_id,
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 3,
         },
     )
@@ -474,7 +474,7 @@ async def test_roleplay_agent_message_is_redacted_before_persistence(
         "/api/roleplay/start",
         json={
             "user_id": user_id,
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 3,
         },
     )

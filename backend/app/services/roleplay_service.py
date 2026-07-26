@@ -43,11 +43,13 @@ from app.models_roleplay import (
     RoleplayPauseResponse,
     RoleplayResumeRequest,
     RoleplayResumeResponse,
+    RoleplaySession,
     RoleplaySessionListResponse,
     RoleplayStartRequest,
     RoleplayStartResponse,
     RoleplaySessionStatus,
 )
+from app.models_scenario import ScenarioSpec
 from app.models_session_context import context_diagnostics_payload
 from app.privacy.persistence_gate import persistence_gate
 from app.privacy.redaction import detect_sensitive_categories
@@ -55,6 +57,8 @@ from app.privacy.policy import PersistenceKind
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
 from app.services.errors import ServiceNotFoundError, ServiceStateError
+from app.services.scenario_interpreter import ScenarioInterpreter
+from app.services.legacy_scenario_migration import project_legacy_scenario
 
 
 ROLEPLAY_CRISIS_RESPONSE = (
@@ -77,6 +81,7 @@ class RoleplayService:
         checkpoint_service: ThreadCheckpointService | None = None,
         memory_retriever: EpisodicMemoryRetriever | None = None,
         active_memory_assembler: ActiveMemoryAssembler | None = None,
+        scenario_interpreter: ScenarioInterpreter | None = None,
     ) -> None:
         self.agent = agent or RoleplayAgent(llm_client=create_llm_client())
         self.store = store or RoleplaySessionStore(
@@ -139,10 +144,21 @@ class RoleplayService:
                 ),
             )
         )
+        self.scenario_interpreter = scenario_interpreter or ScenarioInterpreter()
 
     async def start_session(self, request: RoleplayStartRequest) -> RoleplayStartResponse:
-        """Create a grounded role-play session for one supported scenario."""
-        guidance_query = self.agent.guidance_query(request.scenario)
+        """Create a grounded role-play session for an arbitrary safe scenario."""
+        raw_description = request.scenario_description
+        start_safety = await self.safety_classifier.classify(
+            f"{raw_description}\n{request.practice_goal or ''}"
+        )
+        if start_safety.risk_level == RiskLevel.CRISIS:
+            raise ServiceStateError(ROLEPLAY_CRISIS_RESPONSE)
+        scenario_spec = self.scenario_interpreter.interpret(
+            description=raw_description,
+            practice_goal=request.practice_goal,
+        )
+        guidance_query = self.agent.guidance_query(scenario_spec)
         rag_response = self.knowledge.query(
             query=guidance_query,
             kb_type=KnowledgeBaseType.SOCIAL_SKILLS,
@@ -156,7 +172,7 @@ class RoleplayService:
             no_guidance_found=rag_response.unknown,
         )
         opening_message = self.agent.opening(
-            scenario=request.scenario,
+            scenario=scenario_spec,
             difficulty=request.difficulty,
             guidance=retrieved_guidance,
         )
@@ -166,7 +182,7 @@ class RoleplayService:
         )
         session = self.store.create(
             user_id=request.user_id,
-            scenario=request.scenario,
+            scenario_spec=scenario_spec,
             difficulty=request.difficulty,
             opening_message=persisted_opening_message,
             retrieved_guidance=retrieved_guidance,
@@ -179,7 +195,7 @@ class RoleplayService:
         self.checkpoint_service.record_roleplay(
             user_id=request.user_id,
             thread_id=session.session_id,
-            scenario=session.scenario,
+            scenario=scenario_spec,
             current_stage="roleplay_started",
             status=PracticeThreadStatus.ACTIVE,
             reason_code="roleplay_started",
@@ -229,7 +245,7 @@ class RoleplayService:
             self.checkpoint_service.record_roleplay(
                 user_id=request.user_id,
                 thread_id=request.session_id,
-                scenario=session.scenario,
+                scenario=_session_scenario_spec(session),
                 current_stage="paused",
                 status=PracticeThreadStatus.PAUSED,
                 reason_code="safety_pause",
@@ -271,7 +287,7 @@ class RoleplayService:
         durable_checkpoint = self.checkpoint_service.restore_roleplay_context(
             user_id=request.user_id,
             thread_id=request.session_id,
-            expected_scenario=session.scenario,
+            expected_scenario_id=_session_scenario_spec(session).scenario_id,
         )
         memory_retrieval = None
         memory_retrieval_error_category = None
@@ -284,6 +300,9 @@ class RoleplayService:
                         episodic_types_for_skill("roleplay_skill")
                     ),
                     scenario_type=session.scenario,
+                    scenario_id=_session_scenario_spec(session).scenario_id,
+                    practice_thread_id=request.session_id,
+                    skill_codes=_session_scenario_spec(session).skill_codes,
                     include_archived=False,
                     strategy=MemoryRetrievalStrategy.SQL_TEXT,
                 )
@@ -299,7 +318,12 @@ class RoleplayService:
             skill_context=select_skill_context(
                 skill_name="roleplay_skill",
                 request_context={
-                    "scenario": session.scenario.value,
+                    "scenario": _session_scenario_spec(session).safe_summary,
+                    "scenario_id": _session_scenario_spec(session).scenario_id,
+                    "skill_codes": [
+                        skill.value
+                        for skill in _session_scenario_spec(session).skill_codes
+                    ],
                     "difficulty": session.difficulty,
                 },
                 memory_context=None,
@@ -313,7 +337,7 @@ class RoleplayService:
         prompt_context = await self.context_manager.build_prompt_context(
             user_id=request.user_id,
             session_id=request.session_id,
-            scenario=session.scenario.value,
+            scenario=_session_scenario_spec(session).safe_summary,
             difficulty=session.difficulty,
             guidance=guidance,
             current_user_message=request.message,
@@ -351,7 +375,7 @@ class RoleplayService:
         self.checkpoint_service.record_roleplay(
             user_id=request.user_id,
             thread_id=request.session_id,
-            scenario=session.scenario,
+            scenario=_session_scenario_spec(session),
             current_stage="practice_turn_completed",
             status=PracticeThreadStatus.ACTIVE,
             reason_code=(
@@ -405,7 +429,7 @@ class RoleplayService:
             self.checkpoint_service.record_roleplay(
                 user_id=request.user_id,
                 thread_id=request.session_id,
-                scenario=session.scenario,
+                scenario=_session_scenario_spec(session),
                 current_stage="feedback_completed",
                 status=PracticeThreadStatus.COMPLETED,
                 reason_code="feedback_completed",
@@ -426,7 +450,7 @@ class RoleplayService:
         self.checkpoint_service.record_roleplay(
             user_id=request.user_id,
             thread_id=request.session_id,
-            scenario=updated_session.scenario,
+            scenario=_session_scenario_spec(updated_session),
             current_stage="feedback_completed",
             status=PracticeThreadStatus.COMPLETED,
             reason_code="feedback_completed",
@@ -467,7 +491,7 @@ class RoleplayService:
         self.checkpoint_service.record_roleplay(
             user_id=request.user_id,
             thread_id=request.session_id,
-            scenario=session.scenario,
+            scenario=_session_scenario_spec(session),
             current_stage="paused",
             status=PracticeThreadStatus.PAUSED,
             reason_code="practice_paused",
@@ -511,7 +535,7 @@ class RoleplayService:
         self.checkpoint_service.record_roleplay(
             user_id=request.user_id,
             thread_id=request.session_id,
-            scenario=session.scenario,
+            scenario=_session_scenario_spec(session),
             current_stage="resumed",
             status=PracticeThreadStatus.ACTIVE,
             reason_code="practice_resumed",
@@ -645,6 +669,17 @@ def derive_roleplay_message_features(message: str) -> RoleplayMessageFeatures:
         has_collaborative_offer=any(term in normalized for term in collaborative_terms),
         has_repair_or_acknowledgement=any(term in normalized for term in repair_terms),
         sensitive_detected=detect_sensitive_categories(message),
+    )
+
+
+def _session_scenario_spec(session: RoleplaySession) -> ScenarioSpec:
+    """Return the open contract, projecting legacy persisted rows when needed."""
+    if session.scenario_spec is not None:
+        return session.scenario_spec
+    if session.scenario is None:
+        raise ServiceStateError("Role-play session has no scenario contract.")
+    return ScenarioInterpreter().interpret(
+        description=project_legacy_scenario(session.scenario)
     )
 
 

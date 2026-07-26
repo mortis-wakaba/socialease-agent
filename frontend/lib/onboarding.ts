@@ -1,11 +1,9 @@
-import type { RoleplayScenario } from "./types";
-
 const ONBOARDING_KEY = "socialease.onboarding";
 
 export type OnboardingState = {
   completed: boolean;
   primaryGoal: string;
-  preferredScenario: RoleplayScenario;
+  preferredScenario: string;
   anxietyLevel: number;
   savePreferences: boolean;
   boundaryAcknowledged: boolean;

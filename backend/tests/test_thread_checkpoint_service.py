@@ -9,10 +9,17 @@ from app.memory.thread_checkpoint_service import ThreadCheckpointService
 from app.memory.token_estimator import ConservativeTokenEstimator
 from app.models_long_term_memory import PracticeThreadStatus
 from app.models_memory import UserConsentState
-from app.models_roleplay import RoleplayScenario
+from app.models_scenario import ScenarioSpec
+from app.services.scenario_interpreter import ScenarioInterpreter
 
 
 NOW = datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc)
+
+
+def _scenario(description: str) -> ScenarioSpec:
+    return ScenarioInterpreter().interpret(description=description).model_copy(
+        update={"scenario_id": f"scenario_{description}"}
+    )
 
 
 class ConflictOnceRepository:
@@ -64,7 +71,7 @@ def test_checkpoint_lifecycle_is_versioned_minimized_and_audited() -> None:
     started = service.record_roleplay(
         user_id=user_id,
         thread_id=thread_id,
-        scenario=RoleplayScenario.DORM_CONFLICT,
+        scenario=_scenario("dorm_conflict"),
         current_stage="roleplay_started",
         status=PracticeThreadStatus.ACTIVE,
         reason_code="roleplay_started",
@@ -74,7 +81,7 @@ def test_checkpoint_lifecycle_is_versioned_minimized_and_audited() -> None:
     progressed = service.record_roleplay(
         user_id=user_id,
         thread_id=thread_id,
-        scenario=RoleplayScenario.DORM_CONFLICT,
+        scenario=_scenario("dorm_conflict"),
         current_stage="practice_turn_completed",
         status=PracticeThreadStatus.ACTIVE,
         reason_code="practice_turn_completed",
@@ -86,7 +93,7 @@ def test_checkpoint_lifecycle_is_versioned_minimized_and_audited() -> None:
     paused = service.record_roleplay(
         user_id=user_id,
         thread_id=thread_id,
-        scenario=RoleplayScenario.DORM_CONFLICT,
+        scenario=_scenario("dorm_conflict"),
         current_stage="paused",
         status=PracticeThreadStatus.PAUSED,
         reason_code="practice_paused",
@@ -120,7 +127,7 @@ def test_restore_requires_consent_exact_owner_thread_scenario_status_and_ttl() -
     service.record_roleplay(
         user_id=owner,
         thread_id=thread_id,
-        scenario=RoleplayScenario.GROUP_DISCUSSION,
+        scenario=_scenario("group_discussion"),
         current_stage="paused",
         status=PracticeThreadStatus.PAUSED,
         reason_code="practice_paused",
@@ -132,7 +139,7 @@ def test_restore_requires_consent_exact_owner_thread_scenario_status_and_ttl() -
         service.restore_roleplay_context(
             user_id=owner,
             thread_id=thread_id,
-            expected_scenario=RoleplayScenario.GROUP_DISCUSSION,
+            expected_scenario_id=_scenario("group_discussion").scenario_id,
             now=NOW + timedelta(days=1),
         )
         is None
@@ -142,7 +149,7 @@ def test_restore_requires_consent_exact_owner_thread_scenario_status_and_ttl() -
         service.restore_roleplay_context(
             user_id=other_user,
             thread_id=thread_id,
-            expected_scenario=RoleplayScenario.GROUP_DISCUSSION,
+            expected_scenario_id=_scenario("group_discussion").scenario_id,
             now=NOW + timedelta(days=1),
         )
         is None
@@ -151,7 +158,7 @@ def test_restore_requires_consent_exact_owner_thread_scenario_status_and_ttl() -
         service.restore_roleplay_context(
             user_id=owner,
             thread_id=thread_id,
-            expected_scenario=RoleplayScenario.DORM_CONFLICT,
+            expected_scenario_id=_scenario("dorm_conflict").scenario_id,
             now=NOW + timedelta(days=1),
         )
         is None
@@ -159,16 +166,18 @@ def test_restore_requires_consent_exact_owner_thread_scenario_status_and_ttl() -
     restored = service.restore_roleplay_context(
         user_id=owner,
         thread_id=thread_id,
-        expected_scenario=RoleplayScenario.GROUP_DISCUSSION,
+        expected_scenario_id=_scenario("group_discussion").scenario_id,
         now=NOW + timedelta(days=1),
     )
     assert restored is not None
-    assert "group_discussion" in (restored.compact_state.current_topic or "")
+    assert _scenario("group_discussion").safe_summary in (
+        restored.compact_state.current_topic or ""
+    )
     assert (
         service.restore_roleplay_context(
             user_id=owner,
             thread_id=thread_id,
-            expected_scenario=RoleplayScenario.GROUP_DISCUSSION,
+            expected_scenario_id=_scenario("group_discussion").scenario_id,
             now=NOW + timedelta(days=31),
         )
         is None
@@ -177,7 +186,7 @@ def test_restore_requires_consent_exact_owner_thread_scenario_status_and_ttl() -
     service.record_roleplay(
         user_id=owner,
         thread_id=thread_id,
-        scenario=RoleplayScenario.GROUP_DISCUSSION,
+        scenario=_scenario("group_discussion"),
         current_stage="feedback_completed",
         status=PracticeThreadStatus.COMPLETED,
         reason_code="feedback_completed",
@@ -188,7 +197,7 @@ def test_restore_requires_consent_exact_owner_thread_scenario_status_and_ttl() -
         service.restore_roleplay_context(
             user_id=owner,
             thread_id=thread_id,
-            expected_scenario=RoleplayScenario.GROUP_DISCUSSION,
+            expected_scenario_id=_scenario("group_discussion").scenario_id,
             now=NOW + timedelta(days=2),
         )
         is None
@@ -203,7 +212,7 @@ def test_active_checkpoint_has_independent_hard_token_budget() -> None:
     service.record_roleplay(
         user_id=user_id,
         thread_id=thread_id,
-        scenario=RoleplayScenario.EXPRESS_DISAGREEMENT,
+        scenario=_scenario("express_disagreement"),
         current_stage="practice_turn_completed",
         status=PracticeThreadStatus.ACTIVE,
         reason_code="practice_turn_completed",
@@ -222,7 +231,7 @@ def test_active_checkpoint_has_independent_hard_token_budget() -> None:
     restored = service.restore_roleplay_context(
         user_id=user_id,
         thread_id=thread_id,
-        expected_scenario=RoleplayScenario.EXPRESS_DISAGREEMENT,
+        expected_scenario_id=_scenario("express_disagreement").scenario_id,
         now=NOW,
     )
 
@@ -241,7 +250,7 @@ def test_checkpoint_write_retries_one_conflict_and_blocks_terminal_reactivation(
     completed = service.record_roleplay(
         user_id=user_id,
         thread_id=thread_id,
-        scenario=RoleplayScenario.CLASSROOM_SPEECH,
+        scenario=_scenario("classroom_speech"),
         current_stage="feedback_completed",
         status=PracticeThreadStatus.COMPLETED,
         reason_code="feedback_completed",
@@ -250,7 +259,7 @@ def test_checkpoint_write_retries_one_conflict_and_blocks_terminal_reactivation(
     invalid = service.record_roleplay(
         user_id=user_id,
         thread_id=thread_id,
-        scenario=RoleplayScenario.CLASSROOM_SPEECH,
+        scenario=_scenario("classroom_speech"),
         current_stage="resumed",
         status=PracticeThreadStatus.ACTIVE,
         reason_code="practice_resumed",

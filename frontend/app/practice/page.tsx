@@ -3,7 +3,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { ConsentRequiredError, api } from "@/lib/api";
 import { currentUserId } from "@/lib/auth";
-import { roleplayScenarios } from "@/lib/constants";
 import { showDiagnostics } from "@/lib/diagnostics";
 import { useRequireAuth } from "@/lib/use-require-auth";
 import { AuthGuard } from "@/components/auth-guard";
@@ -15,7 +14,6 @@ import type {
   LLMUsage,
   RoleplayFeedback,
   RoleplayRubricBreakdown,
-  RoleplayScenario,
   RoleplaySession
 } from "@/lib/types";
 import {
@@ -35,8 +33,8 @@ const SHOW_DIAGNOSTICS = showDiagnostics();
 
 export default function PracticePage() {
   const auth = useRequireAuth();
-  const [selectedScenario, setSelectedScenario] =
-    useState<RoleplayScenario>("classroom_speech");
+  const [scenarioDescription, setScenarioDescription] = useState("");
+  const [practiceGoal, setPracticeGoal] = useState("");
   const [difficulty, setDifficulty] = useState(2);
   const [session, setSession] = useState<RoleplaySession | null>(null);
   const [message, setMessage] = useState("我想先说我的核心观点。");
@@ -51,7 +49,8 @@ export default function PracticePage() {
     detail: ConsentRequiredDetail;
     request: {
       userId: string;
-      scenario: RoleplayScenario;
+      scenarioDescription: string;
+      practiceGoal: string;
       difficulty: number;
     };
   } | null>(null);
@@ -76,7 +75,10 @@ export default function PracticePage() {
     try {
       const result = await api.getRoleplaySession(sessionId, currentUserId());
       setSession(result.session);
-      setSelectedScenario(result.session.scenario);
+      setScenarioDescription(
+        result.session.scenario_spec?.safe_summary ?? result.session.scenario ?? ""
+      );
+      setPracticeGoal(result.session.scenario_spec?.practice_goal ?? "");
       setDifficulty(result.session.difficulty);
       setStatus(restoredSessionStatus(result.session));
       setCitationsExpanded(false);
@@ -108,7 +110,8 @@ export default function PracticePage() {
     setPendingConsent(null);
     const request = {
       userId: currentUserId(),
-      scenario: selectedScenario,
+      scenarioDescription,
+      practiceGoal,
       difficulty
     };
     try {
@@ -132,14 +135,19 @@ export default function PracticePage() {
   }
 
   async function startSessionWithRequest(
-    request: { userId: string; scenario: RoleplayScenario; difficulty: number },
+    request: {
+      userId: string;
+      scenarioDescription: string;
+      practiceGoal: string;
+      difficulty: number;
+    },
     protocolId?: string
   ) {
     const result = await api.startRoleplay(
       request.userId,
-      request.scenario,
+      request.scenarioDescription,
       request.difficulty,
-      { protocolId }
+      { protocolId, practiceGoal: request.practiceGoal || undefined }
     );
     setSession(result.session);
     setStatus(
@@ -345,29 +353,33 @@ export default function PracticePage() {
     <AuthGuard>
       <PageHeader
         title="角色扮演练习"
-        description="选择社交场景，开始低压力模拟练习。你可以随时暂停，也可以从历史记录继续上次会话。"
+        description="描述你真实面对的社交情境，开始低压力模拟练习。你可以随时暂停，也可以从历史记录继续。"
       />
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
           <Panel title="练习场景">
-            <div className="grid gap-2">
-              {roleplayScenarios.map((scenario) => (
-                <button
-                  key={scenario.id}
-                  onClick={() => setSelectedScenario(scenario.id)}
-                  className={`rounded-lg border p-3 text-left hover:border-brand ${
-                    selectedScenario === scenario.id
-                      ? "border-brand bg-emerald-50"
-                      : "border-line bg-white"
-                  }`}
-                >
-                  <div className="font-medium text-ink">{scenario.title}</div>
-                  <p className="mt-1 text-sm leading-5 text-slate-600">
-                    {scenario.description}
-                  </p>
-                </button>
-              ))}
-            </div>
+            <label className="text-sm font-medium text-ink" htmlFor="scenario-description">
+              你想练习什么具体情境？
+            </label>
+            <TextArea
+              id="scenario-description"
+              className="mt-2"
+              value={scenarioDescription}
+              maxLength={1200}
+              onChange={(event) => setScenarioDescription(event.target.value)}
+              placeholder="例如：小组成员临时把额外任务交给我，我想清楚拒绝，同时保持合作关系。"
+            />
+            <label className="mt-4 block text-sm font-medium text-ink" htmlFor="practice-goal">
+              本次练习目标（可选）
+            </label>
+            <TextArea
+              id="practice-goal"
+              className="mt-2"
+              value={practiceGoal}
+              maxLength={400}
+              onChange={(event) => setPracticeGoal(event.target.value)}
+              placeholder="例如：先表达理解，再说明边界并提出有限的替代方案。"
+            />
             <div className="mt-4 flex items-center gap-3">
               <label className="text-sm text-slate-600">难度</label>
               <input
@@ -381,7 +393,10 @@ export default function PracticePage() {
               <Badge>{difficulty}/5</Badge>
             </div>
             <div className="mt-4">
-              <Button onClick={startSession} disabled={loading}>
+              <Button
+                onClick={startSession}
+                disabled={loading || !scenarioDescription.trim()}
+              >
                 开始练习
               </Button>
             </div>
@@ -425,7 +440,7 @@ export default function PracticePage() {
               <div className="space-y-3">
                 <div className="rounded-md border border-line bg-panel p-3">
                   <div className="mb-2 flex flex-wrap gap-2">
-                    <Badge tone="info">{scenarioTitle(session.scenario)}</Badge>
+                    <Badge tone="info">{scenarioTitle(session)}</Badge>
                     {SHOW_DIAGNOSTICS ? (
                       <Badge>{session.session_id.slice(0, 8)}</Badge>
                     ) : null}
@@ -529,7 +544,7 @@ export default function PracticePage() {
             ) : (
               <EmptyState
                 title="暂无进行中的练习"
-                description="选择场景和难度后开始练习。练习会保存为会话，可从历史记录继续。"
+                description="描述具体情境并选择难度后开始练习。练习会保存为会话，可从历史记录继续。"
               />
             )}
           </Panel>
@@ -682,8 +697,8 @@ function scoreTone(score: number) {
   return "neutral" as const;
 }
 
-function scenarioTitle(scenario: RoleplayScenario) {
-  return roleplayScenarios.find((item) => item.id === scenario)?.title ?? "练习场景";
+function scenarioTitle(session: RoleplaySession) {
+  return session.scenario_spec?.safe_summary ?? session.scenario ?? "练习场景";
 }
 
 function restoredSessionStatus(session: RoleplaySession) {

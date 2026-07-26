@@ -37,7 +37,6 @@ from app.models_roleplay import (
     RoleplayFeedbackRequest,
     RoleplayMessageRequest,
     RoleplayMessageRole,
-    RoleplayScenario,
     RoleplayStartRequest,
 )
 from app.models_session_context import (
@@ -505,7 +504,7 @@ async def test_roleplay_uses_short_term_raw_history_while_database_stays_minimiz
     start = await service.start_session(
         RoleplayStartRequest(
             user_id=user_id,
-            scenario=RoleplayScenario.DORM_CONFLICT,
+            scenario_description="与共同居住者沟通一个具体问题",
             difficulty=3,
         )
     )
@@ -564,7 +563,7 @@ async def test_roleplay_injects_only_relevant_non_conflicting_durable_memory() -
             user_id=user_id,
             memory_type=MemoryType.HELPFUL_STRATEGY,
             summary=summary,
-            scenario_type=RoleplayScenario.CLASSROOM_SPEECH,
+            scenario_type="classroom_speech",
             source_type=MemorySourceType.USER_CONFIRMED,
             source_id=f"test_{uuid4().hex}",
             evidence_type=MemoryEvidenceType.USER_CONFIRMED,
@@ -589,7 +588,7 @@ async def test_roleplay_injects_only_relevant_non_conflicting_durable_memory() -
     start = await service.start_session(
         RoleplayStartRequest(
             user_id=user_id,
-            scenario=RoleplayScenario.CLASSROOM_SPEECH,
+            scenario_description="课堂上轮到我发言时练习清楚表达观点",
             difficulty=2,
         )
     )
@@ -633,7 +632,7 @@ async def test_roleplay_never_requests_archived_memory() -> None:
     start = await service.start_session(
         RoleplayStartRequest(
             user_id=f"archived_scope_{uuid4().hex}",
-            scenario=RoleplayScenario.CLASSROOM_SPEECH,
+            scenario_description="课堂上轮到我发言时练习清楚表达观点",
             difficulty=2,
         )
     )
@@ -667,7 +666,7 @@ async def test_roleplay_degrades_safely_when_redis_context_is_disabled() -> None
     start = await service.start_session(
         RoleplayStartRequest(
             user_id=user_id,
-            scenario=RoleplayScenario.CLASSROOM_SPEECH,
+            scenario_description="课堂上轮到我发言时练习清楚表达观点",
             difficulty=2,
         )
     )
@@ -756,7 +755,7 @@ async def test_expired_redis_context_restores_exact_durable_checkpoint() -> None
     start = await service.start_session(
         RoleplayStartRequest(
             user_id=user_id,
-            scenario=RoleplayScenario.CLASSROOM_SPEECH,
+            scenario_description="课堂上轮到我发言时练习清楚表达观点",
             difficulty=2,
         )
     )
@@ -797,7 +796,7 @@ async def test_crisis_turn_clears_short_term_context_without_storing_raw_crisis_
     start = await service.start_session(
         RoleplayStartRequest(
             user_id=user_id,
-            scenario=RoleplayScenario.CLASSROOM_SPEECH,
+            scenario_description="课堂上轮到我发言时练习清楚表达观点",
             difficulty=2,
         )
     )

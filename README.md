@@ -261,8 +261,9 @@ make eval-memory-vector
 ```
 
 当前实验固定 `FastEmbed 0.8.0`、`BAAI/bge-small-zh-v1.5` 512 维模型及模型
-revision；Vector/Hybrid 在应用用户、Consent、状态、类型和场景硬过滤之后运行，
-不能替代权限过滤。
+revision；Vector/Hybrid 在应用用户、Consent、状态、类型、过期和安全硬过滤之后运行，
+不能替代权限过滤。具体场景不再是硬过滤枚举：开放场景通过 `scenario_id` /
+`practice_thread_id` 保持连续性，通过受控技能标签和语义相关性支持跨场景迁移。
 
 Memory Center 位于前端 `/memory`，明确区分稳定设置、Active Thread、情节记忆、
 待确认候选和普通聊天历史。用户可以查看来源与保存原因，安全编辑摘要，使用乐观锁

@@ -15,7 +15,7 @@ from app.models_memory import (
     UserMemorySettings,
     UserOnboardingProfile,
 )
-from app.models_roleplay import RoleplayScenario
+from app.privacy.redaction import detect_sensitive_categories
 
 
 FEEDBACK_STYLE_ALIASES: dict[str, PreferredFeedbackStyle] = {
@@ -124,9 +124,8 @@ def _sanitize_practice_preferences(value: Any) -> PracticePreferences:
             PreferredFeedbackStyle,
             FEEDBACK_STYLE_ALIASES,
         ),
-        preferred_practice_scenarios=_enum_list(
+        preferred_practice_scenarios=_safe_string_list(
             value.get("preferred_practice_scenarios"),
-            RoleplayScenario,
             max_items=5,
         ),
     )
@@ -142,7 +141,7 @@ def _sanitize_onboarding_profile(value: Any) -> UserOnboardingProfile:
             OnboardingPrimaryGoal,
             PRIMARY_GOAL_ALIASES,
         ),
-        preferred_scenario=_enum_or_none(value.get("preferred_scenario"), RoleplayScenario),
+        preferred_scenario=_safe_scenario_text(value.get("preferred_scenario")),
         current_anxiety_level=_int_in_range(
             value.get("current_anxiety_level"), minimum=1, maximum=10
         ),
@@ -209,6 +208,29 @@ def _enum_list(value: Any, enum_type: type, *, max_items: int) -> list[Any]:
         if len(sanitized) >= max_items:
             break
     return sanitized
+
+
+def _safe_scenario_text(value: Any) -> str | None:
+    """Keep bounded open-scenario text only when it has no identifier."""
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split())[:240]
+    if not normalized or detect_sensitive_categories(normalized):
+        return None
+    return normalized
+
+
+def _safe_string_list(value: Any, *, max_items: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        safe = _safe_scenario_text(item)
+        if safe is not None and safe not in result:
+            result.append(safe)
+        if len(result) >= max_items:
+            break
+    return result
 
 
 def _normalize_label(value: str) -> str:

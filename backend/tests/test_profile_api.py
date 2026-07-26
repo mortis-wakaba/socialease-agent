@@ -72,7 +72,7 @@ async def test_profile_updates_after_roleplay_and_exposure(
         "/api/roleplay/start",
         json={
             "user_id": user_id,
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 4,
         },
     )
@@ -108,7 +108,7 @@ async def test_profile_updates_after_roleplay_and_exposure(
     assert summary["preferred_difficulty"] == 4
     assert summary["recent_scenarios"] == [
         "[raw exposure target scenario minimized by privacy policy]",
-        "classroom_speech",
+        "课堂上轮到我发言时练习清楚表达观点",
     ]
 
 
@@ -220,7 +220,7 @@ async def test_practice_summary_personalization_consent_is_reversible(
         "/api/roleplay/start",
         json={
             "user_id": user_id,
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 3,
         },
     )
@@ -703,7 +703,7 @@ async def test_memory_export_and_delete_are_real(
         "/api/roleplay/start",
         json={
             "user_id": user_id,
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 4,
         },
     )
@@ -771,7 +771,7 @@ async def test_memory_export_and_delete_reject_cross_user_access(
         headers={"X-Demo-User-Id": owner_id},
         json={
             "user_id": "ignored_body_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 3,
         },
     )

@@ -66,12 +66,15 @@ class PostgresLongTermMemoryRepository:
                     text(
                         """INSERT INTO episodic_memories (
                         memory_id, user_id, memory_type, summary, scenario_type,
+                        scenario_id, practice_thread_id, skill_codes, context_tags,
                         source_type, source_id, evidence_type, confidence, status,
                         occurred_at, created_at, updated_at, last_retrieved_at,
                         expires_at, consent_version, content_hash, supersedes_id,
                         version, idempotency_key
                         ) VALUES (
                         :memory_id, :user_id, :memory_type, :summary, :scenario_type,
+                        :scenario_id, :practice_thread_id,
+                        CAST(:skill_codes AS json), CAST(:context_tags AS json),
                         :source_type, :source_id, :evidence_type, :confidence, :status,
                         :occurred_at, :created_at, :updated_at, :last_retrieved_at,
                         :expires_at, :consent_version, :content_hash, :supersedes_id,
@@ -532,12 +535,17 @@ class PostgresLongTermMemoryRepository:
                         text(
                             """INSERT INTO thread_checkpoints (
                             thread_id, user_id, current_goal, current_stage,
-                            current_scenario, helpful_strategy_codes,
+                            current_scenario, current_scenario_id,
+                            current_scenario_summary, scenario_skill_codes,
+                            helpful_strategy_codes,
                             attempted_skill_names, unresolved_next_step, status,
                             version, last_activity_at, created_at, updated_at
                             ) VALUES (
                             :thread_id, :user_id, :current_goal, :current_stage,
-                            :current_scenario, CAST(:helpful_strategy_codes AS json),
+                            :current_scenario, :current_scenario_id,
+                            :current_scenario_summary,
+                            CAST(:scenario_skill_codes AS json),
+                            CAST(:helpful_strategy_codes AS json),
                             CAST(:attempted_skill_names AS json),
                             :unresolved_next_step, :status, :version,
                             :last_activity_at, :created_at, :updated_at
@@ -569,6 +577,10 @@ class PostgresLongTermMemoryRepository:
                         current_goal = :current_goal,
                         current_stage = :current_stage,
                         current_scenario = :current_scenario,
+                        current_scenario_id = :current_scenario_id,
+                        current_scenario_summary = :current_scenario_summary,
+                        scenario_skill_codes =
+                            CAST(:scenario_skill_codes AS json),
                         helpful_strategy_codes =
                             CAST(:helpful_strategy_codes AS json),
                         attempted_skill_names =
@@ -677,7 +689,11 @@ def _postgres_memory_values(record: EpisodicMemoryRecord) -> dict[str, object]:
         "user_id": record.user_id,
         "memory_type": record.memory_type.value,
         "summary": record.summary,
-        "scenario_type": record.scenario_type.value if record.scenario_type else None,
+        "scenario_type": record.scenario_type,
+        "scenario_id": record.scenario_id,
+        "practice_thread_id": record.practice_thread_id,
+        "skill_codes": json.dumps([skill.value for skill in record.skill_codes]),
+        "context_tags": json.dumps(record.context_tags),
         "source_type": record.source_type.value,
         "source_id": record.source_id,
         "evidence_type": record.evidence_type.value,
@@ -706,11 +722,10 @@ def _postgres_checkpoint_values(
             checkpoint.current_goal.value if checkpoint.current_goal else None
         ),
         "current_stage": checkpoint.current_stage,
-        "current_scenario": (
-            checkpoint.current_scenario.value
-            if checkpoint.current_scenario
-            else None
-        ),
+        "current_scenario": checkpoint.current_scenario,
+        "current_scenario_id": checkpoint.current_scenario_id,
+        "current_scenario_summary": checkpoint.current_scenario_summary,
+        "scenario_skill_codes": json.dumps(checkpoint.scenario_skill_codes),
         "helpful_strategy_codes": json.dumps(checkpoint.helpful_strategy_codes),
         "attempted_skill_names": json.dumps(checkpoint.attempted_skill_names),
         "unresolved_next_step": checkpoint.unresolved_next_step,

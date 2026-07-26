@@ -43,7 +43,8 @@ from app.models_long_term_memory import (
 )
 from app.models_memory import UserConsentState
 from app.models_memory_doctor import MemoryDoctorIssueCode
-from app.models_roleplay import RoleplayScenario
+from app.models_scenario import ScenarioSpec
+from app.services.scenario_interpreter import ScenarioInterpreter
 from app.services.memory_doctor_service import MemoryDoctorService
 from app.services.memory_privacy_service import MemoryPrivacyService
 
@@ -55,6 +56,12 @@ pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
     reason="SOCIALEASE_TEST_DATABASE_URL is required for PostgreSQL integration tests.",
 )
+
+
+def _scenario(description: str) -> ScenarioSpec:
+    return ScenarioInterpreter().interpret(description=description).model_copy(
+        update={"scenario_id": f"scenario_{description}"}
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -148,7 +155,7 @@ def test_postgres_proposal_decision_erases_pending_body() -> None:
         user_id=user_id,
         memory_type=MemoryType.SOCIAL_CONTEXT,
         summary="我更常在课程结束后参加小组讨论。",
-        scenario_type=RoleplayScenario.GROUP_DISCUSSION,
+        scenario_type="group_discussion",
         source_type=MemorySourceType.CHAT,
         source_id="pg-memory-center",
         evidence_type=MemoryEvidenceType.EXPLICIT_USER_STATEMENT,
@@ -229,7 +236,7 @@ def test_postgres_checkpoint_service_restores_bounded_active_state(
     paused = service.record_roleplay(
         user_id=user_id,
         thread_id=thread_id,
-        scenario=RoleplayScenario.CLASSROOM_SPEECH,
+        scenario=_scenario("classroom_speech"),
         current_stage="paused",
         status=PracticeThreadStatus.PAUSED,
         reason_code="practice_paused",
@@ -240,7 +247,7 @@ def test_postgres_checkpoint_service_restores_bounded_active_state(
     restored = service.restore_roleplay_context(
         user_id=user_id,
         thread_id=thread_id,
-        expected_scenario=RoleplayScenario.CLASSROOM_SPEECH,
+        expected_scenario_id=_scenario("classroom_speech").scenario_id,
         now=NOW + timedelta(days=1),
     )
 
@@ -350,7 +357,7 @@ def test_postgres_retrieval_is_user_scoped_and_audited(
             user_id=user_id,
             query="我想练习课堂发言的简短开场。",
             allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
-            scenario_type=RoleplayScenario.CLASSROOM_SPEECH,
+            scenario_type="classroom_speech",
             strategy=MemoryRetrievalStrategy.SQL_TEXT,
         ),
         now=NOW + timedelta(days=1),

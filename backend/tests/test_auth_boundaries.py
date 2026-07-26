@@ -142,7 +142,7 @@ async def test_roleplay_session_cannot_be_restored_by_another_authenticated_user
         headers=demo_headers(owner_id),
         json={
             "user_id": "ignored_body_user",
-            "scenario": "classroom_speech",
+            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
             "difficulty": 3,
         },
     )
@@ -349,7 +349,7 @@ async def test_production_direct_roleplay_requires_and_consumes_consent(
     owner_id = f"prod_direct_roleplay_{uuid4().hex}"
     body = {
         "user_id": "spoofed_body_user",
-        "scenario": "classroom_speech",
+        "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
         "difficulty": 2,
     }
 

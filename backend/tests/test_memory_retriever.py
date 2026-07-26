@@ -17,7 +17,7 @@ from app.models_long_term_memory import (
     MemoryType,
 )
 from app.models_memory import UserConsentState
-from app.models_roleplay import RoleplayScenario
+from app.models_scenario import SocialSkillCode
 
 
 NOW = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
@@ -27,11 +27,14 @@ def _record(
     *,
     user_id: str,
     summary: str,
-    scenario: RoleplayScenario | None = RoleplayScenario.CLASSROOM_SPEECH,
+    scenario: str | None = "classroom_speech",
     memory_type: MemoryType = MemoryType.HELPFUL_STRATEGY,
     status: MemoryRecordStatus = MemoryRecordStatus.ACTIVE,
     occurred_at: datetime = NOW - timedelta(days=7),
     expires_at: datetime | None = NOW + timedelta(days=180),
+    scenario_id: str | None = None,
+    practice_thread_id: str | None = None,
+    skill_codes: list[SocialSkillCode] | None = None,
 ) -> EpisodicMemoryRecord:
     digest = hashlib.sha256(summary.encode("utf-8")).hexdigest()
     return EpisodicMemoryRecord(
@@ -40,6 +43,9 @@ def _record(
         memory_type=memory_type,
         summary=summary,
         scenario_type=scenario,
+        scenario_id=scenario_id,
+        practice_thread_id=practice_thread_id,
+        skill_codes=skill_codes or [],
         source_type=MemorySourceType.USER_CONFIRMED,
         source_id=f"source_{uuid4().hex}",
         evidence_type=MemoryEvidenceType.USER_CONFIRMED,
@@ -103,7 +109,7 @@ def _request(
             MemoryType.HELPFUL_STRATEGY,
             MemoryType.PRACTICE_EXPERIENCE,
         ],
-        scenario_type=RoleplayScenario.CLASSROOM_SPEECH,
+        scenario_type="classroom_speech",
         include_archived=include_archived,
         strategy=strategy,
     )
@@ -124,7 +130,7 @@ def test_repository_filters_scope_lifecycle_type_scenario_expiry_and_text() -> N
     wrong_scenario = _record(
         user_id=user_id,
         summary="宿舍沟通可以先提出具体请求。",
-        scenario=RoleplayScenario.DORM_CONFLICT,
+        scenario="dorm_conflict",
     )
     expired = _record(
         user_id=user_id,
@@ -142,7 +148,7 @@ def test_repository_filters_scope_lifecycle_type_scenario_expiry_and_text() -> N
         user_id=user_id,
         statuses=(MemoryRecordStatus.ACTIVE, MemoryRecordStatus.ARCHIVED),
         memory_types=(MemoryType.HELPFUL_STRATEGY,),
-        scenario_type=RoleplayScenario.CLASSROOM_SPEECH.value,
+        scenario_type="classroom_speech",
         require_scenario_match=True,
         query_terms=("开场",),
         now=NOW,
@@ -153,6 +159,61 @@ def test_repository_filters_scope_lifecycle_type_scenario_expiry_and_text() -> N
         relevant.memory_id,
         archived.memory_id,
     }
+
+
+def test_open_scenario_retrieval_merges_continuity_and_transferable_skills() -> None:
+    repository = repository_factory().long_term_memory_repository()
+    user_id = f"open_scenario_retrieval_{uuid4().hex}"
+    same_thread = _record(
+        user_id=user_id,
+        summary="上一轮先表达理解、再简短说明边界，完成了练习。",
+        scenario=None,
+        scenario_id="scenario_current",
+        practice_thread_id="thread_current",
+        skill_codes=[
+            SocialSkillCode.BOUNDARY_SETTING,
+            SocialSkillCode.EMPATHY,
+        ],
+    )
+    cross_scenario = _record(
+        user_id=user_id,
+        summary="拒绝额外任务时，清楚说明不能承担并给出有限替代选择。",
+        scenario=None,
+        scenario_id="scenario_old",
+        practice_thread_id="thread_old",
+        skill_codes=[SocialSkillCode.BOUNDARY_SETTING],
+    )
+    irrelevant = _record(
+        user_id=user_id,
+        summary="第一次见面时可以从现场活动开始提问。",
+        scenario=None,
+        scenario_id="scenario_opening",
+        practice_thread_id="thread_opening",
+        skill_codes=[SocialSkillCode.CONVERSATION_INITIATION],
+    )
+    for record in (same_thread, cross_scenario, irrelevant):
+        _persist(repository, record)
+    _enable_consent(user_id)
+
+    result = _retriever().retrieve(
+        MemoryRetrievalRequest(
+            user_id=user_id,
+            query="继续上次练习：这次要拒绝临时增加的额外任务。",
+            allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+            scenario_id="scenario_current",
+            practice_thread_id="thread_current",
+            skill_codes=[SocialSkillCode.BOUNDARY_SETTING],
+            strategy=MemoryRetrievalStrategy.SQL_TEXT,
+        ),
+        now=NOW,
+        record_usage=False,
+    )
+
+    hit_ids = [hit.memory_id for hit in result.hits]
+    assert hit_ids[:2] == [same_thread.memory_id, cross_scenario.memory_id]
+    assert irrelevant.memory_id not in hit_ids
+    assert result.hits[0].score.continuity == 1.0
+    assert result.hits[0].score.skill_overlap == 1.0
 
 
 def test_retrieval_requires_consent_and_audits_only_returned_hits() -> None:

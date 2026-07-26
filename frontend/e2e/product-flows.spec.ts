@@ -104,7 +104,7 @@ test("onboarding completes without saving long-term preferences", async ({ page 
     const payload = route.request().postDataJSON() as {
       onboarding_profile: { preferred_scenario: string; boundary_acknowledged: boolean };
     };
-    expect(payload.onboarding_profile.preferred_scenario).toBe("classroom_speech");
+    expect(payload.onboarding_profile.preferred_scenario).toBe("");
     expect(payload.onboarding_profile.boundary_acknowledged).toBe(true);
     await route.fulfill({
       json: {
@@ -251,6 +251,9 @@ test("roleplay consent approves and replays start action", async ({ page }) => {
   });
 
   await page.goto("/practice");
+  await page.getByLabel("你想练习什么具体情境？").fill(
+    "线上小组讨论中表达不同意见"
+  );
   await page.getByRole("button", { name: "开始练习" }).click();
   await expect(page.getByText("需要同意").first()).toBeVisible();
   await page.getByRole("button", { name: "同意并继续" }).click();
@@ -286,6 +289,9 @@ test("practice pause persists roleplay session status", async ({ page }) => {
   });
 
   await page.goto("/practice");
+  await page.getByLabel("你想练习什么具体情境？").fill(
+    "和同学沟通小组分工"
+  );
   await page.getByRole("button", { name: "开始练习" }).click();
   await page.getByRole("button", { name: "暂停练习" }).click();
 
@@ -944,6 +950,9 @@ test("default product pages hide developer diagnostics", async ({ page }) => {
   await expect(page.getByText("LLM", { exact: false })).toHaveCount(0);
 
   await page.goto("/practice");
+  await page.getByLabel("你想练习什么具体情境？").fill(
+    "线上小组讨论中表达不同意见"
+  );
   await page.getByRole("button", { name: "开始练习" }).click();
   await expect(page.getByText("基于练习资料")).toBeVisible();
   await expect(page.getByText("session_1", { exact: false })).toHaveCount(0);
@@ -1105,7 +1114,16 @@ function roleplaySession() {
   return {
     session_id: "session_1",
     user_id: "demo_user",
-    scenario: "classroom_speech",
+    scenario: null,
+    scenario_spec: {
+      scenario_id: "scenario_1",
+      safe_summary: "线上小组讨论中表达不同意见",
+      practice_goal: "清楚表达观点并保持尊重",
+      counterpart_role: "group",
+      interaction_mode: "express_view",
+      skill_codes: ["disagreement", "assertive_expression"],
+      context_tags: ["group"]
+    },
     difficulty: 2,
     status: "active",
     messages: [
@@ -1116,7 +1134,7 @@ function roleplaySession() {
       }
     ],
     retrieved_guidance: {
-      query: "classroom_speech",
+      query: "小组讨论 表达不同意见",
       answer: "demo guidance",
       citations: [],
       unknown: false,

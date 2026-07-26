@@ -24,6 +24,7 @@ from app.memory.policy_engine import MemoryPolicyEngine
 from app.memory.proposal_extractor import MemoryProposalExtractor
 from app.memory.write_pipeline import MemoryWritePipeline
 from app.models_long_term_memory import MemorySourceType
+from app.models_scenario import ScenarioSpec
 from app.models import (
     ChatRequest,
     ChatResponse,
@@ -479,6 +480,14 @@ class AgentHarness:
                     source_id=(request_id or run_id)[:128],
                     occurred_at=datetime.now(timezone.utc),
                     risk_level=safety_result.risk_level,
+                    scenario_spec=_scenario_spec_from_skill_result(
+                        skill_result.structured_data
+                    ),
+                    practice_thread_id=(
+                        session_id
+                        if intent_result.intent == Intent.ROLEPLAY_PRACTICE
+                        else None
+                    ),
                 )
                 skill_result.structured_data["memory_pipeline"] = {
                     "status": memory_pipeline_result.status,
@@ -769,6 +778,19 @@ def _optional_string(value: object) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _scenario_spec_from_skill_result(
+    structured_data: dict[str, object],
+) -> ScenarioSpec | None:
+    """Validate application-produced open-scenario metadata for memory writes."""
+    payload = structured_data.get("scenario")
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return ScenarioSpec.model_validate(payload)
+    except ValueError:
+        return None
 
 
 def _skill_llm_used(structured_data: dict[str, object]) -> bool:

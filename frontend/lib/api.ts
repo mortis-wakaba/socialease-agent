@@ -27,7 +27,6 @@ import type {
   RoleplayMessageResponse,
   RoleplayPauseResponse,
   RoleplayResumeResponse,
-  RoleplayScenario,
   RoleplaySessionListResponse,
   RoleplayStartResponse,
   LogoutResponse,
@@ -400,16 +399,17 @@ export const api = {
 
   startRoleplay(
     userId: string,
-    scenario: RoleplayScenario,
+    scenarioDescription: string,
     difficulty: number,
-    options: { protocolId?: string } = {}
+    options: { protocolId?: string; practiceGoal?: string } = {}
   ) {
     return request<RoleplayStartResponse>("/api/roleplay/start", {
       method: "POST",
       headers: protocolHeaders(options.protocolId),
       body: JSON.stringify({
         user_id: userId,
-        scenario,
+        scenario_description: scenarioDescription,
+        practice_goal: options.practiceGoal ?? null,
         difficulty
       })
     });

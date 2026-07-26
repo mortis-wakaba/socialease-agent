@@ -54,10 +54,16 @@ def load_rag_cases() -> list[RagEvalCase]:
 
 def load_memory_retrieval_cases() -> list[MemoryRetrievalEvalCase]:
     """Load fixed Chinese episodic-memory retrieval cases."""
-    return load_jsonl(
-        DATA_DIR / "memory_retrieval.jsonl",
-        MemoryRetrievalEvalCase,
-    )
+    return [
+        *load_jsonl(
+            DATA_DIR / "memory_retrieval.jsonl",
+            MemoryRetrievalEvalCase,
+        ),
+        *load_jsonl(
+            DATA_DIR / "memory_retrieval_open_scenarios.jsonl",
+            MemoryRetrievalEvalCase,
+        ),
+    ]
 
 
 def load_memory_vector_challenge_cases() -> list[MemoryRetrievalEvalCase]:

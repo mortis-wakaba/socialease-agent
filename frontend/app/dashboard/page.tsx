@@ -333,18 +333,7 @@ function nextStepSuggestion({
 }
 
 function scenarioLabel(value?: string | null) {
-  const labels: Record<string, string> = {
-    classroom_speech: "课堂发言",
-    group_discussion: "小组讨论",
-    dorm_conflict: "宿舍沟通",
-    club_icebreaking: "社团破冰",
-    invite_classmate_meal: "约同学吃饭",
-    ask_teacher_question: "向老师提问",
-    interview_self_intro: "面试介绍",
-    refuse_request: "拒绝请求",
-    express_disagreement: "表达不同意见"
-  };
-  return value ? labels[value] ?? value : "-";
+  return value || "-";
 }
 
 function planTone(status: string) {

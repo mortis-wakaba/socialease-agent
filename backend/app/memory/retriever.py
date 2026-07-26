@@ -9,7 +9,6 @@ from app.memory.settings_store import UserMemorySettingsRepository
 from app.memory.text_semantics import (
     lexical_terms,
     memories_conflict,
-    sql_query_terms,
 )
 from app.memory.token_estimator import ConservativeTokenEstimator, TokenEstimator
 from app.models_long_term_memory import (
@@ -44,7 +43,7 @@ class EpisodicMemoryRetriever:
         settings_repository: UserMemorySettingsRepository,
         token_estimator: TokenEstimator | None = None,
         context_token_budget: int = 256,
-        candidate_limit: int = 50,
+        candidate_limit: int = 100,
     ) -> None:
         self.repository = repository
         self.settings_repository = settings_repository
@@ -86,21 +85,15 @@ class EpisodicMemoryRetriever:
         statuses = (MemoryRecordStatus.ACTIVE,)
         if request.include_archived:
             statuses = (*statuses, MemoryRecordStatus.ARCHIVED)
-        query_terms = (
-            sql_query_terms(request.query, request.scenario_type.value if request.scenario_type else None)
-            if request.strategy == MemoryRetrievalStrategy.SQL_TEXT
-            else ()
-        )
+        query_terms = ()
         candidates = self.repository.search_memory_candidates(
             user_id=request.user_id,
             statuses=statuses,
             memory_types=allowed_memory_types,
             scenario_type=(
-                request.scenario_type.value if request.scenario_type else None
+                request.scenario_type
             ),
-            require_scenario_match=(
-                request.strategy != MemoryRetrievalStrategy.RECENT
-            ),
+            require_scenario_match=False,
             query_terms=query_terms,
             now=timestamp,
             limit=self.candidate_limit,
@@ -173,11 +166,15 @@ def rank_memory_candidates(
         if (
             request.strategy == MemoryRetrievalStrategy.SQL_TEXT
             and score.lexical < 0.08
+            and score.continuity == 0.0
         ):
             continue
         if (
             record.status == MemoryRecordStatus.ARCHIVED
-            and (score.lexical < 0.18 or score.scenario < 1.0)
+            and (
+                score.lexical < 0.18
+                or (score.continuity == 0.0 and score.scenario < 1.0)
+            )
         ):
             continue
         eligible.append((record, score))
@@ -210,6 +207,9 @@ def rank_memory_candidates(
                 memory_type=record.memory_type,
                 summary=summary,
                 scenario_type=record.scenario_type,
+                scenario_id=record.scenario_id,
+                practice_thread_id=record.practice_thread_id,
+                skill_codes=record.skill_codes,
                 status=record.status,
                 occurred_at=record.occurred_at,
                 score=score,
@@ -238,18 +238,18 @@ def candidate_is_eligible(
         or (record.expires_at is not None and record.expires_at <= now)
     ):
         return False
-    if request.strategy != MemoryRetrievalStrategy.RECENT:
-        if (
-            request.scenario_type is not None
-            and record.scenario_type not in {None, request.scenario_type}
-        ):
-            return False
     if request.strategy == MemoryRetrievalStrategy.SQL_TEXT:
         record_terms = lexical_terms(
             record.summary,
-            record.scenario_type.value if record.scenario_type else None,
+            record.scenario_type,
         )
-        if not query_terms.intersection(record_terms):
+        continuity = _continuity_score(record, request)
+        skill_overlap = _skill_overlap_score(record, request)
+        if (
+            not query_terms.intersection(record_terms)
+            and continuity == 0.0
+            and skill_overlap == 0.0
+        ):
             return False
     if not _retrieval_safe(record.summary):
         return False
@@ -277,6 +277,8 @@ def _score_record(
         and record.scenario_type == request.scenario_type
         else 0.35 if record.scenario_type is None else 0.0
     )
+    continuity = _continuity_score(record, request)
+    skill_overlap = _skill_overlap_score(record, request)
     age_days = max(0.0, (now - _as_utc(record.occurred_at)).total_seconds() / 86400)
     recency = max(0.0, 1.0 - age_days / 365.0)
     if record.last_retrieved_at is None:
@@ -288,16 +290,24 @@ def _score_record(
         )
         novelty = min(1.0, retrieval_age_days / 30.0)
     weights = {
-        MemoryRetrievalStrategy.RECENT: (0.15, 0.10, 0.50, 0.10, 0.15),
-        MemoryRetrievalStrategy.METADATA: (0.20, 0.35, 0.25, 0.10, 0.10),
-        MemoryRetrievalStrategy.SQL_TEXT: (0.40, 0.25, 0.15, 0.10, 0.10),
+        MemoryRetrievalStrategy.RECENT: (
+            0.10, 0.05, 0.25, 0.15, 0.25, 0.10, 0.10
+        ),
+        MemoryRetrievalStrategy.METADATA: (
+            0.10, 0.05, 0.30, 0.25, 0.10, 0.10, 0.10
+        ),
+        MemoryRetrievalStrategy.SQL_TEXT: (
+            0.30, 0.05, 0.25, 0.20, 0.05, 0.05, 0.10
+        ),
     }[request.strategy]
     total = (
         lexical * weights[0]
         + scenario * weights[1]
-        + recency * weights[2]
-        + novelty * weights[3]
-        + record.confidence * weights[4]
+        + continuity * weights[2]
+        + skill_overlap * weights[3]
+        + recency * weights[4]
+        + novelty * weights[5]
+        + record.confidence * weights[6]
     )
     if record.status == MemoryRecordStatus.ARCHIVED:
         total *= 0.9
@@ -307,8 +317,35 @@ def _score_record(
         recency=round(recency, 6),
         novelty=round(novelty, 6),
         confidence=round(record.confidence, 6),
+        continuity=round(continuity, 6),
+        skill_overlap=round(skill_overlap, 6),
         total=round(min(1.0, total), 6),
     )
+
+
+def _continuity_score(
+    record: EpisodicMemoryRecord,
+    request: MemoryRetrievalRequest,
+) -> float:
+    if (
+        request.practice_thread_id is not None
+        and record.practice_thread_id == request.practice_thread_id
+    ):
+        return 1.0
+    if request.scenario_id is not None and record.scenario_id == request.scenario_id:
+        return 0.8
+    return 0.0
+
+
+def _skill_overlap_score(
+    record: EpisodicMemoryRecord,
+    request: MemoryRetrievalRequest,
+) -> float:
+    requested = set(request.skill_codes)
+    if not requested:
+        return 0.0
+    overlap = requested.intersection(record.skill_codes)
+    return len(overlap) / len(requested)
 
 
 def _retrieval_safe(summary: str) -> bool:

@@ -50,9 +50,9 @@ from app.models_roleplay import (
     RoleplayGuidance,
     RoleplayMessage,
     RoleplayMessageRole,
-    RoleplayScenario,
     RoleplaySession,
 )
+from app.services.scenario_interpreter import ScenarioInterpreter
 from app.safety.classifier import RuleBasedSafetyClassifier
 from app.workflow.router import IntentRouter
 from app.tracing.versions import (
@@ -284,7 +284,10 @@ def run_evaluations_with_traces() -> EvalTraceReport:
         session = RoleplaySession(
             session_id=f"eval-{case.id}",
             user_id="eval_user",
-            scenario=RoleplayScenario(case.scenario),
+            scenario=None,
+            scenario_spec=ScenarioInterpreter().interpret(
+                description=case.scenario
+            ),
             difficulty=case.difficulty,
             messages=[
                 RoleplayMessage(role=RoleplayMessageRole.USER, content=message, created_at=now)

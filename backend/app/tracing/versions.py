@@ -19,13 +19,13 @@ PROMPT_VERSIONS: dict[str, str] = {
     "safety_classifier": "safety-v1",
     "intent_router": "intent-v3",
     "support_generation": "support-v3",
-    "roleplay": "roleplay-v4",
+    "roleplay": "roleplay-v5",
     "worksheet_extraction": "worksheet-v2",
     "resource_agent_loop": "resource-loop-v2",
     "output_guardrail": "output-guardrail-v4",
     "output_repair": "output-repair-v2",
     "roleplay_compaction": "roleplay-compaction-v1",
-    "memory_extraction": "memory-extraction-v2",
+    "memory_extraction": "memory-extraction-v3",
 }
 
 _PROMPTS_BY_SKILL: dict[str, tuple[str, ...]] = {

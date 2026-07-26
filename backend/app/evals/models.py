@@ -12,8 +12,8 @@ from app.models_long_term_memory import (
     MemoryRecordStatus,
     MemoryType,
 )
-from app.models_roleplay import RoleplayScenario
 from app.models_trace import ExecutionVersionInfo
+from app.models_scenario import SocialSkillCode
 
 
 class SafetyEvalCase(BaseModel):
@@ -59,7 +59,11 @@ class MemoryRetrievalFixture(BaseModel):
     user_id: str
     memory_type: MemoryType
     summary: str
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = None
+    scenario_id: str | None = None
+    practice_thread_id: str | None = None
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
+    context_tags: list[str] = Field(default_factory=list, max_length=5)
     status: MemoryRecordStatus = MemoryRecordStatus.ACTIVE
     occurred_days_ago: int = Field(ge=0, le=730)
     expires_days_from_now: int | None = Field(default=180, ge=-730, le=730)
@@ -74,7 +78,10 @@ class MemoryRetrievalEvalCase(BaseModel):
     category: str
     user_id: str
     query: str
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = None
+    scenario_id: str | None = None
+    practice_thread_id: str | None = None
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
     allowed_memory_types: list[MemoryType] = Field(min_length=1, max_length=5)
     include_archived: bool = False
     memories: list[MemoryRetrievalFixture] = Field(default_factory=list)

@@ -12,6 +12,7 @@ def initialize_database() -> None:
         _migrate_auth_tables(connection)
         _migrate_user_audit_columns(connection)
         _migrate_long_term_memory_columns(connection)
+        _migrate_open_scenario_columns(connection)
         _create_post_migration_indexes(connection)
 
 
@@ -71,6 +72,66 @@ def _create_post_migration_indexes(connection) -> None:
         """CREATE INDEX IF NOT EXISTS idx_memory_events_subject
         ON memory_events(user_id, subject_type, subject_id, created_at)"""
     )
+    connection.execute(
+        """CREATE INDEX IF NOT EXISTS idx_thread_checkpoints_user_scenario
+        ON thread_checkpoints(user_id, current_scenario_id, updated_at)"""
+    )
+    connection.execute(
+        """CREATE INDEX IF NOT EXISTS idx_episodic_memories_continuity
+        ON episodic_memories(
+            user_id, status, practice_thread_id, scenario_id, occurred_at
+        )"""
+    )
+
+
+def _migrate_open_scenario_columns(connection) -> None:
+    """Add open-scenario metadata to existing SQLite memory tables."""
+    for table_name in ("episodic_memories", "memory_proposals"):
+        memory_columns = {
+            row["name"]
+            for row in connection.execute(
+                f"PRAGMA table_info({table_name})"
+            ).fetchall()
+        }
+        memory_migrations = {
+            "scenario_id": f"ALTER TABLE {table_name} ADD COLUMN scenario_id TEXT",
+            "practice_thread_id": (
+                f"ALTER TABLE {table_name} ADD COLUMN practice_thread_id TEXT"
+            ),
+            "skill_codes": (
+                f"ALTER TABLE {table_name} "
+                "ADD COLUMN skill_codes TEXT NOT NULL DEFAULT '[]'"
+            ),
+            "context_tags": (
+                f"ALTER TABLE {table_name} "
+                "ADD COLUMN context_tags TEXT NOT NULL DEFAULT '[]'"
+            ),
+        }
+        for column, statement in memory_migrations.items():
+            if column not in memory_columns:
+                connection.execute(statement)
+
+    columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(thread_checkpoints)"
+        ).fetchall()
+    }
+    migrations = {
+        "current_scenario_id": (
+            "ALTER TABLE thread_checkpoints ADD COLUMN current_scenario_id TEXT"
+        ),
+        "current_scenario_summary": (
+            "ALTER TABLE thread_checkpoints ADD COLUMN current_scenario_summary TEXT"
+        ),
+        "scenario_skill_codes": (
+            "ALTER TABLE thread_checkpoints "
+            "ADD COLUMN scenario_skill_codes TEXT NOT NULL DEFAULT '[]'"
+        ),
+    }
+    for column, statement in migrations.items():
+        if column not in columns:
+            connection.execute(statement)
 
 
 def _migrate_auth_tables(connection) -> None:
@@ -166,6 +227,10 @@ def _rebuild_sqlite_episodic_memories(connection) -> None:
         memory_type TEXT NOT NULL,
         summary TEXT NOT NULL,
         scenario_type TEXT,
+        scenario_id TEXT,
+        practice_thread_id TEXT,
+        skill_codes TEXT NOT NULL DEFAULT '[]',
+        context_tags TEXT NOT NULL DEFAULT '[]',
         source_type TEXT NOT NULL,
         source_id TEXT,
         evidence_type TEXT NOT NULL,
@@ -200,6 +265,7 @@ def _rebuild_sqlite_episodic_memories(connection) -> None:
     connection.execute(
         """INSERT INTO episodic_memories (
         memory_id, user_id, memory_type, summary, scenario_type,
+        scenario_id, practice_thread_id, skill_codes, context_tags,
         source_type, source_id, evidence_type, confidence, status,
         occurred_at, created_at, updated_at, last_retrieved_at,
         expires_at, consent_version, content_hash, idempotency_key,
@@ -207,6 +273,7 @@ def _rebuild_sqlite_episodic_memories(connection) -> None:
         )
         SELECT
         memory_id, user_id, memory_type, summary, scenario_type,
+        NULL, NULL, '[]', '[]',
         source_type, source_id, evidence_type, confidence, status,
         occurred_at, created_at, updated_at, last_retrieved_at,
         expires_at, consent_version, content_hash, idempotency_key,

@@ -14,7 +14,7 @@ from app.db.postgres.memory_settings_repository import PostgresUserMemorySetting
 from app.db.postgres.user_profile_repository import PostgresUserProfileRepository
 from app.models_exposure import ExposureAttempt, ExposureFeedbackStatus, ExposurePlan, ExposureTask
 from app.models_memory import PracticePreferences, UserConsentState
-from app.models_roleplay import RoleplayGuidance, RoleplayScenario, RoleplaySession
+from app.models_roleplay import RoleplayGuidance, RoleplaySession
 from app.services.memory_privacy_service import MemoryPrivacyService
 
 
@@ -154,7 +154,7 @@ def test_postgres_user_profile_summary_from_practice_records(
     roleplay = RoleplaySession(
         session_id=f"session_{uuid4().hex}",
         user_id=user_id,
-        scenario=RoleplayScenario.CLASSROOM_SPEECH,
+        scenario="classroom_speech",
         difficulty=4,
         messages=[],
         retrieved_guidance=RoleplayGuidance(
@@ -262,7 +262,7 @@ def test_postgres_memory_export_and_delete_cover_user_owned_records(
     roleplay = RoleplaySession(
         session_id=f"session_{uuid4().hex}",
         user_id=user_id,
-        scenario=RoleplayScenario.CLASSROOM_SPEECH,
+        scenario="classroom_speech",
         difficulty=4,
         messages=[],
         retrieved_guidance=RoleplayGuidance(

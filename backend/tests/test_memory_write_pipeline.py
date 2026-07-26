@@ -78,7 +78,6 @@ def _output(
         "operation": operation,
         "memory_type": memory_type,
         "summary": summary,
-        "scenario_type": "group_discussion",
         "source_type": "chat",
         "source_id": "request_1",
         "evidence_type": evidence_type,

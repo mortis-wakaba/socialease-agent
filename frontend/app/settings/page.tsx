@@ -11,7 +11,6 @@ import { DirectConsentCard } from "@/components/direct-consent-card";
 import type {
   ConsentRequiredDetail,
   PracticePreferences,
-  RoleplayScenario,
   UserMemoryExportResponse,
   UserProfileResponse
 } from "@/lib/types";
@@ -25,7 +24,6 @@ import {
   Panel,
   Select
 } from "@/components/ui";
-import { roleplayScenarios } from "@/lib/constants";
 
 const DEFAULT_PREFERENCES: PracticePreferences = {
   preferred_roleplay_difficulty: null,
@@ -48,6 +46,7 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [preferences, setPreferences] =
     useState<PracticePreferences>(DEFAULT_PREFERENCES);
+  const [newScenarioPreference, setNewScenarioPreference] = useState("");
   const [exported, setExported] = useState<UserMemoryExportResponse | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [accountDeleteConfirm, setAccountDeleteConfirm] = useState("");
@@ -591,29 +590,38 @@ export default function SettingsPage() {
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 偏好的练习场景
-                <Select
-                  value=""
-                  onChange={(event) => {
-                    const value = event.target.value as RoleplayScenario | "";
-                    if (!value) {
-                      return;
+                <div className="mt-1 flex gap-2">
+                  <input
+                    value={newScenarioPreference}
+                    maxLength={240}
+                    onChange={(event) =>
+                      setNewScenarioPreference(event.target.value)
                     }
-                    setPreferences((current) => ({
-                      ...current,
-                      preferred_practice_scenarios: Array.from(
-                        new Set([...current.preferred_practice_scenarios, value])
-                      ).slice(0, 5)
-                    }));
-                  }}
-                  className="mt-1"
-                >
-                  <option value="">添加场景</option>
-                  {roleplayScenarios.map((scenario) => (
-                    <option key={scenario.id} value={scenario.id}>
-                      {scenario.title}
-                    </option>
-                  ))}
-                </Select>
+                    placeholder="输入一个具体练习情境"
+                    className="min-w-0 flex-1 rounded-md border border-line px-3 py-2"
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const value = newScenarioPreference.trim();
+                      if (!value) {
+                        return;
+                      }
+                      setPreferences((current) => ({
+                        ...current,
+                        preferred_practice_scenarios: Array.from(
+                          new Set([
+                            ...current.preferred_practice_scenarios,
+                            value
+                          ])
+                        ).slice(0, 5)
+                      }));
+                      setNewScenarioPreference("");
+                    }}
+                  >
+                    添加
+                  </Button>
+                </div>
               </label>
               <div className="flex flex-wrap gap-2">
                 {preferences.preferred_practice_scenarios.length === 0 ? (

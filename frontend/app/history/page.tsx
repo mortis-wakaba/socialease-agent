@@ -161,7 +161,7 @@ export default function HistoryPage() {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div className="font-medium text-ink">
-                          {roleplayScenarioLabel(session.scenario)}
+                          {roleplayScenarioLabel(session)}
                         </div>
                         <div className="mt-1 text-xs text-slate-500">
                           {new Date(session.updated_at).toLocaleString()}
@@ -317,17 +317,6 @@ function roleplayStatusLabel(status: RoleplaySession["status"]) {
   return labels[status];
 }
 
-function roleplayScenarioLabel(scenario: RoleplaySession["scenario"]) {
-  const labels: Record<RoleplaySession["scenario"], string> = {
-    classroom_speech: "课堂发言",
-    group_discussion: "小组讨论",
-    dorm_conflict: "宿舍沟通",
-    club_icebreaking: "社团破冰",
-    invite_classmate_meal: "约同学吃饭",
-    ask_teacher_question: "向老师提问",
-    interview_self_intro: "面试介绍",
-    refuse_request: "拒绝请求",
-    express_disagreement: "表达不同意见"
-  };
-  return labels[scenario] ?? scenario;
+function roleplayScenarioLabel(session: RoleplaySession) {
+  return session.scenario_spec?.safe_summary ?? session.scenario ?? "练习场景";
 }

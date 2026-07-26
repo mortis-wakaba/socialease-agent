@@ -4,25 +4,12 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models import SafetyResult
 from app.models_llm import LLMUsage
 from app.models_knowledge import Citation
-
-
-class RoleplayScenario(str, Enum):
-    """Supported social role-play scenarios."""
-
-    CLASSROOM_SPEECH = "classroom_speech"
-    GROUP_DISCUSSION = "group_discussion"
-    DORM_CONFLICT = "dorm_conflict"
-    CLUB_ICEBREAKING = "club_icebreaking"
-    INVITE_CLASSMATE_MEAL = "invite_classmate_meal"
-    ASK_TEACHER_QUESTION = "ask_teacher_question"
-    INTERVIEW_SELF_INTRO = "interview_self_intro"
-    REFUSE_REQUEST = "refuse_request"
-    EXPRESS_DISAGREEMENT = "express_disagreement"
+from app.models_scenario import ScenarioSpec
 
 
 class RoleplayMessageRole(str, Enum):
@@ -92,7 +79,8 @@ class RoleplaySession(BaseModel):
 
     session_id: str
     user_id: str = Field(min_length=1)
-    scenario: RoleplayScenario
+    scenario: str | None = Field(default=None, max_length=128)
+    scenario_spec: ScenarioSpec | None = None
     difficulty: int = Field(ge=1, le=5)
     status: RoleplaySessionStatus = RoleplaySessionStatus.ACTIVE
     messages: list[RoleplayMessage] = Field(default_factory=list)
@@ -100,12 +88,20 @@ class RoleplaySession(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @model_validator(mode="after")
+    def require_scenario_contract(self) -> "RoleplaySession":
+        """Allow old rows to load while requiring one scenario representation."""
+        if self.scenario is None and self.scenario_spec is None:
+            raise ValueError("role-play session requires scenario_spec")
+        return self
+
 
 class RoleplayStartRequest(BaseModel):
     """Request body for starting a role-play session."""
 
     user_id: str = Field(min_length=1)
-    scenario: RoleplayScenario
+    scenario_description: str = Field(min_length=1, max_length=1200)
+    practice_goal: str | None = Field(default=None, min_length=1, max_length=400)
     difficulty: int = Field(default=2, ge=1, le=5)
 
 

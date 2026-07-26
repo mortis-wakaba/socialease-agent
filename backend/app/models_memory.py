@@ -6,7 +6,6 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from app.models_memory_types import MemoryType
-from app.models_roleplay import RoleplayScenario
 
 
 MEMORY_PRIVACY_NOTICE = (
@@ -70,14 +69,14 @@ class PracticePreferences(BaseModel):
 
     preferred_roleplay_difficulty: int | None = Field(default=None, ge=1, le=5)
     preferred_feedback_style: PreferredFeedbackStyle | None = None
-    preferred_practice_scenarios: list[RoleplayScenario] = Field(default_factory=list, max_length=5)
+    preferred_practice_scenarios: list[str] = Field(default_factory=list, max_length=5)
 
 
 class UserOnboardingProfile(BaseModel):
     """Low-sensitivity onboarding choices that can guide future practice."""
 
     primary_goal: OnboardingPrimaryGoal | None = None
-    preferred_scenario: RoleplayScenario | None = None
+    preferred_scenario: str | None = Field(default=None, max_length=240)
     current_anxiety_level: int | None = Field(default=None, ge=1, le=10)
     practice_preference: OnboardingPracticePreference | None = None
     wants_pause_reminders: bool = True

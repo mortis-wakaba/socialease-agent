@@ -33,6 +33,8 @@ from app.models_long_term_memory import (
     MemorySourceType,
     PendingMemoryProposalRecord,
 )
+from app.models_scenario import ScenarioSpec
+from app.services.scenario_interpreter import ScenarioInterpreter
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,8 @@ class MemoryWritePipeline:
         source_id: str | None,
         occurred_at: datetime,
         risk_level: RiskLevel,
+        scenario_spec: ScenarioSpec | None = None,
+        practice_thread_id: str | None = None,
         now: datetime | None = None,
     ) -> MemoryPipelineResult:
         """Process one bounded batch without raising provider/write errors."""
@@ -105,7 +109,12 @@ class MemoryWritePipeline:
         disabled_types = {
             memory_type.value for memory_type in settings.disabled_memory_types
         }
-        for proposal in extracted.proposals:
+        for raw_proposal in extracted.proposals:
+            proposal = _enrich_proposal(
+                raw_proposal,
+                scenario_spec=scenario_spec,
+                practice_thread_id=practice_thread_id,
+            )
             decision = (
                 MemoryPolicyDecision(
                     proposal_id=proposal.proposal_id,
@@ -284,6 +293,10 @@ class MemoryWritePipeline:
             memory_type=proposal.memory_type,
             summary=safe_summary,
             scenario_type=proposal.scenario_type,
+            scenario_id=proposal.scenario_id,
+            practice_thread_id=proposal.practice_thread_id,
+            skill_codes=proposal.skill_codes,
+            context_tags=proposal.context_tags,
             source_type=proposal.source_type,
             source_id=proposal.source_id,
             evidence_type=proposal.evidence_type,
@@ -376,6 +389,26 @@ def _has_explicit_revoke_request(messages: list[dict[str, str]]) -> bool:
         "don't remember",
     )
     return any(marker in user_text for marker in markers)
+
+
+def _enrich_proposal(
+    proposal: MemoryProposal,
+    *,
+    scenario_spec: ScenarioSpec | None,
+    practice_thread_id: str | None,
+) -> MemoryProposal:
+    """Attach application-owned continuity and transferable skill metadata."""
+    facets = scenario_spec or ScenarioInterpreter().interpret(
+        description=proposal.summary
+    )
+    return proposal.model_copy(
+        update={
+            "scenario_id": scenario_spec.scenario_id if scenario_spec else None,
+            "practice_thread_id": practice_thread_id,
+            "skill_codes": facets.skill_codes,
+            "context_tags": facets.context_tags,
+        }
+    )
 
 
 def _as_utc(value: datetime) -> datetime:

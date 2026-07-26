@@ -34,7 +34,6 @@ class MemoryProposalExtractor:
         "operation",
         "memory_type",
         "summary",
-        "scenario_type",
         "source_type",
         "source_id",
         "evidence_type",
@@ -75,9 +74,7 @@ class MemoryProposalExtractor:
                             "memory_type": memory.memory_type.value,
                             "summary": memory.summary,
                             "scenario_type": (
-                                memory.scenario_type.value
-                                if memory.scenario_type
-                                else None
+                                memory.scenario_type
                             ),
                             "status": memory.status.value,
                         }

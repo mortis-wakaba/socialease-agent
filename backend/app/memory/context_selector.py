@@ -16,7 +16,6 @@ from app.models_memory import (
     OnboardingPrimaryGoal,
     PreferredFeedbackStyle,
 )
-from app.models_roleplay import RoleplayScenario
 from app.privacy.redaction import redact_sensitive_identifiers
 
 
@@ -163,9 +162,9 @@ def _select_roleplay_context(
     drop_reasons = _memory_drop_reasons(memory_context)
 
     raw_scenario = request_context.get("scenario")
-    scenario = _validated_enum(raw_scenario, RoleplayScenario)
+    scenario = _validated_scenario_text(raw_scenario)
     if scenario is not None:
-        values["scenario"] = scenario.value
+        values["scenario"] = scenario
         metadata["scenario"] = _field_metadata(
             ContextValueSource.CURRENT_REQUEST,
             ContextConfidence.EXPLICIT,
@@ -291,7 +290,7 @@ def _select_exposure_context(
             )
         elif memory_context.onboarding_profile.preferred_scenario is not None:
             values["preferred_scenario"] = (
-                memory_context.onboarding_profile.preferred_scenario.value
+                memory_context.onboarding_profile.preferred_scenario
             )
             metadata["preferred_scenario"] = _field_metadata(
                 ContextValueSource.ONBOARDING,
@@ -357,6 +356,17 @@ def _validated_enum(value: object, enum_type: type[EnumT]) -> EnumT | None:
         return enum_type(value)
     except ValueError:
         return None
+
+
+def _validated_scenario_text(value: object) -> str | None:
+    """Accept bounded open-scenario text after rejecting identifiers."""
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split())[:240]
+    redacted, categories = redact_sensitive_identifiers(normalized)
+    if not normalized or categories or redacted != normalized:
+        return None
+    return normalized
 
 
 def _valid_int(value: object, *, minimum: int, maximum: int) -> bool:

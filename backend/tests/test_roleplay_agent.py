@@ -11,9 +11,9 @@ from app.models_roleplay import (
     RoleplayMessage,
     RoleplayMessageFeatures,
     RoleplayMessageRole,
-    RoleplayScenario,
     RoleplaySession,
 )
+from app.services.scenario_interpreter import ScenarioInterpreter
 
 
 class FakeLLMClient:
@@ -49,7 +49,10 @@ def make_session() -> RoleplaySession:
     return RoleplaySession(
         session_id="session",
         user_id="user",
-        scenario=RoleplayScenario.CLASSROOM_SPEECH,
+        scenario=None,
+        scenario_spec=ScenarioInterpreter().interpret(
+            description="课堂上轮到我发言时，我想先说清楚核心观点"
+        ),
         difficulty=3,
         messages=[
             RoleplayMessage(
@@ -188,7 +191,7 @@ async def test_next_turn_uses_llm_when_available() -> None:
     assert llm_usage.fallback_used is False
     assert llm_client.calls
     prompt = str(llm_client.calls[0]["user_prompt"])
-    assert "classroom_speech" in prompt
+    assert "课堂上轮到我发言" in prompt
     assert "先说核心观点" in prompt
 
 
@@ -198,7 +201,7 @@ async def test_next_turn_falls_back_without_llm() -> None:
 
     response, llm_usage = await agent.next_turn(make_session(), "我想先讲结论。")
 
-    assert response == "我听到了。你能用一句话先说出你的核心观点吗？ 你也可以把句子说完整一点。"
+    assert response == "我在听。你能先用一句话说出核心意思吗？ 你也可以把句子说完整一点。"
     assert llm_usage.used is False
     assert llm_usage.fallback_used is False
 
@@ -209,7 +212,7 @@ async def test_next_turn_falls_back_when_llm_fails() -> None:
 
     response, llm_usage = await agent.next_turn(make_session(), "短句")
 
-    assert response == "我听到了。你能用一句话先说出你的核心观点吗？ 你也可以把句子说完整一点。"
+    assert response == "我在听。你能先用一句话说出核心意思吗？ 你也可以把句子说完整一点。"
     assert llm_usage.used is False
     assert llm_usage.fallback_used is True
     assert llm_usage.error_category == "TRANSIENT_PROVIDER_ERROR"

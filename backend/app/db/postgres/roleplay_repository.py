@@ -37,7 +37,7 @@ class PostgresRoleplaySessionRepository:
                 {
                     "session_id": session.session_id,
                     "user_id": session.user_id,
-                    "scenario": session.scenario.value,
+                    "scenario": session.scenario,
                     "difficulty": session.difficulty,
                     "payload": session.model_dump_json(),
                     "created_at": session.created_at,

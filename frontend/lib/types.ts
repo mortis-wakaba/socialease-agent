@@ -202,12 +202,12 @@ export type OnboardingPracticePreference =
 export type PracticePreferences = {
   preferred_roleplay_difficulty: number | null;
   preferred_feedback_style: PreferredFeedbackStyle | null;
-  preferred_practice_scenarios: RoleplayScenario[];
+  preferred_practice_scenarios: string[];
 };
 
 export type UserOnboardingProfile = {
   primary_goal: OnboardingPrimaryGoal | null;
-  preferred_scenario: RoleplayScenario | null;
+  preferred_scenario: string | null;
   current_anxiety_level: number | null;
   practice_preference: OnboardingPracticePreference | null;
   wants_pause_reminders: boolean;
@@ -298,7 +298,11 @@ export type EpisodicMemoryView = {
   memory_id: string;
   memory_type: MemoryType;
   summary: string;
-  scenario_type?: RoleplayScenario | null;
+  scenario_type?: string | null;
+  scenario_id?: string | null;
+  practice_thread_id?: string | null;
+  skill_codes?: string[];
+  context_tags?: string[];
   source_type: string;
   evidence_type: string;
   confidence: number;
@@ -316,7 +320,11 @@ export type MemoryProposalView = {
   proposal_id: string;
   memory_type: MemoryType;
   summary: string;
-  scenario_type?: RoleplayScenario | null;
+  scenario_type?: string | null;
+  scenario_id?: string | null;
+  practice_thread_id?: string | null;
+  skill_codes?: string[];
+  context_tags?: string[];
   source_type: string;
   evidence_type: string;
   confidence: number;
@@ -333,7 +341,10 @@ export type PracticeThreadCheckpoint = {
   user_id: string;
   current_goal?: OnboardingPrimaryGoal | null;
   current_stage?: string | null;
-  current_scenario?: RoleplayScenario | null;
+  current_scenario?: string | null;
+  current_scenario_id?: string | null;
+  current_scenario_summary?: string | null;
+  scenario_skill_codes?: string[];
   helpful_strategy_codes: string[];
   attempted_skill_names: string[];
   unresolved_next_step?: string | null;
@@ -461,16 +472,15 @@ export type Citation = {
   snippet: string;
 };
 
-export type RoleplayScenario =
-  | "classroom_speech"
-  | "group_discussion"
-  | "dorm_conflict"
-  | "club_icebreaking"
-  | "invite_classmate_meal"
-  | "ask_teacher_question"
-  | "interview_self_intro"
-  | "refuse_request"
-  | "express_disagreement";
+export type ScenarioSpec = {
+  scenario_id: string;
+  safe_summary: string;
+  practice_goal: string;
+  counterpart_role: string;
+  interaction_mode: string;
+  skill_codes: string[];
+  context_tags: string[];
+};
 
 export type RoleplayMessage = {
   role: "user" | "agent" | "system";
@@ -490,7 +500,8 @@ export type RoleplayGuidance = {
 export type RoleplaySession = {
   session_id: string;
   user_id: string;
-  scenario: RoleplayScenario;
+  scenario: string | null;
+  scenario_spec: ScenarioSpec | null;
   difficulty: number;
   status: "active" | "paused" | "completed";
   messages: RoleplayMessage[];

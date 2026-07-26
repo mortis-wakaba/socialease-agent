@@ -416,7 +416,10 @@ async def test_roleplay_skill_uses_memory_context_after_consent() -> None:
 
     assert response.structured_data["action"] == "roleplay_started"
     assert response.structured_data["difficulty"] == 4
-    assert response.structured_data["scenario"] == "dorm_conflict"
+    scenario = response.structured_data["scenario"]
+    assert scenario["safe_summary"] == "我想做一个角色扮演练习"
+    assert scenario["scenario_id"].startswith("scenario_")
+    assert "dorm_conflict" not in scenario["safe_summary"]
     assert "preferred_difficulty" in response.structured_data["context_selection"][
         "selected_fields"
     ]

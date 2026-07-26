@@ -18,17 +18,6 @@ _STOP_TERMS = {
     "帮助",
     "用户",
 }
-_SCENARIO_TERMS: dict[str, tuple[str, ...]] = {
-    "classroom_speech": ("课堂", "发言", "开场", "开口", "观点"),
-    "group_discussion": ("小组", "讨论", "组会", "观点", "意见"),
-    "dorm_conflict": ("宿舍", "室友", "边界", "请求", "沟通"),
-    "club_icebreaking": ("社团", "破冰", "开场", "寒暄"),
-    "invite_classmate_meal": ("邀请", "同学", "吃饭", "时间", "地点"),
-    "ask_teacher_question": ("老师", "提问", "问题", "尝试"),
-    "interview_self_intro": ("面试", "自我介绍", "经历"),
-    "refuse_request": ("拒绝", "边界", "请求", "理由"),
-    "express_disagreement": ("不同意见", "不同看法", "观点", "理由"),
-}
 _NEGATION_MARKERS = (
     "不再",
     "不要",
@@ -47,6 +36,7 @@ _NEGATION_MARKERS = (
 
 def lexical_terms(text: str, scenario_type: str | None = None) -> set[str]:
     """Tokenize mixed Chinese/ASCII text with bounded domain expansion."""
+    del scenario_type
     normalized = text.casefold()
     ascii_terms = re.findall(r"[a-z0-9]+", normalized)
     cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", normalized)
@@ -54,24 +44,11 @@ def lexical_terms(text: str, scenario_type: str | None = None) -> set[str]:
     for run in cjk_runs:
         terms.append(run)
         terms.extend(run[index : index + 2] for index in range(len(run) - 1))
-    if scenario_type is not None:
-        terms.extend(_SCENARIO_TERMS.get(scenario_type, ()))
     return {
         term
         for term in terms
         if 2 <= len(term) <= 48 and term not in _STOP_TERMS
     }
-
-
-def sql_query_terms(query: str, scenario_type: str | None) -> tuple[str, ...]:
-    """Return selective bounded terms suitable for parameterized SQL LIKE."""
-    del scenario_type  # Scenario is an independent hard filter.
-    ranked = sorted(
-        lexical_terms(query),
-        key=lambda term: (len(term), term),
-        reverse=True,
-    )
-    return tuple(ranked[:16])
 
 
 def is_negative(text: str) -> bool:

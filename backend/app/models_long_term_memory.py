@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.models_memory import OnboardingPrimaryGoal
 from app.models_memory_types import MemoryType
-from app.models_roleplay import RoleplayScenario
+from app.models_scenario import SocialSkillCode
 
 
 class MemorySourceType(str, Enum):
@@ -145,7 +145,11 @@ class EpisodicMemoryRecord(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     memory_type: MemoryType
     summary: str = Field(min_length=1, max_length=500)
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = Field(default=None, max_length=128)
+    scenario_id: str | None = Field(default=None, max_length=128)
+    practice_thread_id: str | None = Field(default=None, max_length=128)
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
+    context_tags: list[str] = Field(default_factory=list, max_length=5)
     source_type: MemorySourceType
     source_id: str | None = Field(default=None, max_length=128)
     evidence_type: MemoryEvidenceType
@@ -200,7 +204,11 @@ class MemoryProposal(BaseModel):
     operation: MemoryProposalOperation = MemoryProposalOperation.ADD
     memory_type: MemoryType
     summary: str = Field(min_length=1, max_length=500)
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = Field(default=None, max_length=128)
+    scenario_id: str | None = Field(default=None, max_length=128)
+    practice_thread_id: str | None = Field(default=None, max_length=128)
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
+    context_tags: list[str] = Field(default_factory=list, max_length=5)
     source_type: MemorySourceType
     source_id: str | None = Field(default=None, max_length=128)
     evidence_type: MemoryEvidenceType
@@ -245,7 +253,11 @@ class PendingMemoryProposalRecord(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     memory_type: MemoryType
     summary: str = Field(min_length=1, max_length=500)
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = Field(default=None, max_length=128)
+    scenario_id: str | None = Field(default=None, max_length=128)
+    practice_thread_id: str | None = Field(default=None, max_length=128)
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
+    context_tags: list[str] = Field(default_factory=list, max_length=5)
     source_type: MemorySourceType
     source_id: str | None = Field(default=None, max_length=128)
     evidence_type: MemoryEvidenceType
@@ -319,7 +331,10 @@ class MemoryRetrievalRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     query: str = Field(min_length=1, max_length=1200)
     allowed_memory_types: list[MemoryType] = Field(min_length=1, max_length=5)
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = Field(default=None, max_length=128)
+    scenario_id: str | None = Field(default=None, max_length=128)
+    practice_thread_id: str | None = Field(default=None, max_length=128)
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
     include_archived: bool = False
     limit: int = Field(default=3, ge=1, le=3)
     strategy: MemoryRetrievalStrategy = MemoryRetrievalStrategy.SQL_TEXT
@@ -335,6 +350,8 @@ class MemoryRetrievalScore(BaseModel):
     recency: float = Field(ge=0.0, le=1.0)
     novelty: float = Field(ge=0.0, le=1.0)
     confidence: float = Field(ge=0.0, le=1.0)
+    continuity: float = Field(default=0.0, ge=0.0, le=1.0)
+    skill_overlap: float = Field(default=0.0, ge=0.0, le=1.0)
     total: float = Field(ge=0.0, le=1.0)
 
 
@@ -346,7 +363,10 @@ class MemoryRetrievalHit(BaseModel):
     memory_id: str = Field(min_length=1, max_length=128)
     memory_type: MemoryType
     summary: str = Field(min_length=1, max_length=500)
-    scenario_type: RoleplayScenario | None = None
+    scenario_type: str | None = Field(default=None, max_length=128)
+    scenario_id: str | None = Field(default=None, max_length=128)
+    practice_thread_id: str | None = Field(default=None, max_length=128)
+    skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
     status: MemoryRecordStatus
     occurred_at: datetime
     score: MemoryRetrievalScore
@@ -428,7 +448,10 @@ class PracticeThreadCheckpoint(BaseModel):
         max_length=64,
         pattern=r"^[a-z][a-z0-9_]*$",
     )
-    current_scenario: RoleplayScenario | None = None
+    current_scenario: str | None = Field(default=None, max_length=128)
+    current_scenario_id: str | None = Field(default=None, max_length=128)
+    current_scenario_summary: str | None = Field(default=None, max_length=240)
+    scenario_skill_codes: list[str] = Field(default_factory=list, max_length=5)
     helpful_strategy_codes: list[str] = Field(default_factory=list, max_length=8)
     attempted_skill_names: list[str] = Field(default_factory=list, max_length=12)
     unresolved_next_step: str | None = Field(default=None, max_length=240)
@@ -438,7 +461,12 @@ class PracticeThreadCheckpoint(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    @field_validator("helpful_strategy_codes", "attempted_skill_names", mode="after")
+    @field_validator(
+        "scenario_skill_codes",
+        "helpful_strategy_codes",
+        "attempted_skill_names",
+        mode="after",
+    )
     @classmethod
     def validate_codes(cls, values: list[str]) -> list[str]:
         """Keep checkpoint identifiers controlled, unique, and content-free."""
