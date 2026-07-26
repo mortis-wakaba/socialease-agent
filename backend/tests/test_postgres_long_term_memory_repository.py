@@ -19,6 +19,7 @@ from app.db.postgres.memory_settings_repository import (
 )
 from app.memory.long_term_repository import MemoryConflictError
 from app.memory.policy_engine import MemoryPolicyEngine
+from app.memory.retriever import EpisodicMemoryRetriever
 from app.memory.thread_checkpoint_service import ThreadCheckpointService
 from app.memory.token_estimator import ConservativeTokenEstimator
 from app.memory.write_pipeline import MemoryWritePipeline
@@ -32,6 +33,8 @@ from app.models_long_term_memory import (
     MemorySourceType,
     MemoryType,
     MemoryProposal,
+    MemoryRetrievalRequest,
+    MemoryRetrievalStrategy,
     PracticeThreadCheckpoint,
     PracticeThreadStatus,
 )
@@ -225,6 +228,66 @@ async def test_postgres_policy_pipeline_commits_and_deduplicates(
     assert first.status == "committed"
     assert second.items[0].deduplicated is True
     assert len(repository.list_memories(user_id)) == 1
+
+
+def test_postgres_retrieval_is_user_scoped_and_audited(
+    repository: PostgresLongTermMemoryRepository,
+) -> None:
+    """PostgreSQL should enforce retrieval filters and atomically audit hits."""
+    assert TEST_DATABASE_URL is not None
+    user_id = f"pg_retrieval_{uuid4().hex}"
+    other_user_id = f"pg_retrieval_other_{uuid4().hex}"
+    settings = PostgresUserMemorySettingsRepository(
+        database_url=TEST_DATABASE_URL
+    )
+    settings.save(
+        user_id=user_id,
+        consent_state=UserConsentState(consent_to_practice_summary=True),
+    )
+    relevant = _memory(user_id).model_copy(
+        update={
+            "memory_type": MemoryType.HELPFUL_STRATEGY,
+            "summary": "课堂发言前先准备一句简短开场有帮助。",
+            "content_hash": uuid4().hex * 2,
+            "idempotency_key": uuid4().hex * 2,
+        }
+    )
+    other_user = _memory(other_user_id).model_copy(
+        update={
+            "memory_type": MemoryType.HELPFUL_STRATEGY,
+            "summary": "课堂发言前先准备一句简短开场有帮助。",
+            "content_hash": uuid4().hex * 2,
+            "idempotency_key": uuid4().hex * 2,
+        }
+    )
+    repository.create_memory(relevant, reason_code="test_retrieval")
+    repository.create_memory(other_user, reason_code="test_retrieval")
+    retriever = EpisodicMemoryRetriever(
+        repository=repository,
+        settings_repository=settings,
+        context_token_budget=128,
+    )
+
+    result = retriever.retrieve(
+        MemoryRetrievalRequest(
+            user_id=user_id,
+            query="我想练习课堂发言的简短开场。",
+            allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+            scenario_type=RoleplayScenario.CLASSROOM_SPEECH,
+            strategy=MemoryRetrievalStrategy.SQL_TEXT,
+        ),
+        now=NOW + timedelta(days=1),
+    )
+
+    assert [hit.memory_id for hit in result.hits] == [relevant.memory_id]
+    refreshed = repository.get_memory(relevant.memory_id, user_id)
+    assert refreshed is not None
+    assert refreshed.last_retrieved_at == NOW + timedelta(days=1)
+    events = repository.list_events(
+        user_id=user_id,
+        subject_id=relevant.memory_id,
+    )
+    assert events[-1].event_type == MemoryEventType.MEMORY_RETRIEVED
 
 
 def _memory(user_id: str) -> EpisodicMemoryRecord:

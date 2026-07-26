@@ -55,6 +55,14 @@ class TraceSanitizer:
             )
             for index, step in enumerate(sanitized.agent_loop_steps)
         ]
+        sanitized.active_memory_selections = [
+            self._nested(
+                value=item,
+                field=f"active_memory_selections[{index}]",
+                policies=policies,
+            )
+            for index, item in enumerate(sanitized.active_memory_selections)
+        ]
         sanitized.privacy_summary.fields = policies
         sanitized.product_safe = True
         return sanitized

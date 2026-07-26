@@ -21,8 +21,8 @@
       "version": "resource-loop-v2"
     },
     "roleplay": {
-      "fingerprint": "sha256:1ec26fba6bb2a1b5",
-      "version": "roleplay-v3"
+      "fingerprint": "sha256:7dd5635448c6e4f0",
+      "version": "roleplay-v4"
     },
     "roleplay_compaction": {
       "fingerprint": "sha256:a222dd9c1f0de91d",

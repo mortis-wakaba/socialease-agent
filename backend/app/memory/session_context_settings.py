@@ -21,6 +21,7 @@ class RoleplaySessionContextSettings:
     tokenizer_backend: str = "auto"
     tokenizer_model: str | None = None
     active_checkpoint_max_tokens: int = 256
+    episodic_memory_max_tokens: int = 256
 
 
 def roleplay_session_context_settings() -> RoleplaySessionContextSettings:
@@ -65,6 +66,12 @@ def roleplay_session_context_settings() -> RoleplaySessionContextSettings:
         ),
         active_checkpoint_max_tokens=_int_env(
             "ROLEPLAY_ACTIVE_CHECKPOINT_MAX_TOKENS",
+            256,
+            minimum=128,
+            maximum=1024,
+        ),
+        episodic_memory_max_tokens=_int_env(
+            "ROLEPLAY_EPISODIC_MEMORY_MAX_TOKENS",
             256,
             minimum=128,
             maximum=1024,

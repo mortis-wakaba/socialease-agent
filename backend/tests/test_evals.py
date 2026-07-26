@@ -5,6 +5,8 @@ from collections import Counter
 from app.evals.loader import (
     load_e2e_workflow_cases,
     load_intent_cases,
+    load_memory_retrieval_cases,
+    load_memory_vector_challenge_cases,
     load_output_guardrail_cases,
     load_product_boundary_cases,
     load_rag_cases,
@@ -13,6 +15,8 @@ from app.evals.loader import (
     load_safety_red_team_cases,
     load_worksheet_cases,
 )
+from app.evals.memory_retrieval import run_memory_retrieval_benchmark
+from app.evals.models import MemoryRetrievalBenchmarkStrategy
 from app.evals.metrics import ratio, recall_at_k, reciprocal_rank
 from app.evals.run import run_evaluations, run_evaluations_with_traces, write_eval_trace_reports
 
@@ -22,6 +26,8 @@ def test_eval_loaders_return_cases() -> None:
     assert load_safety_cases()
     assert load_safety_red_team_cases()
     assert load_intent_cases()
+    assert load_memory_retrieval_cases()
+    assert load_memory_vector_challenge_cases()
     assert load_rag_cases()
     assert load_roleplay_feedback_cases()
     assert load_worksheet_cases()
@@ -53,6 +59,13 @@ def test_bundled_evaluations_pass_current_mvp() -> None:
     assert report.retrieval_recall_at_3.score == 1.0
     assert report.retrieval_mrr.score > 0.0
     assert report.unknown_precision.score == 1.0
+    assert report.memory_retrieval_recall_at_3.score == 1.0
+    assert report.memory_false_recall_avoidance.score == 1.0
+    assert report.memory_stale_recall_avoidance.score == 1.0
+    assert report.memory_conflict_resolution.score == 1.0
+    assert report.memory_cross_user_leakage_avoidance.score == 1.0
+    assert report.memory_no_memory_abstention.score == 1.0
+    assert report.memory_context_token_budget.score == 1.0
     assert report.roleplay_feedback_pass_rate.score == 1.0
     assert report.worksheet_extraction_pass_rate.score == 1.0
     assert report.e2e_workflow_pass_rate.score == 1.0
@@ -93,6 +106,7 @@ def test_eval_trace_report_contains_case_artifacts(tmp_path) -> None:
     assert trace_report.execution_version.trace_schema_version == "trace-v2"
     assert trace_report.cases
     assert any(case.suite == "e2e_workflow" for case in trace_report.cases)
+    assert any(case.suite == "memory_retrieval" for case in trace_report.cases)
     assert all(case.expected for case in trace_report.cases)
     assert all(case.actual for case in trace_report.cases)
 
@@ -103,6 +117,42 @@ def test_eval_trace_report_contains_case_artifacts(tmp_path) -> None:
     assert "e2e_workflow" in latest_path.read_text(encoding="utf-8")
     assert '"execution_version"' in latest_path.read_text(encoding="utf-8")
     assert '"cases": []' in failures_path.read_text(encoding="utf-8")
+
+
+def test_memory_retrieval_benchmark_compares_baselines_without_vector_claims() -> None:
+    """Phase 4 should select a measured baseline and defer vector adoption."""
+    benchmark, outcomes = run_memory_retrieval_benchmark()
+
+    assert (
+        benchmark.selected_strategy
+        == MemoryRetrievalBenchmarkStrategy.SQL_TEXT
+    )
+    assert set(benchmark.strategies) == {"recent", "metadata", "sql_text"}
+    selected = benchmark.strategies["sql_text"]
+    assert selected.relevant_recall_at_3.score == 1.0
+    assert selected.false_recall_avoidance.score == 1.0
+    assert selected.stale_recall_avoidance.score == 1.0
+    assert selected.conflict_resolution.score == 1.0
+    assert selected.cross_user_leakage_avoidance.score == 1.0
+    assert selected.no_memory_abstention.score == 1.0
+    assert selected.context_token_budget.score == 1.0
+    assert (
+        selected.false_recall_avoidance.score
+        > benchmark.strategies["recent"].false_recall_avoidance.score
+    )
+    assert (
+        selected.relevant_recall_at_3.score
+        == benchmark.strategies["metadata"].relevant_recall_at_3.score
+    )
+    assert (
+        selected.no_memory_abstention.score
+        > benchmark.strategies["recent"].no_memory_abstention.score
+    )
+    assert benchmark.vector_evaluated is False
+    assert benchmark.hybrid_evaluated is False
+    assert benchmark.vector_gate_met is False
+    assert outcomes
+    assert all(outcome["passed"] for outcome in outcomes)
 
 
 def test_phase6_product_boundary_coverage() -> None:

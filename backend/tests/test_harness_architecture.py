@@ -446,6 +446,12 @@ async def test_roleplay_skill_uses_memory_context_after_consent() -> None:
         "selected_fields"
     ]
     assert "dorm_conflict" not in str(response.structured_data["memory_context"])
+    assert response.trace.active_memory_selections
+    assert "dorm_conflict" not in str(response.trace.active_memory_selections)
+    assert all(
+        len(item["memory_id_hash"]) == 16
+        for item in response.trace.active_memory_selections
+    )
 
 
 @pytest.mark.anyio

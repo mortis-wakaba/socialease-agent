@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from app.models import Intent, SafetyResult
+from app.models_active_memory import ActiveMemoryPacket
 from app.models_context import SkillContextProjection
 from app.models_memory import MemoryContext
 from app.models_support_generation import PresentationConstraints
@@ -54,6 +55,11 @@ class SkillContext:
     def selected_context(self) -> SkillContextProjection | None:
         """Return the task-specific context projection selected by the harness."""
         return self.run.skill_context
+
+    @property
+    def active_memory(self) -> ActiveMemoryPacket | None:
+        """Return the fully policy- and budget-filtered active memory packet."""
+        return self.run.active_memory
 
     @property
     def response_constraints(self) -> PresentationConstraints:

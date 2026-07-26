@@ -14,6 +14,8 @@ from app.memory.session_context_store import (
 )
 from app.memory.token_estimator import TokenEstimator, create_token_estimator
 from app.models_roleplay import RoleplayMessageRole
+from app.models_active_memory import ActiveMemoryPacket
+from app.models_long_term_memory import MemoryRetrievalResult
 from app.models_session_context import (
     DurableCheckpointContext,
     RoleplayCompactState,
@@ -92,8 +94,15 @@ class RoleplayContextManager:
         current_user_message: str,
         fallback_recent_messages: list[str],
         durable_checkpoint: DurableCheckpointContext | None = None,
+        memory_retrieval: MemoryRetrievalResult | None = None,
+        active_memory: ActiveMemoryPacket | None = None,
     ) -> RoleplayPromptContext:
         """Return compact state and recent messages within the configured budget."""
+        if active_memory is not None:
+            durable_checkpoint = active_memory.working_memory
+            retrieved_memories = active_memory.episodic_memories
+        else:
+            retrieved_memories = _render_retrieved_memories(memory_retrieval)
         try:
             context = await self.store.get(user_id=user_id, session_id=session_id)
         except SessionContextStoreUnavailable:
@@ -101,12 +110,16 @@ class RoleplayContextManager:
                 fallback_recent_messages,
                 error_category="SESSION_CONTEXT_UNAVAILABLE",
                 durable_checkpoint=durable_checkpoint,
+                memory_retrieval=memory_retrieval,
+                active_memory=active_memory,
             )
         if context is None:
             return self._fallback_context(
                 fallback_recent_messages,
                 error_category="SESSION_CONTEXT_EXPIRED",
                 durable_checkpoint=durable_checkpoint,
+                memory_retrieval=memory_retrieval,
+                active_memory=active_memory,
             )
 
         effective_compact_state = context.compact_state or (
@@ -121,6 +134,7 @@ class RoleplayContextManager:
             guidance=guidance,
             current_user_message=current_user_message,
             compact_state=effective_compact_state,
+            retrieved_memories=retrieved_memories,
         )
         compacted_count = 0
         if compaction_triggered:
@@ -159,6 +173,8 @@ class RoleplayContextManager:
                         fallback_recent_messages,
                         error_category="SESSION_CONTEXT_UNAVAILABLE_DURING_COMPACTION",
                         durable_checkpoint=durable_checkpoint,
+                        memory_retrieval=memory_retrieval,
+                        active_memory=active_memory,
                     )
                 if replaced:
                     candidate.version = context.version + 1
@@ -196,11 +212,13 @@ class RoleplayContextManager:
             guidance=guidance,
             current_user_message=current_user_message,
             compact_state=effective_compact_state,
+            retrieved_memories=retrieved_memories,
         )
         budget = self.settings.max_input_tokens
         return RoleplayPromptContext(
             recent_messages=recent,
             compact_state=effective_compact_state,
+            retrieved_memories=retrieved_memories,
             diagnostics=RoleplayContextDiagnostics(
                 backend=self.store.backend_name,
                 available=True,
@@ -220,16 +238,50 @@ class RoleplayContextManager:
                     else None
                 ),
                 active_memory_estimated_tokens=(
-                    durable_checkpoint.estimated_tokens
-                    if durable_checkpoint is not None
-                    and context.compact_state is None
-                    else 0
+                    active_memory.estimated_tokens
+                    if active_memory is not None
+                    else (
+                        durable_checkpoint.estimated_tokens
+                        if durable_checkpoint is not None
+                        and context.compact_state is None
+                        else 0
+                    )
                 ),
                 active_memory_token_budget=(
-                    durable_checkpoint.token_budget
-                    if durable_checkpoint is not None
-                    and context.compact_state is None
+                    active_memory.token_budget
+                    if active_memory is not None
+                    else (
+                        durable_checkpoint.token_budget
+                        if durable_checkpoint is not None
+                        and context.compact_state is None
+                        else 0
+                    )
+                ),
+                active_memory_selections=(
+                    active_memory.trace_metadata()["selections"]
+                    if active_memory is not None
+                    else []
+                ),
+                retrieved_memory_count=len(retrieved_memories),
+                retrieved_memory_estimated_tokens=(
+                    memory_retrieval.diagnostics.estimated_tokens
+                    if memory_retrieval is not None
                     else 0
+                ),
+                retrieved_memory_token_budget=(
+                    memory_retrieval.diagnostics.token_budget
+                    if memory_retrieval is not None
+                    else 0
+                ),
+                memory_retrieval_strategy=(
+                    memory_retrieval.diagnostics.strategy.value
+                    if memory_retrieval is not None
+                    else None
+                ),
+                memory_retrieval_audit_failed=(
+                    memory_retrieval.diagnostics.audit_failed
+                    if memory_retrieval is not None
+                    else False
                 ),
                 estimated_input_tokens=estimated_tokens,
                 input_token_budget=budget,
@@ -280,6 +332,7 @@ class RoleplayContextManager:
         guidance: str,
         current_user_message: str,
         compact_state: RoleplayCompactState | None,
+        retrieved_memories: list[str],
     ) -> bool:
         if len(context.messages) > self.settings.recent_max_messages:
             return True
@@ -290,6 +343,7 @@ class RoleplayContextManager:
             _fixed_prompt_text(scenario, difficulty, guidance, current_user_message)
             + all_messages
             + _compact_text(compact_state)
+            + _retrieved_memory_text(retrieved_memories)
         )
         return estimated >= math.floor(
             self.settings.max_input_tokens * self.settings.compact_trigger_ratio
@@ -305,10 +359,12 @@ class RoleplayContextManager:
         guidance: str,
         current_user_message: str,
         compact_state: RoleplayCompactState | None,
+        retrieved_memories: list[str],
     ) -> tuple[list[str], int]:
         fixed_tokens = self.token_estimator.count(
             _fixed_prompt_text(scenario, difficulty, guidance, current_user_message)
             + _compact_text(compact_state)
+            + _retrieved_memory_text(retrieved_memories)
         )
         remaining = max(1, self.settings.max_input_tokens - fixed_tokens)
         selected_reversed: list[str] = []
@@ -336,6 +392,8 @@ class RoleplayContextManager:
         *,
         error_category: str,
         durable_checkpoint: DurableCheckpointContext | None = None,
+        memory_retrieval: MemoryRetrievalResult | None = None,
+        active_memory: ActiveMemoryPacket | None = None,
     ) -> RoleplayPromptContext:
         compact_state = (
             durable_checkpoint.compact_state
@@ -343,7 +401,18 @@ class RoleplayContextManager:
             else None
         )
         compact_tokens = self.token_estimator.count(_compact_text(compact_state))
-        remaining = max(1, self.settings.max_input_tokens - compact_tokens)
+        retrieved_memories = (
+            active_memory.episodic_memories
+            if active_memory is not None
+            else _render_retrieved_memories(memory_retrieval)
+        )
+        retrieved_tokens = self.token_estimator.count(
+            _retrieved_memory_text(retrieved_memories)
+        )
+        remaining = max(
+            1,
+            self.settings.max_input_tokens - compact_tokens - retrieved_tokens,
+        )
         selected_reversed: list[str] = []
         used = 0
         for message in reversed(
@@ -365,11 +434,12 @@ class RoleplayContextManager:
         bounded = list(reversed(selected_reversed))
         estimated = min(
             self.settings.max_input_tokens,
-            compact_tokens + used,
+            compact_tokens + retrieved_tokens + used,
         )
         return RoleplayPromptContext(
             recent_messages=bounded,
             compact_state=compact_state,
+            retrieved_memories=retrieved_memories,
             diagnostics=RoleplayContextDiagnostics(
                 backend=self.store.backend_name,
                 available=False,
@@ -383,14 +453,48 @@ class RoleplayContextManager:
                     else None
                 ),
                 active_memory_estimated_tokens=(
-                    durable_checkpoint.estimated_tokens
-                    if durable_checkpoint is not None
-                    else 0
+                    active_memory.estimated_tokens
+                    if active_memory is not None
+                    else (
+                        durable_checkpoint.estimated_tokens
+                        if durable_checkpoint is not None
+                        else 0
+                    )
                 ),
                 active_memory_token_budget=(
-                    durable_checkpoint.token_budget
-                    if durable_checkpoint is not None
+                    active_memory.token_budget
+                    if active_memory is not None
+                    else (
+                        durable_checkpoint.token_budget
+                        if durable_checkpoint is not None
+                        else 0
+                    )
+                ),
+                active_memory_selections=(
+                    active_memory.trace_metadata()["selections"]
+                    if active_memory is not None
+                    else []
+                ),
+                retrieved_memory_count=len(retrieved_memories),
+                retrieved_memory_estimated_tokens=(
+                    memory_retrieval.diagnostics.estimated_tokens
+                    if memory_retrieval is not None
                     else 0
+                ),
+                retrieved_memory_token_budget=(
+                    memory_retrieval.diagnostics.token_budget
+                    if memory_retrieval is not None
+                    else 0
+                ),
+                memory_retrieval_strategy=(
+                    memory_retrieval.diagnostics.strategy.value
+                    if memory_retrieval is not None
+                    else None
+                ),
+                memory_retrieval_audit_failed=(
+                    memory_retrieval.diagnostics.audit_failed
+                    if memory_retrieval is not None
+                    else False
                 ),
                 estimated_input_tokens=estimated,
                 input_token_budget=self.settings.max_input_tokens,
@@ -425,6 +529,21 @@ def _compact_text(compact_state: RoleplayCompactState | None) -> str:
         compact_state.model_dump(mode="json"),
         ensure_ascii=False,
     )
+
+
+def _render_retrieved_memories(
+    result: MemoryRetrievalResult | None,
+) -> list[str]:
+    if result is None:
+        return []
+    return [
+        f"{hit.memory_type.value}: {hit.summary}"
+        for hit in result.hits[:3]
+    ]
+
+
+def _retrieved_memory_text(memories: list[str]) -> str:
+    return json.dumps(memories, ensure_ascii=False)
 
 
 def _truncate_to_token_budget(

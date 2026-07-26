@@ -19,6 +19,7 @@ from app.guardrails.output import (
 from app.db.factory import repository_factory
 from app.db.repositories import ExposureRepository, UserProfileRepository
 from app.memory.settings_store import UserMemorySettingsRepository
+from app.memory.active_memory_assembler import ActiveMemoryAssembler
 from app.memory.policy_engine import MemoryPolicyEngine
 from app.memory.proposal_extractor import MemoryProposalExtractor
 from app.memory.write_pipeline import MemoryWritePipeline
@@ -85,6 +86,7 @@ class AgentHarness:
         memory_settings_repository: UserMemorySettingsRepository | None = None,
         output_guardrail: OutputGuardrail | None = None,
         memory_write_pipeline: MemoryWritePipeline | None = None,
+        active_memory_assembler: ActiveMemoryAssembler | None = None,
     ) -> None:
         self.trace_logger = trace_logger
         self.safety_classifier = safety_classifier or create_safety_classifier()
@@ -98,6 +100,9 @@ class AgentHarness:
         self.exposure_repository = exposure_repository or factory.exposure_repository()
         self.memory_settings_repository = (
             memory_settings_repository or factory.user_memory_settings_repository()
+        )
+        self.active_memory_assembler = (
+            active_memory_assembler or ActiveMemoryAssembler()
         )
         self.memory_write_pipeline = memory_write_pipeline or MemoryWritePipeline(
             extractor=MemoryProposalExtractor(create_llm_client()),
@@ -243,6 +248,12 @@ class AgentHarness:
             request_context=run_context.request_context,
             memory_context=run_context.memory_context,
         )
+        run_context.active_memory = self.active_memory_assembler.assemble(
+            user_id=request.user_id,
+            skill_context=run_context.skill_context,
+            current_request=request.message,
+        )
+        run_context.skill_context = run_context.active_memory.stable_memory
         hook_decision = None
         if permission_decision.action != PermissionAction.ESCALATE:
             hook_decision = _run_before_action_hooks(
@@ -591,6 +602,21 @@ class AgentHarness:
             context_dropped_fields=(
                 run_context.skill_context.dropped_fields
                 if run_context.skill_context is not None
+                else []
+            ),
+            active_memory_estimated_tokens=(
+                run_context.active_memory.estimated_tokens
+                if run_context.active_memory is not None
+                else 0
+            ),
+            active_memory_token_budget=(
+                run_context.active_memory.token_budget
+                if run_context.active_memory is not None
+                else 0
+            ),
+            active_memory_selections=(
+                run_context.active_memory.trace_metadata()["selections"]
+                if run_context.active_memory is not None
                 else []
             ),
             agent_loop_used=skill_result.structured_data.get("agent_loop_used") is True,
@@ -968,6 +994,11 @@ def _annotate_memory_context(
             "drop_reasons": projection.drop_reasons,
         },
     )
+    if run_context.active_memory is not None:
+        skill_result_data.setdefault(
+            "active_memory",
+            run_context.active_memory.trace_metadata(),
+        )
 
 
 def _annotate_context_selection(

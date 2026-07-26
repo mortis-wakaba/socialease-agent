@@ -19,7 +19,7 @@ PROMPT_VERSIONS: dict[str, str] = {
     "safety_classifier": "safety-v1",
     "intent_router": "intent-v3",
     "support_generation": "support-v3",
-    "roleplay": "roleplay-v3",
+    "roleplay": "roleplay-v4",
     "worksheet_extraction": "worksheet-v2",
     "resource_agent_loop": "resource-loop-v2",
     "output_guardrail": "output-guardrail-v4",

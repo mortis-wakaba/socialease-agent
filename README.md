@@ -250,6 +250,20 @@ make eval-llm
 make eval-output-guardrail
 ```
 
+Memory Vector/Hybrid Benchmark 使用固定的本地中文 ONNX Embedding，不调用外部
+LLM API，但首次运行会下载约 90MB 模型，因此也与默认 CI 分离：
+
+```bash
+cd backend
+pip install -r requirements-vector-eval.txt
+cd ..
+make eval-memory-vector
+```
+
+当前实验固定 `FastEmbed 0.8.0`、`BAAI/bge-small-zh-v1.5` 512 维模型及模型
+revision；Vector/Hybrid 在应用用户、Consent、状态、类型和场景硬过滤之后运行，
+不能替代权限过滤。
+
 Eval 的设计、指标和局限见 [Benchmark Report](docs/benchmark_report.md) 与 [Human Review Rubric](docs/human_review_rubric.md)。
 
 ## 安全与隐私边界

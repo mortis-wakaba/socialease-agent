@@ -151,6 +151,11 @@ class RoleplayAgent:
                     and prompt_context.compact_state is not None
                     else None
                 ),
+                retrieved_memories=(
+                    prompt_context.retrieved_memories
+                    if prompt_context is not None
+                    else []
+                ),
             ),
         )
 

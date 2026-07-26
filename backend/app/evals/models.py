@@ -1,12 +1,19 @@
 """Pydantic models for deterministic evaluation datasets and reports."""
 
+from datetime import datetime
+from enum import Enum
+from typing import Any, Literal
+
 from pydantic import BaseModel, Field
 
-from app.models import Intent, RiskLevel
-from app.models_trace import ExecutionVersionInfo
 from app.models_knowledge import KnowledgeBaseType
-from datetime import datetime
-from typing import Any, Literal
+from app.models import Intent, RiskLevel
+from app.models_long_term_memory import (
+    MemoryRecordStatus,
+    MemoryType,
+)
+from app.models_roleplay import RoleplayScenario
+from app.models_trace import ExecutionVersionInfo
 
 
 class SafetyEvalCase(BaseModel):
@@ -43,6 +50,84 @@ class RagEvalCase(BaseModel):
     kb_type: KnowledgeBaseType
     expected_unknown: bool
     expected_titles: list[str] = Field(default_factory=list)
+
+
+class MemoryRetrievalFixture(BaseModel):
+    """One synthetic durable record used only by deterministic retrieval evals."""
+
+    memory_id: str
+    user_id: str
+    memory_type: MemoryType
+    summary: str
+    scenario_type: RoleplayScenario | None = None
+    status: MemoryRecordStatus = MemoryRecordStatus.ACTIVE
+    occurred_days_ago: int = Field(ge=0, le=730)
+    expires_days_from_now: int | None = Field(default=180, ge=-730, le=730)
+    source_id: str | None = None
+    confidence: float = Field(default=0.95, ge=0.0, le=1.0)
+
+
+class MemoryRetrievalEvalCase(BaseModel):
+    """One fixed Chinese memory-retrieval expectation."""
+
+    id: str
+    category: str
+    user_id: str
+    query: str
+    scenario_type: RoleplayScenario | None = None
+    allowed_memory_types: list[MemoryType] = Field(min_length=1, max_length=5)
+    include_archived: bool = False
+    memories: list[MemoryRetrievalFixture] = Field(default_factory=list)
+    expected_memory_ids: list[str] = Field(default_factory=list)
+    forbidden_memory_ids: list[str] = Field(default_factory=list)
+    expected_abstain: bool = False
+    demo: Literal[True]
+
+
+class MemoryRetrievalBenchmarkStrategy(str, Enum):
+    """Offline retrieval variants compared before production adoption."""
+
+    RECENT = "recent"
+    METADATA = "metadata"
+    SQL_TEXT = "sql_text"
+    VECTOR = "vector"
+    HYBRID = "hybrid"
+
+
+class MemoryRetrievalStrategyReport(BaseModel):
+    """Comparable deterministic metrics for one retrieval baseline."""
+
+    strategy: MemoryRetrievalBenchmarkStrategy
+    relevant_recall_at_3: "EvalMetric"
+    false_recall_avoidance: "EvalMetric"
+    stale_recall_avoidance: "EvalMetric"
+    conflict_resolution: "EvalMetric"
+    cross_user_leakage_avoidance: "EvalMetric"
+    no_memory_abstention: "EvalMetric"
+    context_token_budget: "EvalMetric"
+    case_pass_rate: "EvalMetric"
+    mean_query_latency_ms: float = Field(default=0.0, ge=0.0)
+    p95_query_latency_ms: float = Field(default=0.0, ge=0.0)
+
+
+class MemoryRetrievalBenchmarkReport(BaseModel):
+    """A/B/C comparison and explicit vector-adoption decision."""
+
+    selected_strategy: MemoryRetrievalBenchmarkStrategy
+    strategies: dict[str, MemoryRetrievalStrategyReport]
+    dataset_case_count: int = Field(default=0, ge=0)
+    embedder_provider: str | None = None
+    embedding_model: str | None = None
+    embedding_model_revision: str | None = None
+    embedding_dimensions: int | None = Field(default=None, ge=1)
+    model_size_mb: float | None = Field(default=None, ge=0.0)
+    cold_start_latency_ms: float | None = Field(default=None, ge=0.0)
+    indexed_memory_count: int | None = Field(default=None, ge=0)
+    estimated_index_bytes: int | None = Field(default=None, ge=0)
+    document_embedding_latency_ms: float | None = Field(default=None, ge=0.0)
+    vector_evaluated: bool = False
+    hybrid_evaluated: bool = False
+    vector_gate_met: bool = False
 
 
 class RoleplayFeedbackEvalCase(BaseModel):
@@ -125,6 +210,13 @@ class EvalReport(BaseModel):
     retrieval_recall_at_3: EvalMetric
     retrieval_mrr: EvalMetric
     unknown_precision: EvalMetric
+    memory_retrieval_recall_at_3: EvalMetric
+    memory_false_recall_avoidance: EvalMetric
+    memory_stale_recall_avoidance: EvalMetric
+    memory_conflict_resolution: EvalMetric
+    memory_cross_user_leakage_avoidance: EvalMetric
+    memory_no_memory_abstention: EvalMetric
+    memory_context_token_budget: EvalMetric
     roleplay_feedback_pass_rate: EvalMetric
     worksheet_extraction_pass_rate: EvalMetric
     e2e_workflow_pass_rate: EvalMetric

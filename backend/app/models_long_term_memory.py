@@ -68,6 +68,7 @@ class MemoryEventType(str, Enum):
     MEMORY_SUPERSEDED = "memory_superseded"
     MEMORY_REVOKED = "memory_revoked"
     MEMORY_DELETED = "memory_deleted"
+    MEMORY_RETRIEVED = "memory_retrieved"
     CHECKPOINT_UPDATED = "checkpoint_updated"
     PROPOSAL_CREATED = "proposal_created"
     PROPOSAL_CONFIRMED = "proposal_confirmed"
@@ -128,6 +129,14 @@ class MemoryProposalStatus(str, Enum):
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
     EXPIRED = "expired"
+
+
+class MemoryRetrievalStrategy(str, Enum):
+    """Deterministic retrieval baselines compared before vector adoption."""
+
+    RECENT = "recent"
+    METADATA = "metadata"
+    SQL_TEXT = "sql_text"
 
 
 class EpisodicMemoryRecord(BaseModel):
@@ -307,6 +316,73 @@ class MemoryPipelineResult(BaseModel):
     ]
     items: list[MemoryPipelineItemResult] = Field(default_factory=list)
     error_category: str | None = None
+
+
+class MemoryRetrievalRequest(BaseModel):
+    """Application-owned retrieval scope; models cannot supply tenant filters."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    user_id: str = Field(min_length=1, max_length=128)
+    query: str = Field(min_length=1, max_length=1200)
+    allowed_memory_types: list[MemoryType] = Field(min_length=1, max_length=5)
+    scenario_type: RoleplayScenario | None = None
+    include_archived: bool = False
+    limit: int = Field(default=3, ge=1, le=3)
+    strategy: MemoryRetrievalStrategy = MemoryRetrievalStrategy.SQL_TEXT
+
+
+class MemoryRetrievalScore(BaseModel):
+    """Explainable score components retained without copying query text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lexical: float = Field(ge=0.0, le=1.0)
+    scenario: float = Field(ge=0.0, le=1.0)
+    recency: float = Field(ge=0.0, le=1.0)
+    novelty: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    total: float = Field(ge=0.0, le=1.0)
+
+
+class MemoryRetrievalHit(BaseModel):
+    """One bounded durable-memory hit safe for progressive disclosure."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memory_id: str = Field(min_length=1, max_length=128)
+    memory_type: MemoryType
+    summary: str = Field(min_length=1, max_length=500)
+    scenario_type: RoleplayScenario | None = None
+    status: MemoryRecordStatus
+    occurred_at: datetime
+    score: MemoryRetrievalScore
+    estimated_tokens: int = Field(ge=1)
+
+
+class MemoryRetrievalDiagnostics(BaseModel):
+    """Content-free retrieval diagnostics for traces and evaluations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: MemoryRetrievalStrategy
+    candidate_count: int = Field(ge=0)
+    eligible_count: int = Field(ge=0)
+    returned_count: int = Field(ge=0, le=3)
+    estimated_tokens: int = Field(ge=0)
+    token_budget: int = Field(ge=1)
+    abstained: bool
+    consent_allowed: bool
+    audit_failed: bool = False
+
+
+class MemoryRetrievalResult(BaseModel):
+    """Bounded retrieval output that distinguishes abstention from failure."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hits: list[MemoryRetrievalHit] = Field(default_factory=list, max_length=3)
+    diagnostics: MemoryRetrievalDiagnostics
 
 
 class MemoryEvent(BaseModel):

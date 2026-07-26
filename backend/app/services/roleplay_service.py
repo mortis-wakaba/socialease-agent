@@ -1,14 +1,22 @@
 """Role-play service shared by API routes and harness skills."""
 
+import logging
 import re
+from datetime import datetime, timezone
 
 from app.agents.roleplay import RoleplayAgent
 from app.db.factory import repository_factory
 from app.knowledge.service import KnowledgeService
 from app.llm.factory import create_llm_client
 from app.memory.roleplay_compactor import RoleplayCompactor
+from app.memory.active_memory_assembler import (
+    ActiveMemoryAssembler,
+    episodic_types_for_skill,
+)
+from app.memory.context_selector import select_skill_context
 from app.memory.roleplay_context_manager import RoleplayContextManager
 from app.memory.roleplay_store import RoleplaySessionStore
+from app.memory.retriever import EpisodicMemoryRetriever
 from app.memory.session_context_settings import roleplay_session_context_settings
 from app.memory.session_context_store import (
     DisabledSessionContextStore,
@@ -18,7 +26,11 @@ from app.memory.thread_checkpoint_service import ThreadCheckpointService
 from app.memory.token_estimator import create_token_estimator
 from app.models import RiskLevel
 from app.models_knowledge import KnowledgeBaseType
-from app.models_long_term_memory import PracticeThreadStatus
+from app.models_long_term_memory import (
+    MemoryRetrievalRequest,
+    MemoryRetrievalStrategy,
+    PracticeThreadStatus,
+)
 from app.models_roleplay import (
     RoleplayFeedbackRequest,
     RoleplayFeedbackResponse,
@@ -49,6 +61,7 @@ ROLEPLAY_CRISIS_RESPONSE = (
     "这个输入包含危机风险表达，角色扮演会先暂停。"
     + crisis_escalation_response(paused_activity="角色扮演").split("。", 1)[1]
 )
+logger = logging.getLogger(__name__)
 
 
 class RoleplayService:
@@ -62,6 +75,8 @@ class RoleplayService:
         safety_classifier: BaseSafetyClassifier | None = None,
         context_manager: RoleplayContextManager | None = None,
         checkpoint_service: ThreadCheckpointService | None = None,
+        memory_retriever: EpisodicMemoryRetriever | None = None,
+        active_memory_assembler: ActiveMemoryAssembler | None = None,
     ) -> None:
         self.agent = agent or RoleplayAgent(llm_client=create_llm_client())
         self.store = store or RoleplaySessionStore(
@@ -99,6 +114,22 @@ class RoleplayService:
             settings_repository=repository_factory().user_memory_settings_repository(),
             token_estimator=token_estimator,
             active_memory_token_budget=settings.active_checkpoint_max_tokens,
+        )
+        self.memory_retriever = memory_retriever or EpisodicMemoryRetriever(
+            repository=repository_factory().long_term_memory_repository(),
+            settings_repository=repository_factory().user_memory_settings_repository(),
+            token_estimator=token_estimator,
+            context_token_budget=settings.episodic_memory_max_tokens,
+        )
+        self.active_memory_assembler = (
+            active_memory_assembler
+            or ActiveMemoryAssembler(
+                token_estimator=token_estimator,
+                token_budget=(
+                    settings.active_checkpoint_max_tokens
+                    + settings.episodic_memory_max_tokens
+                ),
+            )
         )
 
     async def start_session(self, request: RoleplayStartRequest) -> RoleplayStartResponse:
@@ -234,6 +265,43 @@ class RoleplayService:
             thread_id=request.session_id,
             expected_scenario=session.scenario,
         )
+        memory_retrieval = None
+        memory_retrieval_error_category = None
+        try:
+            memory_retrieval = self.memory_retriever.retrieve(
+                MemoryRetrievalRequest(
+                    user_id=request.user_id,
+                    query=request.message,
+                    allowed_memory_types=list(
+                        episodic_types_for_skill("roleplay_skill")
+                    ),
+                    scenario_type=session.scenario,
+                    include_archived=True,
+                    strategy=MemoryRetrievalStrategy.SQL_TEXT,
+                )
+            )
+        except Exception as error:
+            memory_retrieval_error_category = error.__class__.__name__
+            logger.warning(
+                "Episodic memory retrieval failed: %s",
+                memory_retrieval_error_category,
+            )
+        active_memory = self.active_memory_assembler.assemble(
+            user_id=request.user_id,
+            skill_context=select_skill_context(
+                skill_name="roleplay_skill",
+                request_context={
+                    "scenario": session.scenario.value,
+                    "difficulty": session.difficulty,
+                },
+                memory_context=None,
+                selected_at=datetime.now(timezone.utc),
+            ),
+            current_request=request.message,
+            durable_checkpoint=durable_checkpoint,
+            memory_retrieval=memory_retrieval,
+            retrieval_user_id=request.user_id,
+        )
         prompt_context = await self.context_manager.build_prompt_context(
             user_id=request.user_id,
             session_id=request.session_id,
@@ -246,6 +314,8 @@ class RoleplayService:
                 for message in session.messages
             ],
             durable_checkpoint=durable_checkpoint,
+            memory_retrieval=memory_retrieval,
+            active_memory=active_memory,
         )
         agent_response, llm_usage = await self.agent.next_turn(
             session=session,
@@ -286,15 +356,20 @@ class RoleplayService:
             touch_if_unchanged=True,
         )
 
+        diagnostics_payload = context_diagnostics_payload(
+            prompt_context.diagnostics
+        )
+        if memory_retrieval_error_category is not None:
+            diagnostics_payload["memory_retrieval_error_category"] = (
+                memory_retrieval_error_category
+            )
         return RoleplayMessageResponse(
             session=session,
             response=persisted_agent_response,
             safety_result=safety_result,
             blocked=False,
             llm_usage=llm_usage,
-            context_diagnostics=context_diagnostics_payload(
-                prompt_context.diagnostics
-            ),
+            context_diagnostics=diagnostics_payload,
         )
 
     async def get_feedback(self, request: RoleplayFeedbackRequest) -> RoleplayFeedbackResponse:

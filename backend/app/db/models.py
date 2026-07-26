@@ -211,6 +211,8 @@ CREATE INDEX IF NOT EXISTS idx_episodic_memories_user_hash
 ON episodic_memories(user_id, content_hash);
 CREATE INDEX IF NOT EXISTS idx_episodic_memories_source
 ON episodic_memories(user_id, source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_episodic_memories_retrieval
+ON episodic_memories(user_id, status, memory_type, scenario_type, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_thread_checkpoints_user_status
 ON thread_checkpoints(user_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_memory_events_user_created

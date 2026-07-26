@@ -1,6 +1,6 @@
 # SocialEase Agent Benchmark Report
 
-> 当前基线：backend pytest `437 passed, 32 skipped`；PostgreSQL integration `29 passed`；Redis integration `2 passed`；294 条确定性 Eval 全部通过；eval gate `passed`。
+> 当前基线：backend pytest `479 passed, 38 skipped`；PostgreSQL integration `34 passed`；Redis integration `2 passed`；303 条确定性 Eval 全部通过；eval gate `passed`。
 
 本报告记录 SocialEase Agent 的确定性评测集，用于防止安全边界、产品边界和 agent workflow 在迭代中回退。它不是临床效果评估，不证明系统可以诊断、治疗或改善心理健康问题。
 
@@ -80,12 +80,12 @@ make check
 最近本地基线：
 
 ```text
-backend pytest: 437 passed, 32 skipped
-PostgreSQL integration: 29 passed
+backend pytest: 479 passed, 38 skipped
+PostgreSQL integration: 34 passed
 Redis integration: 2 passed
 eval suite: all metrics passed
 eval gate: passed
-deterministic eval cases: 294 / 294 passed
+deterministic eval cases: 303 / 303 passed
 ```
 
 Eval 指标：
@@ -196,3 +196,51 @@ Role-play feedback 和 worksheet extraction 测试保证输出保持 schema 和�
 - 将 Prompt 版本提升从人工命名进一步演进为自动发布版本；
 - 对比 deterministic fallback 与 LLM-enabled 运行；
 - 为 role-play feedback 加入小规模人工质量 rubric。
+
+## 8. Memory Vector/Hybrid 阶段四实验
+
+该实验是引入 pgvector 前的离线门槛，不代表生产链路已经使用向量数据库。运行：
+
+```bash
+pip install -r backend/requirements-vector-eval.txt
+make eval-memory-vector
+```
+
+固定配置：
+
+- 数据：15 条中文 synthetic demo case，其中 5 条是同场景语义改写、语义冲突和
+  hard-negative；
+- Embedder：FastEmbed `0.8.0`；
+- Model：`BAAI/bge-small-zh-v1.5`，512 维，revision
+  `46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59`；
+- 模型体积：约 90MB；
+- Vector threshold：`0.50`，高于固定 no-memory hard-negative 的最高分
+  `0.4791`；
+- Hybrid：先通过 semantic threshold，再按 `0.75 semantic + 0.25 lexical`
+  融合，遵循 Mem0“先语义门槛、再融合”的方向；
+- 所有策略先执行用户、Consent、状态、类型、场景、过期、安全内容和当前冲突
+  过滤；Vector 不能先跨用户搜索再在应用层过滤。
+
+2026-07-26 本地 CPU 结果：
+
+| Strategy | Recall@3 | False Recall Avoidance | No-memory Abstention | Case Pass | Query P95 |
+|---|---:|---:|---:|---:|---:|
+| Recent | 0.5556 | 0.6000 | 0.0000 | 0.5333 | ~0.6ms |
+| Metadata | 0.5556 | 0.8000 | 0.5000 | 0.6667 | ~0.2ms |
+| SQL Text | 0.4444 | 0.9000 | 0.5000 | 0.6000 | ~0.3ms |
+| Vector | 0.6667 | 0.8000 | 1.0000 | 0.8000 | ~4ms |
+| Hybrid | 0.5556 | 0.8000 | 1.0000 | 0.7333 | ~6ms |
+
+36 条去重 demo memory 的原始 float32 向量约 73,728 bytes；文档批量编码约
+150ms，缓存模型冷启动约 0.4–0.6s。延迟是单机测量，只用于数量级判断，不作为
+跨机器的确定性断言。
+
+结论：
+
+- Vector 的语义召回确有提升，证明向量方案值得实测，而不是可以直接忽略。
+- 它仍错误召回“直接命令室友”和“无法拒绝时接受一部分任务”等与当前目标冲突的
+  历史，False Recall 没有达到安全门槛 `1.0`。
+- 当前 Hybrid 被场景词面 hard-negative 干扰，没有超过纯 Vector。
+- `vector_gate_met=false`，生产继续使用 SQL Text；阶段五 pgvector 暂缓。
+- 后续若重开阶段五，应先增加 polarity/conflict reranker 或经人工标注的更大中文
+  数据集，而不是单纯扩大向量模型或降低阈值。

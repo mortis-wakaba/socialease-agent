@@ -58,6 +58,12 @@ def _create_post_migration_indexes(connection) -> None:
         ON episodic_memories(user_id, source_type, source_id)"""
     )
     connection.execute(
+        """CREATE INDEX IF NOT EXISTS idx_episodic_memories_retrieval
+        ON episodic_memories(
+            user_id, status, memory_type, scenario_type, occurred_at
+        )"""
+    )
+    connection.execute(
         """CREATE INDEX IF NOT EXISTS idx_memory_events_user_created
         ON memory_events(user_id, created_at)"""
     )

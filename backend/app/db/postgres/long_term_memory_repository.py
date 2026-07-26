@@ -17,6 +17,7 @@ from app.memory.long_term_repository import (
     _memory_event,
     _require_expected_version,
     _require_memory_transition,
+    _safe_query_terms,
 )
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
@@ -24,6 +25,7 @@ from app.models_long_term_memory import (
     MemoryEventType,
     MemoryRecordStatus,
     MemorySubjectType,
+    MemoryType,
     PracticeThreadCheckpoint,
 )
 
@@ -181,6 +183,128 @@ class PostgresLongTermMemoryRepository:
                 parameters,
             ).mappings().all()
         return [_memory_from_mapping(row) for row in rows]
+
+    def search_memory_candidates(
+        self,
+        *,
+        user_id: str,
+        statuses: tuple[MemoryRecordStatus, ...],
+        memory_types: tuple[MemoryType, ...],
+        scenario_type: str | None,
+        require_scenario_match: bool,
+        query_terms: tuple[str, ...],
+        now: datetime,
+        limit: int = 50,
+    ) -> list[EpisodicMemoryRecord]:
+        """Apply tenant, lifecycle, type, expiry and optional SQL text filters."""
+        if not statuses or not memory_types:
+            return []
+        timestamp = _aware_now(now)
+        bounded_limit = min(max(limit, 1), 100)
+        parameters: dict[str, object] = {
+            "user_id": user_id,
+            "now": timestamp,
+            "limit": bounded_limit,
+        }
+        status_names: list[str] = []
+        for index, status in enumerate(statuses):
+            name = f"status_{index}"
+            status_names.append(f":{name}")
+            parameters[name] = status.value
+        type_names: list[str] = []
+        for index, memory_type in enumerate(memory_types):
+            name = f"memory_type_{index}"
+            type_names.append(f":{name}")
+            parameters[name] = memory_type.value
+        query = (
+            "SELECT * FROM episodic_memories "
+            "WHERE user_id = :user_id "
+            f"AND status IN ({', '.join(status_names)}) "
+            f"AND memory_type IN ({', '.join(type_names)}) "
+            "AND (expires_at IS NULL OR expires_at > :now)"
+        )
+        if require_scenario_match and scenario_type is not None:
+            query += (
+                " AND (scenario_type = :scenario_type "
+                "OR scenario_type IS NULL)"
+            )
+            parameters["scenario_type"] = scenario_type
+        safe_terms = _safe_query_terms(query_terms)
+        if safe_terms:
+            term_clauses: list[str] = []
+            for index, term in enumerate(safe_terms):
+                name = f"query_term_{index}"
+                term_clauses.append(f"lower(summary) LIKE :{name}")
+                parameters[name] = f"%{term}%"
+            query += f" AND ({' OR '.join(term_clauses)})"
+        query += (
+            " ORDER BY occurred_at DESC, "
+            "CASE WHEN last_retrieved_at IS NULL THEN 0 ELSE 1 END, "
+            "last_retrieved_at ASC LIMIT :limit"
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(query),
+                parameters,
+            ).mappings().all()
+        return [_memory_from_mapping(row) for row in rows]
+
+    def record_retrieval(
+        self,
+        *,
+        user_id: str,
+        memory_ids: tuple[str, ...],
+        retrieved_at: datetime,
+        reason_code: str,
+    ) -> int:
+        """Atomically stamp bounded user-scoped hits and append content-free events."""
+        timestamp = _aware_now(retrieved_at)
+        unique_ids = tuple(dict.fromkeys(memory_ids))[:3]
+        updated_count = 0
+        with self.engine.begin() as connection:
+            for memory_id in unique_ids:
+                row = connection.execute(
+                    text(
+                        """SELECT * FROM episodic_memories
+                        WHERE memory_id = :memory_id AND user_id = :user_id
+                        FOR UPDATE"""
+                    ),
+                    {"memory_id": memory_id, "user_id": user_id},
+                ).mappings().first()
+                if row is None:
+                    continue
+                record = _memory_from_mapping(row)
+                connection.execute(
+                    text(
+                        """UPDATE episodic_memories
+                        SET last_retrieved_at = GREATEST(
+                            COALESCE(last_retrieved_at, :retrieved_at),
+                            :retrieved_at
+                        )
+                        WHERE memory_id = :memory_id AND user_id = :user_id"""
+                    ),
+                    {
+                        "retrieved_at": timestamp,
+                        "memory_id": memory_id,
+                        "user_id": user_id,
+                    },
+                )
+                _insert_postgres_event(
+                    connection,
+                    MemoryEvent(
+                        user_id=user_id,
+                        subject_type=MemorySubjectType.EPISODIC_MEMORY,
+                        subject_id=memory_id,
+                        event_type=MemoryEventType.MEMORY_RETRIEVED,
+                        from_status=record.status.value,
+                        to_status=record.status.value,
+                        reason_code=reason_code,
+                        subject_version=record.version,
+                        created_at=timestamp,
+                    ),
+                )
+                updated_count += 1
+        return updated_count
 
     def transition_memory(
         self,

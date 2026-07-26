@@ -101,6 +101,12 @@ class TraceRecord(BaseModel):
     context_selected_fields: list[str] = Field(default_factory=list)
     context_field_sources: dict[str, list[str]] = Field(default_factory=dict)
     context_dropped_fields: list[str] = Field(default_factory=list)
+    active_memory_estimated_tokens: int = Field(default=0, ge=0)
+    active_memory_token_budget: int = Field(default=0, ge=0)
+    active_memory_selections: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=64,
+    )
     agent_loop_used: bool = False
     agent_loop_stop_reason: str | None = None
     agent_loop_steps: list[dict[str, Any]] = Field(default_factory=list)

@@ -10,7 +10,10 @@ from app.main import app
 from app.models_llm import LLMUsage
 from app.privacy.persistence_gate import PersistenceGate
 from app.privacy.policy import PersistenceKind
-from app.privacy.redaction import redact_sensitive_identifiers
+from app.privacy.redaction import (
+    detect_sensitive_categories,
+    redact_sensitive_identifiers,
+)
 from app.services.roleplay_service import roleplay_service
 
 TEST_AUTH_SECRET = "privacy-test-secret"
@@ -170,6 +173,15 @@ def test_redactor_detects_common_chinese_sensitive_identifiers() -> None:
         "pii@example.com",
     ]:
         assert raw not in redacted
+
+
+def test_redactor_does_not_treat_generic_dorm_scenario_as_an_address() -> None:
+    """Scenario language should remain usable without weakening real address redaction."""
+    generic = "宿舍沟通时先提出一个具体请求。"
+    address = "宿舍：梅园3号楼412室"
+
+    assert "address" not in detect_sensitive_categories(generic)
+    assert "address" in detect_sensitive_categories(address)
 
 
 def test_third_party_redactor_does_not_treat_scenario_words_as_a_name() -> None:

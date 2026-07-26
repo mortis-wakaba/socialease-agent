@@ -14,6 +14,7 @@ from app.models_long_term_memory import (
     MemoryEventType,
     MemoryRecordStatus,
     MemorySubjectType,
+    MemoryType,
     PracticeThreadCheckpoint,
 )
 
@@ -71,6 +72,28 @@ class LongTermMemoryRepository(Protocol):
         statuses: tuple[MemoryRecordStatus, ...] | None = None,
         limit: int = 100,
     ) -> list[EpisodicMemoryRecord]: ...
+
+    def search_memory_candidates(
+        self,
+        *,
+        user_id: str,
+        statuses: tuple[MemoryRecordStatus, ...],
+        memory_types: tuple[MemoryType, ...],
+        scenario_type: str | None,
+        require_scenario_match: bool,
+        query_terms: tuple[str, ...],
+        now: datetime,
+        limit: int = 50,
+    ) -> list[EpisodicMemoryRecord]: ...
+
+    def record_retrieval(
+        self,
+        *,
+        user_id: str,
+        memory_ids: tuple[str, ...],
+        retrieved_at: datetime,
+        reason_code: str,
+    ) -> int: ...
 
     def transition_memory(
         self,
@@ -269,6 +292,113 @@ class SQLiteLongTermMemoryRepository:
                 parameters,
             ).fetchall()
         return [_memory_from_row(row) for row in rows]
+
+    def search_memory_candidates(
+        self,
+        *,
+        user_id: str,
+        statuses: tuple[MemoryRecordStatus, ...],
+        memory_types: tuple[MemoryType, ...],
+        scenario_type: str | None,
+        require_scenario_match: bool,
+        query_terms: tuple[str, ...],
+        now: datetime,
+        limit: int = 50,
+    ) -> list[EpisodicMemoryRecord]:
+        """Apply tenant, lifecycle, type, expiry and optional SQL text filters."""
+        if not statuses or not memory_types:
+            return []
+        timestamp = _aware_now(now)
+        bounded_limit = min(max(limit, 1), 100)
+        status_placeholders = ", ".join("?" for _ in statuses)
+        type_placeholders = ", ".join("?" for _ in memory_types)
+        query = (
+            "SELECT * FROM episodic_memories "
+            "WHERE user_id = ? "
+            f"AND status IN ({status_placeholders}) "
+            f"AND memory_type IN ({type_placeholders}) "
+            "AND (expires_at IS NULL OR expires_at > ?)"
+        )
+        parameters: list[object] = [
+            user_id,
+            *(status.value for status in statuses),
+            *(memory_type.value for memory_type in memory_types),
+            timestamp.isoformat(),
+        ]
+        if require_scenario_match and scenario_type is not None:
+            query += " AND (scenario_type = ? OR scenario_type IS NULL)"
+            parameters.append(scenario_type)
+        safe_terms = _safe_query_terms(query_terms)
+        if safe_terms:
+            query += " AND (" + " OR ".join(
+                "lower(summary) LIKE ?" for _ in safe_terms
+            ) + ")"
+            parameters.extend(f"%{term}%" for term in safe_terms)
+        query += (
+            " ORDER BY occurred_at DESC, "
+            "CASE WHEN last_retrieved_at IS NULL THEN 0 ELSE 1 END, "
+            "last_retrieved_at ASC LIMIT ?"
+        )
+        parameters.append(bounded_limit)
+        with connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [_memory_from_row(row) for row in rows]
+
+    def record_retrieval(
+        self,
+        *,
+        user_id: str,
+        memory_ids: tuple[str, ...],
+        retrieved_at: datetime,
+        reason_code: str,
+    ) -> int:
+        """Atomically stamp bounded user-scoped hits and append content-free events."""
+        timestamp = _aware_now(retrieved_at)
+        unique_ids = tuple(dict.fromkeys(memory_ids))[:3]
+        updated_count = 0
+        with _sqlite_transaction() as connection:
+            for memory_id in unique_ids:
+                row = connection.execute(
+                    """SELECT * FROM episodic_memories
+                    WHERE memory_id = ? AND user_id = ?""",
+                    (memory_id, user_id),
+                ).fetchone()
+                if row is None:
+                    continue
+                record = _memory_from_row(row)
+                connection.execute(
+                    """UPDATE episodic_memories
+                    SET last_retrieved_at =
+                        CASE
+                            WHEN last_retrieved_at IS NULL
+                              OR last_retrieved_at < ?
+                            THEN ?
+                            ELSE last_retrieved_at
+                        END
+                    WHERE memory_id = ? AND user_id = ?""",
+                    (
+                        timestamp.isoformat(),
+                        timestamp.isoformat(),
+                        memory_id,
+                        user_id,
+                    ),
+                )
+                _insert_sqlite_event(
+                    connection,
+                    MemoryEvent(
+                        user_id=user_id,
+                        subject_type=MemorySubjectType.EPISODIC_MEMORY,
+                        subject_id=memory_id,
+                        event_type=MemoryEventType.MEMORY_RETRIEVED,
+                        from_status=record.status.value,
+                        to_status=record.status.value,
+                        reason_code=reason_code,
+                        subject_version=record.version,
+                        created_at=timestamp,
+                    ),
+                )
+                updated_count += 1
+        return updated_count
 
     def transition_memory(
         self,
@@ -616,6 +746,21 @@ def _require_expected_version(actual: int, expected: int) -> None:
         raise MemoryConflictError(
             f"version conflict: expected {expected}, found {actual}"
         )
+
+
+def _safe_query_terms(terms: tuple[str, ...]) -> tuple[str, ...]:
+    """Bound application-generated LIKE terms and escape wildcard authority."""
+    result: list[str] = []
+    for term in terms[:16]:
+        normalized = " ".join(term.casefold().split())
+        if (
+            2 <= len(normalized) <= 48
+            and "%" not in normalized
+            and "_" not in normalized
+            and normalized not in result
+        ):
+            result.append(normalized)
+    return tuple(result)
 
 
 def _require_memory_transition(

@@ -65,6 +65,16 @@ class RoleplayContextDiagnostics(BaseModel):
     durable_checkpoint_version: int | None = Field(default=None, ge=1)
     active_memory_estimated_tokens: int = Field(default=0, ge=0)
     active_memory_token_budget: int = Field(default=0, ge=0)
+    active_memory_selections: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=64,
+    )
+    retrieved_memory_count: int = Field(default=0, ge=0, le=3)
+    retrieved_memory_estimated_tokens: int = Field(default=0, ge=0)
+    retrieved_memory_token_budget: int = Field(default=0, ge=0)
+    memory_retrieval_strategy: str | None = None
+    memory_retrieval_audit_failed: bool = False
+    memory_retrieval_error_category: str | None = None
     estimated_input_tokens: int = Field(default=0, ge=0)
     input_token_budget: int = Field(default=0, ge=0)
     budget_utilization: float = Field(default=0.0, ge=0.0)
@@ -80,6 +90,7 @@ class RoleplayPromptContext(BaseModel):
 
     recent_messages: list[str] = Field(default_factory=list, max_length=20)
     compact_state: RoleplayCompactState | None = None
+    retrieved_memories: list[str] = Field(default_factory=list, max_length=3)
     diagnostics: RoleplayContextDiagnostics
 
 

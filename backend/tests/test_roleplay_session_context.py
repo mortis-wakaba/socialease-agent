@@ -1,6 +1,7 @@
 """Deterministic tests for Redis-style role-play session memory and compaction."""
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import os
 from uuid import uuid4
 
@@ -22,6 +23,12 @@ from app.memory.token_estimator import (
     create_token_estimator,
 )
 from app.models_memory import UserConsentState
+from app.models_long_term_memory import (
+    EpisodicMemoryRecord,
+    MemoryEvidenceType,
+    MemorySourceType,
+    MemoryType,
+)
 from app.models_roleplay import (
     RoleplayFeedbackRequest,
     RoleplayMessageRequest,
@@ -511,6 +518,81 @@ async def test_roleplay_uses_short_term_raw_history_while_database_stays_minimiz
 
 
 @pytest.mark.anyio
+async def test_roleplay_injects_only_relevant_non_conflicting_durable_memory() -> None:
+    """Durable context should be bounded, observable, and subordinate to now."""
+    user_id = f"retrieved_memory_{uuid4().hex}"
+    settings_repository = repository_factory().user_memory_settings_repository()
+    settings_repository.save(
+        user_id=user_id,
+        consent_state=UserConsentState(consent_to_practice_summary=True),
+    )
+    memory_repository = repository_factory().long_term_memory_repository()
+    now = datetime.now(timezone.utc)
+    summary = "课堂发言时，先写一句简短开场对这位用户有帮助。"
+    memory_repository.create_memory(
+        EpisodicMemoryRecord(
+            user_id=user_id,
+            memory_type=MemoryType.HELPFUL_STRATEGY,
+            summary=summary,
+            scenario_type=RoleplayScenario.CLASSROOM_SPEECH,
+            source_type=MemorySourceType.USER_CONFIRMED,
+            source_id=f"test_{uuid4().hex}",
+            evidence_type=MemoryEvidenceType.USER_CONFIRMED,
+            confidence=0.98,
+            occurred_at=now - timedelta(days=35),
+            created_at=now - timedelta(days=35),
+            updated_at=now - timedelta(days=35),
+            expires_at=now + timedelta(days=145),
+            consent_version="practice-summary-v1",
+            content_hash=hashlib.sha256(summary.encode("utf-8")).hexdigest(),
+            idempotency_key=hashlib.sha256(
+                f"{user_id}:{summary}".encode("utf-8")
+            ).hexdigest(),
+        ),
+        reason_code="test_confirmed_strategy",
+    )
+    client = CapturingLLMClient()
+    service = RoleplayService(
+        agent=RoleplayAgent(llm_client=client),
+        context_manager=_manager(InMemorySessionContextStore()),
+    )
+    start = await service.start_session(
+        RoleplayStartRequest(
+            user_id=user_id,
+            scenario=RoleplayScenario.CLASSROOM_SPEECH,
+            difficulty=2,
+        )
+    )
+
+    relevant = await service.send_message(
+        RoleplayMessageRequest(
+            session_id=start.session.session_id,
+            user_id=user_id,
+            message="我想练习课堂发言，先用一句简短开场。",
+        )
+    )
+
+    assert summary in client.user_prompts[-1]
+    assert relevant.context_diagnostics["retrieved_memory_count"] == 1
+    assert relevant.context_diagnostics["memory_retrieval_strategy"] == "sql_text"
+    assert (
+        relevant.context_diagnostics["retrieved_memory_estimated_tokens"]
+        <= relevant.context_diagnostics["retrieved_memory_token_budget"]
+    )
+
+    conflicting = await service.send_message(
+        RoleplayMessageRequest(
+            session_id=start.session.session_id,
+            user_id=user_id,
+            message="我现在不想再用简短开场，请换一种练习方式。",
+        )
+    )
+
+    assert summary not in client.user_prompts[-1]
+    assert conflicting.context_diagnostics["retrieved_memory_count"] == 0
+
+
+@pytest.mark.anyio
 async def test_roleplay_degrades_safely_when_redis_context_is_disabled() -> None:
     user_id = f"disabled_context_{uuid4().hex}"
     client = CapturingLLMClient()
@@ -645,7 +727,7 @@ async def test_expired_redis_context_restores_exact_durable_checkpoint() -> None
     assert "stage:roleplay_started" in prompt
     assert "发送一轮练习回复" in prompt
     assert current_message in prompt
-    assert "overrides any conflicting or stale detail" in prompt
+    assert "overrides any conflicting or stale historical detail" in prompt
     assert prompt.index("stage:roleplay_started") < prompt.index(current_message)
 
 

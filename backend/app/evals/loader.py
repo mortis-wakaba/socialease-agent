@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.evals.models import (
     E2EWorkflowEvalCase,
     IntentEvalCase,
+    MemoryRetrievalEvalCase,
     OutputGuardrailEvalCase,
     ProductBoundaryEvalCase,
     RagEvalCase,
@@ -49,6 +50,22 @@ def load_intent_cases() -> list[IntentEvalCase]:
 def load_rag_cases() -> list[RagEvalCase]:
     """Load knowledge-retrieval cases."""
     return load_jsonl(DATA_DIR / "rag.jsonl", RagEvalCase)
+
+
+def load_memory_retrieval_cases() -> list[MemoryRetrievalEvalCase]:
+    """Load fixed Chinese episodic-memory retrieval cases."""
+    return load_jsonl(
+        DATA_DIR / "memory_retrieval.jsonl",
+        MemoryRetrievalEvalCase,
+    )
+
+
+def load_memory_vector_challenge_cases() -> list[MemoryRetrievalEvalCase]:
+    """Load semantic hard-negative cases for optional dense retrieval evals."""
+    return load_jsonl(
+        DATA_DIR / "memory_retrieval_vector.jsonl",
+        MemoryRetrievalEvalCase,
+    )
 
 
 def load_roleplay_feedback_cases() -> list[RoleplayFeedbackEvalCase]:

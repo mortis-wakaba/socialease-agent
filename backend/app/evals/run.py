@@ -15,6 +15,7 @@ from app.agents.worksheet import WorksheetAgent
 from app.evals.loader import (
     load_e2e_workflow_cases,
     load_intent_cases,
+    load_memory_retrieval_cases,
     load_output_guardrail_cases,
     load_product_boundary_cases,
     load_rag_cases,
@@ -23,6 +24,7 @@ from app.evals.loader import (
     load_safety_red_team_cases,
     load_worksheet_cases,
 )
+from app.evals.memory_retrieval import run_memory_retrieval_benchmark
 from app.evals.metrics import ratio, reciprocal_rank
 from app.evals.output_guardrail import (
     evaluate_output_guardrail_cases,
@@ -75,6 +77,52 @@ def run_evaluations_with_traces() -> EvalTraceReport:
     worksheet_agent = WorksheetAgent()
     permission_gate = SafetyPermissionGate()
     case_traces: list[EvalCaseTrace] = []
+
+    memory_retrieval_benchmark, memory_retrieval_outcomes = (
+        run_memory_retrieval_benchmark()
+    )
+    selected_memory_strategy = memory_retrieval_benchmark.strategies[
+        memory_retrieval_benchmark.selected_strategy.value
+    ]
+    memory_cases_by_id = {
+        case.id: case for case in load_memory_retrieval_cases()
+    }
+    for outcome in memory_retrieval_outcomes:
+        case = memory_cases_by_id[outcome["case_id"]]
+        _append_case_trace(
+            case_traces,
+            suite="memory_retrieval",
+            case_id=case.id,
+            category=case.category,
+            passed=outcome["passed"],
+            expected={
+                "memory_ids": case.expected_memory_ids,
+                "forbidden_memory_ids": case.forbidden_memory_ids,
+                "abstain": case.expected_abstain,
+            },
+            actual={
+                "strategy": memory_retrieval_benchmark.selected_strategy,
+                "memory_ids": outcome["retrieved_ids"],
+                "eligible_count": outcome["eligible_count"],
+                "estimated_tokens": outcome["estimated_tokens"],
+            },
+            steps=[
+                _step_trace(
+                    "policy_scoped_retrieval",
+                    expected={
+                        "memory_ids": case.expected_memory_ids,
+                        "forbidden_memory_ids": case.forbidden_memory_ids,
+                        "abstain": case.expected_abstain,
+                    },
+                    actual={
+                        "memory_ids": outcome["retrieved_ids"],
+                        "eligible_count": outcome["eligible_count"],
+                        "estimated_tokens": outcome["estimated_tokens"],
+                    },
+                    passed=outcome["passed"],
+                )
+            ],
+        )
 
     safety_cases = load_safety_cases()
     safety_results = []
@@ -488,6 +536,27 @@ def run_evaluations_with_traces() -> EvalTraceReport:
         retrieval_recall_at_3=ratio(sum(recall_at_3_hits), len(recall_at_3_hits)),
         retrieval_mrr=ratio(round(sum(reciprocal_ranks), 4), len(reciprocal_ranks)),
         unknown_precision=ratio(sum(unknown_correct), len(unknown_correct)),
+        memory_retrieval_recall_at_3=(
+            selected_memory_strategy.relevant_recall_at_3
+        ),
+        memory_false_recall_avoidance=(
+            selected_memory_strategy.false_recall_avoidance
+        ),
+        memory_stale_recall_avoidance=(
+            selected_memory_strategy.stale_recall_avoidance
+        ),
+        memory_conflict_resolution=(
+            selected_memory_strategy.conflict_resolution
+        ),
+        memory_cross_user_leakage_avoidance=(
+            selected_memory_strategy.cross_user_leakage_avoidance
+        ),
+        memory_no_memory_abstention=(
+            selected_memory_strategy.no_memory_abstention
+        ),
+        memory_context_token_budget=(
+            selected_memory_strategy.context_token_budget
+        ),
         roleplay_feedback_pass_rate=ratio(sum(roleplay_results), len(roleplay_results)),
         worksheet_extraction_pass_rate=ratio(sum(worksheet_results), len(worksheet_results)),
         e2e_workflow_pass_rate=ratio(sum(e2e_results), len(e2e_results)),
