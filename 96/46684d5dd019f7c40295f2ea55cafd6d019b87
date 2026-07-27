@@ -1,0 +1,72 @@
+backend/app/llm/prompts.py
+  s_60c357d9985c3c::t_d3748c0913812b 371,405
+  s_60c357d9985c3c::t_ec98d2a6775f36 313-318,364,369-370,398,403-404
+  s_60c357d9985c3c::t_b6158de8e1e86c 230-233,280,290-292
+backend/app/skills/base.py
+  s_60c357d9985c3c::t_e04b591f03826b 8,49-52
+  s_60c357d9985c3c::t_8caec466a98eb1 53
+backend/app/tracing/versions.py
+  s_60c357d9985c3c::t_915d8689ba56d2 25-26
+  s_60c357d9985c3c::t_b6158de8e1e86c 21
+docs/benchmark_report.md
+  s_60c357d9985c3c::t_b4bdd06b7946fd 3,86
+docs/production_readiness.md
+  s_60c357d9985c3c::t_b4bdd06b7946fd 10
+backend/tests/test_trace_versions.py
+  s_60c357d9985c3c::t_0f0ed7efb5cd34 41
+  s_60c357d9985c3c::t_915d8689ba56d2 42-43
+backend/app/services/conversation_service.py
+  s_60c357d9985c3c::t_37dbf7706efab1 58-62,446,571,846-858,860
+  s_60c357d9985c3c::t_eebbbb52c470a9 859
+  s_60c357d9985c3c::t_5560a051fb5188 861-862
+backend/app/agents/support_generation.py
+  s_60c357d9985c3c::t_b6158de8e1e86c 15,47,84-86,196-206,272-278
+  s_60c357d9985c3c::t_7596f371a56a5d 279-280
+backend/app/skills/support.py
+  s_60c357d9985c3c::t_b6158de8e1e86c 61
+backend/app/models_conversation_context.py
+  s_60c357d9985c3c::t_e04b591f03826b 10-11,76-91
+  s_60c357d9985c3c::t_3cdb51055cb270 92-93
+backend/app/conversation/context_manager.py
+  s_60c357d9985c3c::t_4bac10fec19f13 55,91,93,98,100-101,267,272-275
+backend/tests/test_context_engineering.py
+  s_60c357d9985c3c::t_b656f7e0241faf 9-12,16-21,307-360
+backend/app/llm/prompt_versions.json
+  s_60c357d9985c3c::t_3845b10cc4025e 16-17,20-21
+  s_60c357d9985c3c::t_0c8ca9767b9edd 40-41
+backend/app/workflow/context.py
+  s_60c357d9985c3c::t_e04b591f03826b 8,23
+backend/app/workflow/engine.py
+  s_60c357d9985c3c::t_eebbbb52c470a9 40
+  s_60c357d9985c3c::t_b92072e168f38f 39,337-345
+  s_60c357d9985c3c::t_e04b591f03826b 123,150
+backend/app/guardrails/output.py
+  s_60c357d9985c3c::t_ec98d2a6775f36 193,218-219,221,235,314,343,364,385
+  s_60c357d9985c3c::t_d3748c0913812b 220
+backend/tests/test_prompt_version_check.py
+  s_60c357d9985c3c::t_0f0ed7efb5cd34 105,114
+backend/tests/test_conversation_service.py
+  s_60c357d9985c3c::t_8b228e21bca4dc 81-83,90,92,300,302,332-344
+  s_60c357d9985c3c::t_926d4e74053284 345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "9646684d5dd019f7c40295f2ea55cafd6d019b87",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
