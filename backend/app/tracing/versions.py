@@ -25,6 +25,7 @@ PROMPT_VERSIONS: dict[str, str] = {
     "output_guardrail": "output-guardrail-v4",
     "output_repair": "output-repair-v2",
     "roleplay_compaction": "roleplay-compaction-v1",
+    "conversation_compaction": "conversation-compaction-v1",
     "memory_extraction": "memory-extraction-v3",
 }
 

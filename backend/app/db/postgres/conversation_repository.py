@@ -38,6 +38,7 @@ from app.models_conversation import (
     ModuleRun,
     ModuleRunStatus,
 )
+from app.models_conversation_context import ConversationCompactSummary
 
 
 class PostgresConversationRepository:
@@ -370,6 +371,124 @@ class PostgresConversationRepository:
             else None
         )
         return ConversationEventPage(items=items, next_cursor=next_cursor)
+
+    def list_recent_events(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        limit: int = 64,
+    ) -> list[ConversationEvent]:
+        """Return the newest bounded window in ascending timeline order."""
+        limit = _validated_limit(limit, maximum=200)
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """SELECT events.* FROM conversation_events AS events
+                    JOIN conversations AS conversations
+                      ON conversations.conversation_id = events.conversation_id
+                    WHERE events.conversation_id = :conversation_id
+                      AND events.user_id = :user_id
+                      AND conversations.user_id = :user_id
+                      AND conversations.status != :deleted
+                    ORDER BY events.sequence_no DESC
+                    LIMIT :limit"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "deleted": ConversationStatus.DELETED.value,
+                    "limit": limit,
+                },
+            ).mappings().all()
+        return [self._event_from_row(row) for row in reversed(rows)]
+
+    def get_compact_summary(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationCompactSummary | None:
+        """Return the durable summary only inside its owner scope."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT summaries.payload
+                    FROM conversation_context_summaries AS summaries
+                    JOIN conversations AS conversations
+                      ON conversations.conversation_id =
+                         summaries.conversation_id
+                    WHERE summaries.conversation_id = :conversation_id
+                      AND summaries.user_id = :user_id
+                      AND conversations.user_id = :user_id
+                      AND conversations.status != :deleted"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "deleted": ConversationStatus.DELETED.value,
+                },
+            ).mappings().first()
+        return (
+            ConversationCompactSummary.model_validate(row["payload"])
+            if row
+            else None
+        )
+
+    def save_compact_summary(
+        self,
+        summary: ConversationCompactSummary,
+        *,
+        expected_version: int | None,
+    ) -> ConversationCompactSummary:
+        """Create or optimistically replace a durable summary."""
+        params = {
+            "conversation_id": summary.conversation_id,
+            "user_id": summary.user_id,
+            "sequence": summary.compacted_through_sequence,
+            "version": summary.version,
+            "payload": summary.model_dump_json(),
+            "updated_at": summary.updated_at,
+            "deleted": ConversationStatus.DELETED.value,
+        }
+        with self.engine.begin() as connection:
+            if expected_version is None:
+                result = connection.execute(
+                    text(
+                        """INSERT INTO conversation_context_summaries
+                        (conversation_id, user_id,
+                         compacted_through_sequence, version, payload,
+                         updated_at)
+                        SELECT :conversation_id, :user_id, :sequence, :version,
+                         CAST(:payload AS jsonb), :updated_at
+                        WHERE EXISTS (
+                            SELECT 1 FROM conversations
+                            WHERE conversation_id = :conversation_id
+                              AND user_id = :user_id
+                              AND status != :deleted
+                        )
+                        ON CONFLICT (conversation_id) DO NOTHING"""
+                    ),
+                    params,
+                )
+            else:
+                params["expected_version"] = expected_version
+                result = connection.execute(
+                    text(
+                        """UPDATE conversation_context_summaries
+                        SET compacted_through_sequence = :sequence,
+                            version = :version,
+                            payload = CAST(:payload AS jsonb),
+                            updated_at = :updated_at
+                        WHERE conversation_id = :conversation_id
+                          AND user_id = :user_id
+                          AND version = :expected_version"""
+                    ),
+                    params,
+                )
+        if result.rowcount == 0:
+            raise ConversationConcurrencyError("conversation summary state changed")
+        return summary
 
     def save_proposal(self, proposal: ModuleProposal) -> ModuleProposal:
         """Persist a proposal or return its request-hash replay."""

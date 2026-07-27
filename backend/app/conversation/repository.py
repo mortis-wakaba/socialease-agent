@@ -31,6 +31,7 @@ from app.models_conversation import (
     ModuleRun,
     ModuleRunStatus,
 )
+from app.models_conversation_context import ConversationCompactSummary
 
 
 class ConversationConcurrencyError(RuntimeError):
@@ -88,6 +89,35 @@ class ConversationRepository(Protocol):
         cursor: str | None = None,
         limit: int = 50,
     ) -> ConversationEventPage: ...
+
+    def list_recent_events(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        limit: int = 64,
+    ) -> list[ConversationEvent]: ...
+
+    def get_compact_summary(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationCompactSummary | None: ...
+
+    def save_compact_summary(
+        self,
+        summary: ConversationCompactSummary,
+        *,
+        expected_version: int | None,
+    ) -> ConversationCompactSummary: ...
+
+    def list_module_stack(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleRun]: ...
 
 
 class SQLiteConversationRepository:
@@ -368,6 +398,117 @@ class SQLiteConversationRepository:
             else None
         )
         return ConversationEventPage(items=items, next_cursor=next_cursor)
+
+    def list_recent_events(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        limit: int = 64,
+    ) -> list[ConversationEvent]:
+        """Return the newest bounded window in ascending timeline order."""
+        limit = _validated_limit(limit, maximum=200)
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT events.* FROM conversation_events AS events
+                JOIN conversations AS conversations
+                  ON conversations.conversation_id = events.conversation_id
+                WHERE events.conversation_id = ? AND events.user_id = ?
+                  AND conversations.user_id = ? AND conversations.status != ?
+                ORDER BY events.sequence_no DESC LIMIT ?""",
+                (
+                    conversation_id,
+                    user_id,
+                    user_id,
+                    ConversationStatus.DELETED.value,
+                    limit,
+                ),
+            ).fetchall()
+        return [self._event_from_row(row) for row in reversed(rows)]
+
+    def get_compact_summary(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationCompactSummary | None:
+        """Return the durable summary only to its owner."""
+        with connect() as connection:
+            row = connection.execute(
+                """SELECT summaries.payload
+                FROM conversation_context_summaries AS summaries
+                JOIN conversations AS conversations
+                  ON conversations.conversation_id = summaries.conversation_id
+                WHERE summaries.conversation_id = ? AND summaries.user_id = ?
+                  AND conversations.user_id = ? AND conversations.status != ?""",
+                (
+                    conversation_id,
+                    user_id,
+                    user_id,
+                    ConversationStatus.DELETED.value,
+                ),
+            ).fetchone()
+        return (
+            ConversationCompactSummary.model_validate_json(row["payload"])
+            if row
+            else None
+        )
+
+    def save_compact_summary(
+        self,
+        summary: ConversationCompactSummary,
+        *,
+        expected_version: int | None,
+    ) -> ConversationCompactSummary:
+        """Create or optimistically replace a durable summary."""
+        with connect() as connection:
+            if expected_version is None:
+                try:
+                    result = connection.execute(
+                        """INSERT INTO conversation_context_summaries
+                        (conversation_id, user_id, compacted_through_sequence,
+                         version, payload, updated_at)
+                        SELECT ?, ?, ?, ?, ?, ?
+                        WHERE EXISTS (
+                            SELECT 1 FROM conversations
+                            WHERE conversation_id = ? AND user_id = ?
+                              AND status != ?
+                        )""",
+                        (
+                            summary.conversation_id,
+                            summary.user_id,
+                            summary.compacted_through_sequence,
+                            summary.version,
+                            summary.model_dump_json(),
+                            summary.updated_at.isoformat(),
+                            summary.conversation_id,
+                            summary.user_id,
+                            ConversationStatus.DELETED.value,
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise ConversationConcurrencyError(
+                        "conversation summary already exists"
+                    ) from exc
+            else:
+                result = connection.execute(
+                    """UPDATE conversation_context_summaries
+                    SET compacted_through_sequence = ?, version = ?,
+                        payload = ?, updated_at = ?
+                    WHERE conversation_id = ? AND user_id = ? AND version = ?""",
+                    (
+                        summary.compacted_through_sequence,
+                        summary.version,
+                        summary.model_dump_json(),
+                        summary.updated_at.isoformat(),
+                        summary.conversation_id,
+                        summary.user_id,
+                        expected_version,
+                    ),
+                )
+        if result.rowcount == 0:
+            raise ConversationConcurrencyError("conversation summary state changed")
+        return summary
 
     def save_proposal(self, proposal: ModuleProposal) -> ModuleProposal:
         """Persist a validated proposal, deduplicated by request hash."""

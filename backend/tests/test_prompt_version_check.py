@@ -42,6 +42,15 @@ def test_manifest_detects_changed_prompt_source(tmp_path: Path) -> None:
         original_compactor.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    conversation_compactor_path = tmp_path / "app" / "conversation"
+    conversation_compactor_path.mkdir(parents=True)
+    original_conversation_compactor = (
+        source_backend / "app" / "conversation" / "compactor.py"
+    )
+    (conversation_compactor_path / "compactor.py").write_text(
+        original_conversation_compactor.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     committed = build_prompt_manifest()
     changed = build_prompt_manifest(backend_dir=tmp_path)
 
@@ -69,6 +78,15 @@ def test_prompt_fingerprint_ignores_python_docstring_only_changes(
     original_compactor = source_backend / "app" / "memory" / "roleplay_compactor.py"
     (compactor_path / "roleplay_compactor.py").write_text(
         original_compactor.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    conversation_compactor_path = tmp_path / "app" / "conversation"
+    conversation_compactor_path.mkdir(parents=True)
+    original_conversation_compactor = (
+        source_backend / "app" / "conversation" / "compactor.py"
+    )
+    (conversation_compactor_path / "compactor.py").write_text(
+        original_conversation_compactor.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
 

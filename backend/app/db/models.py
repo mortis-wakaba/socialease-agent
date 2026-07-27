@@ -281,6 +281,18 @@ CREATE TABLE IF NOT EXISTS conversation_module_runs (
     CHECK (status IN ('active', 'suspended', 'completed', 'terminated')),
     CHECK (version >= 1)
 );
+CREATE TABLE IF NOT EXISTS conversation_context_summaries (
+    conversation_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    compacted_through_sequence INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(conversation_id) REFERENCES conversations(conversation_id)
+        ON DELETE CASCADE,
+    CHECK (compacted_through_sequence >= 0),
+    CHECK (version >= 1)
+);
 CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_roleplay_sessions_user_id ON roleplay_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_worksheets_user_id ON worksheets(user_id);
@@ -331,4 +343,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_module_proposals_request
 ON conversation_module_proposals(conversation_id, request_hash);
 CREATE INDEX IF NOT EXISTS idx_conversation_module_runs_stack
 ON conversation_module_runs(user_id, conversation_id, depth);
+CREATE INDEX IF NOT EXISTS idx_conversation_context_summaries_owner
+ON conversation_context_summaries(user_id, conversation_id);
 """

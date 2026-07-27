@@ -1,5 +1,9 @@
 {
   "prompts": {
+    "conversation_compaction": {
+      "fingerprint": "sha256:ce26ae313f0f44ed",
+      "version": "conversation-compaction-v1"
+    },
     "intent_router": {
       "fingerprint": "sha256:1c11610e09b4c3cc",
       "version": "intent-v3"
