@@ -320,7 +320,7 @@ test("history shows paused roleplay session status", async ({ page }) => {
   await page.goto("/history");
 
   await expect(page.getByRole("heading", { name: "最近角色扮演" })).toBeVisible();
-  await expect(page.getByText("课堂发言")).toBeVisible();
+  await expect(page.getByText("线上小组讨论中表达不同意见")).toBeVisible();
   await expect(page.getByText("已暂停", { exact: true })).toBeVisible();
 });
 
