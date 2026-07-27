@@ -1,0 +1,41 @@
+backend/app/conversation/context_provider.py
+  s_60c357d9985c3c::t_d548dddce50565 1-85
+backend/app/models_module_overlay.py
+  s_60c357d9985c3c::t_4f5980f5ed4374 1-5,7-68,75,77-107,115-123
+  s_60c357d9985c3c::t_3fba8245994238 6,69-74,76,108-114
+backend/app/conversation/context_allocator.py
+  s_60c357d9985c3c::t_bd5279c9fd2dd1 1-356
+backend/tests/test_conversation_context.py
+  s_60c357d9985c3c::t_d563b4408c9116 18
+  s_60c357d9985c3c::t_6e487d700fbd0a 17,19-21,100-157
+  s_60c357d9985c3c::t_29049e9c3bddf1 158-159
+backend/app/conversation/context_manager.py
+  s_60c357d9985c3c::t_f01f7c9a6aff6c 18
+  s_60c357d9985c3c::t_87cf922a6875d1 6-10,23,25,40-41,48-54,68,71,73-75,79-80,82-91,96,98-100,103-105,108-110,112-117,122-126,136,170,174-178,186,188-191
+backend/tests/test_module_overlays.py
+  s_60c357d9985c3c::t_59d07b1a76aa59 47-48
+  s_60c357d9985c3c::t_2ad37b4aef342a 1-46
+backend/app/models_conversation_context.py
+  s_60c357d9985c3c::t_3de3bbba2eb311 4,49-86,99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "d477918d2e19b830073c732b908538a7a087e3d6",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
