@@ -1,0 +1,60 @@
+backend/app/conversation/repository.py
+  s_60c357d9985c3c::t_dfdce62c3b72bc 27,57-61,204-272
+  s_60c357d9985c3c::t_568d13661ad5b6 1220-1236
+  s_60c357d9985c3c::t_53cfa04543199f 273
+frontend/lib/types.ts
+  s_60c357d9985c3c::t_a561abccf4e533 248-254
+backend/app/models_conversation_api.py
+  s_60c357d9985c3c::t_6830250509ea93 121-129
+frontend/lib/api.ts
+  s_60c357d9985c3c::t_a561abccf4e533 14,388-392
+  s_60c357d9985c3c::t_94783b588e1e66 393-395
+backend/app/api/routes.py
+  s_60c357d9985c3c::t_3d2997b3b6a4fc 8,57,60,63-64,71,117,125-132
+backend/tests/test_legacy_conversation_import.py
+  s_60c357d9985c3c::t_b41df01f270b29 1-105
+backend/tests/test_chat_api.py
+  s_60c357d9985c3c::t_7525b1bc8bda47 87-88,112-113
+backend/app/api/conversations.py
+  s_60c357d9985c3c::t_cd459fed93a03e 30,38,95-113
+  s_60c357d9985c3c::t_d2a55282d88172 114-116
+  s_60c357d9985c3c::t_c6e15c85a6a355 117-118
+docs/adr/0009-legacy-roleplay-readonly-import.md
+  s_60c357d9985c3c::t_7e828bf03c1b43 1-31
+frontend/e2e/product-flows.spec.ts
+  s_60c357d9985c3c::t_755a7306759395 150-160,952-962
+backend/app/db/postgres/conversation_repository.py
+  s_60c357d9985c3c::t_6fc9ef981c4cf2 35,93-179
+  s_60c357d9985c3c::t_83f8cf7f20ea7a 180-181
+frontend/app/chat/page.tsx
+  s_60c357d9985c3c::t_a561abccf4e533 54
+backend/app/conversation/legacy_importer.py
+  s_60c357d9985c3c::t_1101dc34b93b4f 1-37,39-40,42-51,54-179
+  s_60c357d9985c3c::t_6830250509ea93 38,41,52-53
+backend/app/models_conversation.py
+  s_60c357d9985c3c::t_f1eb941738a9cf 324-360
+backend/app/services/conversation_service.py
+  s_60c357d9985c3c::t_bffd4785845b6f 10,56,58,99,176-193
+  s_60c357d9985c3c::t_09ca973fb2bc3e 194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "b101cb7a00e00b72b103082b5bfb784e62bc3168",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
