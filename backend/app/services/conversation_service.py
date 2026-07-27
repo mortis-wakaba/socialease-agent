@@ -55,6 +55,11 @@ from app.models_conversation_api import (
     ConversationExportResponse,
     LegacyRoleplayImportResponse,
 )
+from app.models_conversation_context import (
+    ConversationPromptContext,
+    ConversationPromptEvent,
+    ConversationWorkingContext,
+)
 from app.models_roleplay import RoleplaySession
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
@@ -438,6 +443,7 @@ class ConversationService:
             conversation_id=conversation_id,
             user_id=user_id,
             current_user_message=message,
+            current_event_id=user_event.event_id,
         )
         if safety_result.risk_level == RiskLevel.CRISIS:
             preemption_events = await self._module_coordinator.preempt_for_crisis(
@@ -562,6 +568,7 @@ class ConversationService:
                 ),
                 trusted_safety_result=safety_result,
                 trusted_intent_result=intent_result,
+                trusted_conversation_context=_prompt_context(context),
             )
             replay = self._repository.append_event(
                 conversation_id=conversation_id,
@@ -825,22 +832,6 @@ def _workflow_context(
         "session_id": context.conversation_id,
         "request_id": source_event_id,
         "conversation_id": context.conversation_id,
-        "recent_conversation_events": [
-            {
-                "type": event.event_type.value,
-                "role": event.role.value,
-                "content": event.content,
-            }
-            for event in context.recent_events
-        ],
-        "conversation_summary": (
-            context.compact_summary.model_dump(
-                mode="json",
-                exclude={"conversation_id", "user_id", "updated_at"},
-            )
-            if context.compact_summary
-            else None
-        ),
         "module_stack": [
             {
                 "module_type": run.module_type.value,
@@ -850,6 +841,23 @@ def _workflow_context(
             for run in context.active_module_stack
         ],
     }
+
+
+def _prompt_context(
+    context: ConversationWorkingContext,
+) -> ConversationPromptContext:
+    """Project only bounded continuity fields into trusted model context."""
+    return ConversationPromptContext(
+        recent_events=[
+            ConversationPromptEvent(
+                event_type=event.event_type,
+                role=event.role,
+                content=event.content,
+            )
+            for event in context.recent_events
+        ],
+        compact_summary=context.compact_summary,
+    )
 
 
 def _proposal_allowed_for_stack(

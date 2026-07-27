@@ -7,7 +7,7 @@ SocialEase 是一个**产品化 Agent 原型**，不是医疗产品，也不是�
 2026-07-27 本地与 CI 检查点：
 
 ```text
-backend pytest: 550 passed, 43 skipped
+backend pytest: 552 passed, 43 skipped
 eval suite: all metrics passed
 eval gate: passed
 frontend typecheck: passed

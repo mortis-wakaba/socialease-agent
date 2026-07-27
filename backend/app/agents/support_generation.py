@@ -12,6 +12,7 @@ from app.llm.base import BaseLLMClient
 from app.llm.prompts import build_support_system_prompt, build_support_user_prompt
 from app.llm.retry import ProviderError
 from app.models import Intent, RiskLevel, SafetyResult
+from app.models_conversation_context import ConversationPromptContext
 from app.models_context import SupportGenerationContext
 from app.models_knowledge import KnowledgeBaseType
 from app.models_llm import LLMUsage
@@ -43,6 +44,7 @@ class SupportGenerationAgent:
         intent: Intent,
         safety_result: SafetyResult,
         support_context: SupportGenerationContext | None = None,
+        conversation_context: ConversationPromptContext | None = None,
         application_constraints: PresentationConstraints | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Return validated LLM support or a deterministic safe fallback."""
@@ -79,6 +81,9 @@ class SupportGenerationAgent:
                         for citation in guidance.citations
                     ],
                     application_context=_support_context_payload(support_context),
+                    conversation_context=_conversation_context_payload(
+                        conversation_context
+                    ),
                     response_constraints=(
                         application_constraints.model_dump(mode="json")
                         if application_constraints is not None
@@ -188,6 +193,17 @@ class SupportGenerationAgent:
             "support_context_fields": sorted(
                 _support_context_payload(support_context)
             ),
+            "conversation_context": {
+                "recent_event_count": (
+                    len(conversation_context.recent_events)
+                    if conversation_context is not None
+                    else 0
+                ),
+                "summary_included": (
+                    conversation_context is not None
+                    and conversation_context.compact_summary is not None
+                ),
+            },
             "privacy_redaction": {
                 "deterministic_categories": deterministic_categories,
                 "semantic_categories": semantic_categories,
@@ -251,6 +267,15 @@ def _support_context_payload(
     if support_context is None:
         return {}
     return support_context.model_dump(mode="json", exclude_none=True)
+
+
+def _conversation_context_payload(
+    conversation_context: ConversationPromptContext | None,
+) -> dict[str, object]:
+    """Serialize only the application-bounded continuity projection."""
+    if conversation_context is None:
+        return {}
+    return conversation_context.model_dump(mode="json", exclude_none=True)
 
 
 class SupportGuardrailError(ValueError):

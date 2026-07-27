@@ -5,6 +5,7 @@ from typing import Any
 
 from app.models import IntentResult, SafetyResult
 from app.models_active_memory import ActiveMemoryPacket
+from app.models_conversation_context import ConversationPromptContext
 from app.models_context import SkillContextProjection
 from app.models_intervention import InterventionPlan
 from app.models_support_generation import PresentationConstraints
@@ -19,6 +20,7 @@ class RunContext:
     session_id: str | None
     message: str
     request_context: dict[str, Any]
+    conversation_context: ConversationPromptContext | None = None
     safety_result: SafetyResult | None = None
     intent_result: IntentResult | None = None
     skill_context: SkillContextProjection | None = None

@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from app.models import Intent, SafetyResult
 from app.models_active_memory import ActiveMemoryPacket
+from app.models_conversation_context import ConversationPromptContext
 from app.models_context import SkillContextProjection
 from app.models_support_generation import PresentationConstraints
 from app.workflow.context import RunContext
@@ -44,6 +45,11 @@ class SkillContext:
     def request_context(self) -> dict[str, Any]:
         """Return caller-provided context slots."""
         return self.run.request_context
+
+    @property
+    def conversation_context(self) -> ConversationPromptContext | None:
+        """Return trusted, bounded history selected by the application."""
+        return self.run.conversation_context
 
     @property
     def selected_context(self) -> SkillContextProjection | None:

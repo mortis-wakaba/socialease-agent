@@ -38,9 +38,9 @@ def test_execution_version_records_component_ids_without_secrets() -> None:
     assert version.prompt_versions == {
         "safety_classifier": "safety-v1",
         "intent_router": "intent-v3",
-        "support_generation": "support-v3",
-        "output_guardrail": "output-guardrail-v4",
-        "output_repair": "output-repair-v2",
+        "support_generation": "support-v4",
+        "output_guardrail": "output-guardrail-v6",
+        "output_repair": "output-repair-v4",
     }
     assert "private-gateway" not in payload
     assert "sk-private" not in payload

@@ -52,6 +52,7 @@ class ConversationContextManager:
         conversation_id: str,
         user_id: str,
         current_user_message: str,
+        current_event_id: str | None = None,
         active_memory: ActiveMemoryPacket | None = None,
     ) -> ConversationWorkingContext:
         """Return a bounded context where the current request has precedence."""
@@ -87,14 +88,17 @@ class ConversationContextManager:
             recent_source,
             token_budget=self._budgets.recent_events_tokens,
             token_estimator=self._token_estimator,
+            excluded_event_id=current_event_id,
         )
-        if len(recent_events) < len(
+        eligible_recent_count = len(
             [
                 event
                 for event in recent_source
                 if event.event_type != ConversationEventType.CRISIS_ESCALATED
+                and event.event_id != current_event_id
             ]
-        ):
+        )
+        if len(recent_events) < eligible_recent_count:
             dropped.append("older_recent_events")
 
         selected_summary = _fit_summary(
@@ -260,11 +264,15 @@ def _select_recent_events(
     *,
     token_budget: int,
     token_estimator: TokenEstimator,
+    excluded_event_id: str | None = None,
 ) -> list[ConversationEvent]:
     selected: list[ConversationEvent] = []
     used = 0
     for event in reversed(events):
-        if event.event_type == ConversationEventType.CRISIS_ESCALATED:
+        if (
+            event.event_type == ConversationEventType.CRISIS_ESCALATED
+            or event.event_id == excluded_event_id
+        ):
             continue
         cost = token_estimator.count(
             json.dumps(

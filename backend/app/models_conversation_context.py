@@ -7,6 +7,8 @@ from pydantic import Field
 
 from app.models_conversation import (
     ConversationEvent,
+    ConversationEventRole,
+    ConversationEventType,
     ModuleRun,
     StrictConversationModel,
 )
@@ -69,6 +71,24 @@ class ConversationWorkingContext(StrictConversationModel):
     active_module_stack: list[ModuleRun] = Field(default_factory=list)
     selected_agent_memory: list[str] = Field(default_factory=list, max_length=8)
     diagnostics: ConversationContextDiagnostics
+
+
+class ConversationPromptEvent(StrictConversationModel):
+    """Minimal historical event allowed to enter a generation prompt."""
+
+    event_type: ConversationEventType
+    role: ConversationEventRole
+    content: str = Field(min_length=1, max_length=20_000)
+
+
+class ConversationPromptContext(StrictConversationModel):
+    """Trusted bounded conversation continuity passed into the harness."""
+
+    recent_events: list[ConversationPromptEvent] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+    compact_summary: ConversationCompactPayload | None = None
 
 
 def conversation_id_hash(conversation_id: str) -> str:

@@ -36,6 +36,8 @@ from app.models import (
     TracePrivacySummary,
     TraceRecord,
 )
+from app.models_conversation import ConversationEventRole
+from app.models_conversation_context import ConversationPromptContext
 from app.models_intervention import InterventionPlan
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.actions import HarnessAction
@@ -118,6 +120,7 @@ class AgentHarness:
         *,
         trusted_safety_result: SafetyResult | None = None,
         trusted_intent_result: IntentResult | None = None,
+        trusted_conversation_context: ConversationPromptContext | None = None,
     ) -> ChatResponse:
         """Execute one run, optionally reusing application-owned routing results."""
         started = perf_counter()
@@ -144,6 +147,7 @@ class AgentHarness:
             session_id=_optional_string(request.context.get("session_id")),
             message=request.message,
             request_context=request.context,
+            conversation_context=trusted_conversation_context,
             response_constraints=extract_response_constraints(request.message),
         )
 
@@ -330,6 +334,15 @@ class AgentHarness:
             selected_skill=skill.descriptor.name,
             selected_agent=skill_result.selected_agent,
             grounding_metadata=_grounding_metadata(skill_result.structured_data),
+            historical_user_messages=(
+                [
+                    event.content
+                    for event in run_context.conversation_context.recent_events
+                    if event.role == ConversationEventRole.USER
+                ]
+                if run_context.conversation_context is not None
+                else None
+            ),
         )
         skill_result = _apply_output_guardrail_result(
             skill_result=skill_result,

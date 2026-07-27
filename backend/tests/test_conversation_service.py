@@ -78,13 +78,18 @@ class GeneralIntent:
 
 
 class GeneralHarness:
+    def __init__(self) -> None:
+        self.conversation_contexts = []
+
     async def run(
         self,
         request,
         *,
         trusted_safety_result: SafetyResult,
         trusted_intent_result: IntentResult,
+        trusted_conversation_context,
     ) -> ChatResponse:
+        self.conversation_contexts.append(trusted_conversation_context)
         response = "可以先说说现在最困扰你的部分。"
         return ChatResponse(
             run_id="general-run",
@@ -292,8 +297,9 @@ async def test_proposal_reject_checks_hash_state_and_owner(
 async def test_general_support_abstains_from_module_proposal(
     repository: SQLiteConversationRepository,
 ) -> None:
+    harness = GeneralHarness()
     service = ConversationService(
-        harness=GeneralHarness(),  # type: ignore[arg-type]
+        harness=harness,  # type: ignore[arg-type]
         repository=repository,
         safety_classifier=LowSafety(),
         intent_router=GeneralIntent(),
@@ -322,4 +328,18 @@ async def test_general_support_abstains_from_module_proposal(
     assert [event.event_type.value for event in response.appended_events] == [
         "user_message",
         "assistant_message",
+    ]
+    assert harness.conversation_contexts[0].recent_events == []
+
+    await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="我想接着聊刚才的失落感",
+        idempotency_key="general-support-002",
+    )
+
+    historical_events = harness.conversation_contexts[1].recent_events
+    assert [event.content for event in historical_events] == [
+        "今天和同学聊完后有点失落",
+        "可以先说说现在最困扰你的部分。",
     ]
