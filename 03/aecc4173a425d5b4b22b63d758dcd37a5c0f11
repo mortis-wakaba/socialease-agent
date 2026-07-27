@@ -1,0 +1,52 @@
+scripts/e2e_smoke.sh
+  s_60c357d9985c3c::t_5bda70a6a0f2c8 59-60
+frontend/e2e/real-smoke.spec.ts
+  s_60c357d9985c3c::t_a7ee8c66d86ba2 63-65
+  s_60c357d9985c3c::t_5bda70a6a0f2c8 3,8-9,36-45,47-50,53-56,58-60,62,66,73
+backend/tests/test_postgres_conversation_repository.py
+  s_60c357d9985c3c::t_f93e543c921d34 18-20,80-109
+  s_60c357d9985c3c::t_98fcf5785a4a29 110
+backend/app/conversation/repository.py
+  s_60c357d9985c3c::t_aaa0f8c9e7cf8f 34
+  s_60c357d9985c3c::t_1f8dbe76b0c34c 152,158,867,873-874,877-881,885
+  s_60c357d9985c3c::t_a7ee8c66d86ba2 153-157,159,868-872,875-876,882-884
+  s_60c357d9985c3c::t_e99d31f8533722 886
+backend/app/db/postgres/conversation_repository.py
+  s_60c357d9985c3c::t_1f8dbe76b0c34c 849,855-856,860-865,873-874
+  s_60c357d9985c3c::t_83df842a1587e2 759-760,766-769
+  s_60c357d9985c3c::t_a7ee8c66d86ba2 850-854,857-859,866-872,875
+  s_60c357d9985c3c::t_aaa0f8c9e7cf8f 42
+docs/production_readiness.md
+  s_60c357d9985c3c::t_11b2b577d2ba5d 10
+docs/benchmark_report.md
+  s_60c357d9985c3c::t_11b2b577d2ba5d 3,86
+backend/app/conversation/legacy_importer.py
+  s_60c357d9985c3c::t_a7ee8c66d86ba2 56
+  s_60c357d9985c3c::t_7888e6de28fc9c 45-47
+  s_60c357d9985c3c::t_1f8dbe76b0c34c 43-44,48-55
+backend/tests/test_legacy_conversation_import.py
+  s_60c357d9985c3c::t_a7ee8c66d86ba2 15-17,110-130,132-144
+  s_60c357d9985c3c::t_1f8dbe76b0c34c 131
+  s_60c357d9985c3c::t_35223a5ba474c3 145-146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "03aecc4173a425d5b4b22b63d758dcd37a5c0f11",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
