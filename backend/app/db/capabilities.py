@@ -7,6 +7,7 @@ from app.db.providers import DatabaseProvider, resolve_database_provider
 
 
 SUPPORTED_POSTGRES_REPOSITORIES = (
+    "conversation",
     "trace",
     "roleplay",
     "worksheet",
@@ -20,6 +21,7 @@ SUPPORTED_POSTGRES_REPOSITORIES = (
     "account",
 )
 SQLITE_REPOSITORIES = (
+    "conversation",
     "trace",
     "roleplay",
     "worksheet",
@@ -77,7 +79,8 @@ def database_capability_report(database_url: str | None = None) -> DatabaseCapab
             missing_runtime_repositories=missing,
             full_runtime_supported=True,
             notes=(
-                "PostgreSQL currently supports trace, roleplay, worksheet, exposure, "
+                "PostgreSQL currently supports conversation, trace, roleplay, "
+                "worksheet, exposure, "
                 "user_profile, memory_settings, session_review, protocol, "
                 "intervention_plan, metrics and account repositories."
             ),

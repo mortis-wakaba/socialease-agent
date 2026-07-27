@@ -13,6 +13,7 @@ from app.db.capabilities import (
 from app.db.postgres.protocol_repository import PostgresProtocolRepository
 from app.db.postgres.intervention_plan_repository import PostgresInterventionPlanRepository
 from app.db.postgres.exposure_repository import PostgresExposureRepository
+from app.db.postgres.conversation_repository import PostgresConversationRepository
 from app.db.postgres.metrics_repository import PostgresMetricsRepository
 from app.db.postgres.memory_settings_repository import PostgresUserMemorySettingsRepository
 from app.db.postgres.trace_repository import PostgresTraceRepository
@@ -68,6 +69,16 @@ def test_postgres_url_selects_postgres_trace_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresTraceRepository)
+    repository.engine.dispose()
+
+
+def test_postgres_url_selects_conversation_repository() -> None:
+    factory = RepositoryFactory(
+        database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
+    )
+    repository = factory.conversation_repository()
+
+    assert isinstance(repository, PostgresConversationRepository)
     repository.engine.dispose()
 
 
@@ -204,6 +215,7 @@ def test_postgres_runtime_database_capability_check_passes_when_all_repositories
     assert report.provider == DatabaseProvider.POSTGRES
     assert report.full_runtime_supported is True
     assert report.supported_repositories == (
+        "conversation",
         "trace",
         "roleplay",
         "worksheet",

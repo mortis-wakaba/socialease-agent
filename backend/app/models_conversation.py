@@ -254,3 +254,17 @@ class ModuleRun(StrictConversationModel):
         if terminal != (self.ended_at is not None):
             raise ValueError("ended_at must be set exactly for terminal module runs")
         return self
+
+
+class ConversationPage(StrictConversationModel):
+    """Cursor-paginated conversations ordered from newest to oldest."""
+
+    items: list[Conversation] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
+class ConversationEventPage(StrictConversationModel):
+    """Cursor-paginated events ordered by ascending sequence number."""
+
+    items: list[ConversationEvent] = Field(default_factory=list)
+    next_cursor: str | None = None

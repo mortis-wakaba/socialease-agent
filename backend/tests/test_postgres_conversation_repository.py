@@ -1,0 +1,98 @@
+"""Integration tests for PostgreSQL unified conversation persistence."""
+
+from concurrent.futures import ThreadPoolExecutor
+import os
+from uuid import uuid4
+
+from alembic import command
+from alembic.config import Config
+import pytest
+
+from app.conversation.content_protector import LocalPlaintextContentProtector
+from app.db.postgres.conversation_repository import (
+    PostgresConversationRepository,
+)
+from app.models_conversation import (
+    ConversationEventRole,
+    ConversationEventType,
+)
+
+
+TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
+
+pytestmark = pytest.mark.skipif(
+    not TEST_DATABASE_URL,
+    reason="SOCIALEASE_TEST_DATABASE_URL is required for PostgreSQL integration tests.",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def migrated_database() -> None:
+    """Apply all migrations to the configured integration database."""
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL or "")
+    command.upgrade(config, "head")
+
+
+@pytest.fixture
+def repository() -> PostgresConversationRepository:
+    """Return a repository with an explicit non-production test protector."""
+    assert TEST_DATABASE_URL is not None
+    return PostgresConversationRepository(
+        database_url=TEST_DATABASE_URL,
+        protector=LocalPlaintextContentProtector(),
+    )
+
+
+def test_postgres_conversation_owner_scope_and_idempotency(
+    repository: PostgresConversationRepository,
+) -> None:
+    user_id = f"pg_conversation_user_{uuid4().hex}"
+    conversation = repository.create(user_id=user_id, title="Integration")
+    first = repository.append_event(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        event_type=ConversationEventType.USER_MESSAGE,
+        role=ConversationEventRole.USER,
+        content="hello",
+        idempotency_key="message-1",
+    )
+    replay = repository.append_event(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        event_type=ConversationEventType.USER_MESSAGE,
+        role=ConversationEventRole.USER,
+        content="hello",
+        idempotency_key="message-1",
+    )
+
+    assert replay.event_id == first.event_id
+    assert repository.get_for_user(conversation.conversation_id, user_id)
+    assert repository.get_for_user(conversation.conversation_id, "other") is None
+    assert not repository.list_events(
+        conversation_id=conversation.conversation_id,
+        user_id="other",
+    ).items
+
+
+def test_postgres_concurrent_append_sequence_is_contiguous(
+    repository: PostgresConversationRepository,
+) -> None:
+    user_id = f"pg_conversation_concurrent_{uuid4().hex}"
+    conversation = repository.create(user_id=user_id, title="Concurrent")
+
+    def append(index: int) -> int:
+        event = repository.append_event(
+            conversation_id=conversation.conversation_id,
+            user_id=user_id,
+            event_type=ConversationEventType.USER_MESSAGE,
+            role=ConversationEventRole.USER,
+            content=f"message {index}",
+            idempotency_key=f"message-{index}",
+        )
+        return event.sequence_no
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        sequences = list(executor.map(append, range(16)))
+
+    assert sorted(sequences) == list(range(1, 17))

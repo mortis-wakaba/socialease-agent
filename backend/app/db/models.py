@@ -203,6 +203,84 @@ CREATE TABLE IF NOT EXISTS harness_runtime_metric_events (
     event_name TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS conversations (
+    conversation_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    active_module_depth INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    history_notice_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (status IN ('active', 'archived', 'deleted')),
+    CHECK (active_module_depth >= 0 AND active_module_depth <= 3),
+    CHECK (version >= 1)
+);
+CREATE TABLE IF NOT EXISTS conversation_events (
+    event_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content_plaintext TEXT,
+    content_ciphertext BLOB,
+    content_nonce BLOB,
+    content_key_version TEXT,
+    structured_payload TEXT,
+    module_run_id TEXT,
+    parent_module_run_id TEXT,
+    idempotency_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(conversation_id) REFERENCES conversations(conversation_id)
+        ON DELETE CASCADE,
+    UNIQUE(conversation_id, sequence_no),
+    UNIQUE(conversation_id, idempotency_key),
+    CHECK (
+        (content_plaintext IS NOT NULL AND content_ciphertext IS NULL
+            AND content_nonce IS NULL AND content_key_version IS NULL)
+        OR
+        (content_plaintext IS NULL AND content_ciphertext IS NOT NULL
+            AND content_nonce IS NOT NULL AND content_key_version IS NOT NULL)
+    )
+);
+CREATE TABLE IF NOT EXISTS conversation_module_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    proposed_module TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    status TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(conversation_id) REFERENCES conversations(conversation_id)
+        ON DELETE CASCADE,
+    CHECK (status IN ('pending', 'accepted', 'rejected', 'expired'))
+);
+CREATE TABLE IF NOT EXISTS conversation_module_runs (
+    module_run_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    module_type TEXT NOT NULL,
+    parent_module_run_id TEXT,
+    depth INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    domain_session_id TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    FOREIGN KEY(conversation_id) REFERENCES conversations(conversation_id)
+        ON DELETE CASCADE,
+    FOREIGN KEY(parent_module_run_id)
+        REFERENCES conversation_module_runs(module_run_id),
+    CHECK (depth >= 1 AND depth <= 3),
+    CHECK (status IN ('active', 'suspended', 'completed', 'terminated')),
+    CHECK (version >= 1)
+);
 CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_roleplay_sessions_user_id ON roleplay_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_worksheets_user_id ON worksheets(user_id);
@@ -243,4 +321,14 @@ CREATE INDEX IF NOT EXISTS idx_harness_metric_events_risk ON harness_metric_even
 CREATE INDEX IF NOT EXISTS idx_harness_metric_events_permission ON harness_metric_events(permission_action);
 CREATE INDEX IF NOT EXISTS idx_harness_runtime_metric_events_name ON harness_runtime_metric_events(event_name);
 CREATE INDEX IF NOT EXISTS idx_harness_runtime_metric_events_created_at ON harness_runtime_metric_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_conversations_user_updated
+ON conversations(user_id, updated_at DESC, conversation_id DESC);
+CREATE INDEX IF NOT EXISTS idx_conversation_events_owner_sequence
+ON conversation_events(user_id, conversation_id, sequence_no);
+CREATE INDEX IF NOT EXISTS idx_conversation_module_proposals_owner_status
+ON conversation_module_proposals(user_id, conversation_id, status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_module_proposals_request
+ON conversation_module_proposals(conversation_id, request_hash);
+CREATE INDEX IF NOT EXISTS idx_conversation_module_runs_stack
+ON conversation_module_runs(user_id, conversation_id, depth);
 """

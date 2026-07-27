@@ -9,6 +9,7 @@ from app.db.account_repositories import (
     SQLiteAccountRepository,
 )
 from app.db.postgres.exposure_repository import PostgresExposureRepository
+from app.db.postgres.conversation_repository import PostgresConversationRepository
 from app.db.postgres.intervention_plan_repository import PostgresInterventionPlanRepository
 from app.db.postgres.metrics_repository import PostgresMetricsRepository
 from app.db.postgres.memory_settings_repository import PostgresUserMemorySettingsRepository
@@ -49,6 +50,10 @@ from app.memory.settings_store import (
 )
 from app.observability.metrics import MetricsRepository, SQLiteMetricsRepository
 from app.protocols.store import ProtocolStore
+from app.conversation.repository import (
+    ConversationRepository,
+    SQLiteConversationRepository,
+)
 
 
 class ProtocolRepository(Protocol):
@@ -105,6 +110,14 @@ class RepositoryFactory:
         if self.provider == DatabaseProvider.POSTGRES:
             return PostgresTraceRepository(database_url=self.database_url)
         raise self._not_implemented("trace")
+
+    def conversation_repository(self) -> ConversationRepository:
+        """Return the unified conversation repository."""
+        if self.provider == DatabaseProvider.SQLITE:
+            return SQLiteConversationRepository()
+        if self.provider == DatabaseProvider.POSTGRES:
+            return PostgresConversationRepository(database_url=self.database_url)
+        raise self._not_implemented("conversation")
 
     def roleplay_repository(self) -> RoleplaySessionRepository:
         """Return the role-play session repository for the configured provider."""
