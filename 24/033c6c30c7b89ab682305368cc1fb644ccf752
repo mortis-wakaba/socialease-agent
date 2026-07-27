@@ -1,0 +1,43 @@
+backend/app/conversation/module_coordinator.py
+  s_60c357d9985c3c::t_c5318a0853016c 5,24-26,325-333
+  s_60c357d9985c3c::t_781e60f1a3e782 308-324,334-363
+frontend/app/chat/page.tsx
+  s_60c357d9985c3c::t_94414d5e4f504a 54-59,74,445,522
+backend/tests/test_module_coordinator.py
+  s_60c357d9985c3c::t_194285ee6985e0 70-77,229-273
+  s_60c357d9985c3c::t_f3ef6048a99d52 274-275
+backend/app/services/conversation_service.py
+  s_60c357d9985c3c::t_94e84d344c7749 444-447,475
+backend/tests/test_conversation_service.py
+  s_60c357d9985c3c::t_c67e13f92ed34a 11,196-206
+  s_60c357d9985c3c::t_713adea70c9a09 3,12-19,66-105,283-319
+  s_60c357d9985c3c::t_d9404d773895c6 106-107
+backend/tests/test_deepeval_quality.py
+  s_60c357d9985c3c::t_81011ee05c5c6f 39,62-64,88-96,274-301
+  s_60c357d9985c3c::t_4cda94b2ff1daf 302-303
+backend/app/evals/data/deepeval_unified_conversation.jsonl
+  s_60c357d9985c3c::t_81011ee05c5c6f 1-8
+frontend/e2e/product-flows.spec.ts
+  s_60c357d9985c3c::t_f350709a1ebccf 270-285,326-328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "24033c6c30c7b89ab682305368cc1fb644ccf752",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
