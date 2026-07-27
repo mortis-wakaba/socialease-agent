@@ -1,0 +1,52 @@
+backend/app/tracing/versions.py
+  s_60c357d9985c3c::t_8808e3e0eea406 22
+backend/app/llm/prompt_versions.json
+  s_60c357d9985c3c::t_886ddec508b17c 28-29
+backend/app/llm/prompts.py
+  s_60c357d9985c3c::t_d0a093fd4cd9ca 37,42,54-56,66
+backend/app/agents/roleplay.py
+  s_60c357d9985c3c::t_45e0f68ef1606d 187-194
+  s_60c357d9985c3c::t_d0a093fd4cd9ca 161-166
+backend/tests/test_roleplay_unified_context.py
+  s_60c357d9985c3c::t_68da1a5045d301 1-152
+backend/app/models_roleplay.py
+  s_60c357d9985c3c::t_d0a093fd4cd9ca 87-90
+backend/app/memory/roleplay_store.py
+  s_60c357d9985c3c::t_d0a093fd4cd9ca 34,45-55,107-126
+  s_60c357d9985c3c::t_b5ebaf07343ac5 127-129
+backend/app/services/roleplay_service.py
+  s_60c357d9985c3c::t_ea22fe3d711272 53-60,156-176,215,217-222,237-306
+  s_60c357d9985c3c::t_b39f13a9b82e75 735-776
+  s_60c357d9985c3c::t_fd7854d1d114be 307,605-627,672-693
+  s_60c357d9985c3c::t_45e0f68ef1606d 788-791
+  s_60c357d9985c3c::t_e385515e6efeea 308
+  s_60c357d9985c3c::t_2830a28e3331f5 694
+backend/app/models_session_context.py
+  s_60c357d9985c3c::t_d0a093fd4cd9ca 9,94
+backend/app/conversation/adapters/roleplay.py
+  s_60c357d9985c3c::t_fd7854d1d114be 114,122
+  s_60c357d9985c3c::t_4e422fbf0e0ca3 35,61,66-68,133
+  s_60c357d9985c3c::t_4978b052074c12 70-76
+  s_60c357d9985c3c::t_0f4218036b1d16 69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "8a18c12d6a3e86642bea9ed08ec3ad4a4f92769c",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
