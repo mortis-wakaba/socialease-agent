@@ -91,7 +91,7 @@ export function PausePracticePanel({
             {saving ? "保存中..." : "暂停练习"}
           </Button>
           <Link
-            href="/support"
+            href="/chat"
             className="rounded-md border border-line px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand hover:text-brand"
           >
             查找支持资源

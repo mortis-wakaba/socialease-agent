@@ -115,6 +115,7 @@ class ExposurePlanner:
         status: ExposureFeedbackStatus,
         anxiety_before: int,
         anxiety_after: int,
+        permission_to_increase: bool = False,
     ) -> tuple[ExposureTask | None, str]:
         """Choose the next task using simple difficulty adjustment rules."""
         current = self._find_task(plan.tasks, task_id)
@@ -131,12 +132,16 @@ class ExposurePlanner:
             reason = "skipped feedback suggests a smaller next task."
             return self._nearest_task(plan.tasks, target_difficulty, prefer_lower=True), reason
 
-        if status == ExposureFeedbackStatus.COMPLETED and anxiety_after < anxiety_before:
+        if (
+            status == ExposureFeedbackStatus.COMPLETED
+            and anxiety_after < anxiety_before
+            and permission_to_increase
+        ):
             target_difficulty = min(10, current.difficulty + 1)
-            reason = "completed feedback with lower anxiety slightly raises difficulty."
+            reason = "explicit permission allows a slightly harder next step."
             return self._nearest_task(plan.tasks, target_difficulty, prefer_lower=False), reason
 
-        reason = "completed feedback without anxiety decrease keeps difficulty stable."
+        reason = "difficulty stays stable without explicit permission to increase."
         return self._nearest_task(plan.tasks, current.difficulty, prefer_lower=True), reason
 
     @staticmethod

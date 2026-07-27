@@ -7,7 +7,7 @@ SocialEase 是一个**产品化 Agent 原型**，不是医疗产品，也不是�
 2026-07-27 本地与 CI 检查点：
 
 ```text
-backend pytest: 552 passed, 43 skipped
+backend pytest: 507 passed, 44 skipped
 eval suite: all metrics passed
 eval gate: passed
 frontend typecheck: passed
@@ -145,7 +145,8 @@ Redis-backed task state CI: passed
 - SQLite 本地开发持久化；
 - repository interfaces for storage replacement;
 - repository factory with SQLite default and PostgreSQL adapters for trace, roleplay, worksheet, exposure, user profile, memory settings, protocol, intervention plan, metrics, account, and session records;
-- Redis typed task state for Role-play、Worksheet Draft 和 Support Search，production 默认要求配置并纳入 `/ready`；
+- Redis typed state for unified Conversation Context、Module Overlay、Worksheet Draft 和
+  Resource Citation 指代，production 默认要求配置并纳入 `/ready`；
 - explicit database runtime capability check with a clear support matrix;
 - Alembic migration discipline and PostgreSQL CI migration check;
 - first-pass structured PostgreSQL query fields for trace risk/intent, roleplay scenario/difficulty, and exposure plan/attempt state while retaining JSON payloads for full agent artifacts;
@@ -181,7 +182,7 @@ Redis-backed task state CI: passed
   preemption、ownership、encryption、deletion cascade 和 legacy import 回归；
 - heavier local load regression tests for 50-user requests、Consent 原子消费、Calendar 幂等副作用和 migration readiness;
 - PostgreSQL 完整 Repository/Runtime CI，以及 fresh-process 重启持久化验证；
-- Redis 对 Role-play、Worksheet 和 Support Search 的统一 readiness 探针；
+- Redis 对 Context Projection、Module Overlay 和短期 Task State 的统一 readiness 探针；
 - tracked-file privacy check，阻止本地 `.env`、凭据、简历和面试准备目录进入 Git；
 - bundled JSONL eval cases for deterministic regression;
 - GitHub Actions workflow 覆盖 backend tests、evals、migration check、frontend quality gates。

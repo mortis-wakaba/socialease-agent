@@ -1,6 +1,8 @@
 """Tests for encrypted, owner-scoped module overlay caching."""
 
 from datetime import UTC, datetime
+import os
+from uuid import uuid4
 
 import pytest
 
@@ -9,7 +11,11 @@ from app.conversation.module_overlay_store import (
     ModuleOverlayStore,
     ProtectedModuleOverlay,
 )
-from app.memory.task_state_store import InMemoryTaskStateStore
+from app.memory.task_state_store import (
+    InMemoryTaskStateStore,
+    RedisTaskStateStore,
+    TaskStateStoreUnavailable,
+)
 from app.models_conversation import ModuleRun, RoleplayParameters, ModuleType
 from app.models_module_overlay import ModuleOverlay, RoleplayOverlay
 
@@ -74,6 +80,61 @@ async def test_overlay_cache_tamper_is_a_safe_miss() -> None:
     )
 
     assert await store.get(run) is None
+
+
+@pytest.mark.anyio
+async def test_overlay_cache_outage_cannot_block_durable_deletion() -> None:
+    class UnavailableDeleteStore(InMemoryTaskStateStore):
+        async def delete(self, **kwargs: object) -> None:
+            raise TaskStateStoreUnavailable("test")
+
+        async def delete_user(self, **kwargs: object) -> int:
+            raise TaskStateStoreUnavailable("test")
+
+    store = ModuleOverlayStore(
+        store=UnavailableDeleteStore(),
+        protector=AESGCMConversationContentProtector(
+            key=b"x" * 32,
+            key_version="test-v1",
+        ),
+    )
+
+    await store.delete(_run())
+    assert await store.delete_user(user_id="owner") == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.redis_integration
+async def test_real_redis_overlay_round_trip_when_configured() -> None:
+    redis_url = os.getenv("SOCIALEASE_TEST_REDIS_URL")
+    if not redis_url:
+        pytest.skip("SOCIALEASE_TEST_REDIS_URL is required")
+    run = _run().model_copy(
+        update={
+            "module_run_id": f"module-{uuid4().hex}",
+            "user_id": f"owner-{uuid4().hex}",
+        }
+    )
+    backing = RedisTaskStateStore(
+        redis_url=redis_url,
+        namespace="module-overlay-test",
+        model_type=ProtectedModuleOverlay,
+    )
+    store = ModuleOverlayStore(
+        store=backing,
+        protector=AESGCMConversationContentProtector(
+            key=b"x" * 32,
+            key_version="test-v1",
+        ),
+        ttl_seconds=60,
+    )
+    try:
+        overlay = _overlay(run)
+        await store.put(run, overlay)
+        assert await store.get(run) == overlay
+    finally:
+        await store.delete_user(user_id=run.user_id)
+        await store.close()
 
 
 def _run() -> ModuleRun:

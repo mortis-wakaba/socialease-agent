@@ -459,7 +459,7 @@ async def test_memory_extraction_failure_does_not_change_safe_chat_response() ->
 
 
 @pytest.mark.anyio
-async def test_chat_exposure_plan_uses_plan_id_as_recoverable_session_after_consent() -> None:
+async def test_legacy_exposure_skill_redirects_after_consent() -> None:
     user_id = f"chat_exposure_plan_{uuid4().hex}"
     harness = AgentHarness(trace_logger=TraceLogger(repository=InMemoryTraceRepository()))
 
@@ -489,14 +489,10 @@ async def test_chat_exposure_plan_uses_plan_id_as_recoverable_session_after_cons
         )
     )
 
-    plan_id = response.structured_data["plan_id"]
-    intervention_plan = response.structured_data["intervention_plan"]
-
-    assert response.structured_data["action"] == "exposure_plan_created"
-    assert plan_id
-    assert response.structured_data["session_id"] == plan_id
-    assert intervention_plan["session_id"] == plan_id
-    assert response.trace.session_id == plan_id
+    assert response.structured_data["action"] == "use_unified_conversation"
+    assert response.structured_data["next_ui"] == "chat"
+    assert response.structured_data["deprecated_entrypoint"] is True
+    assert response.trace.session_id is None
 
 
 @pytest.mark.anyio

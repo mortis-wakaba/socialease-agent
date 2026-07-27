@@ -252,7 +252,7 @@ function PlanSummary({ plan }: { plan: InterventionPlanView }) {
           查看计划
         </LinkButton>
         {canOpenPracticeSession ? (
-          <LinkButton href={`/practice?session_id=${encodeURIComponent(plan.session_id)}`} secondary>
+          <LinkButton href="/chat" secondary>
             继续练习
           </LinkButton>
         ) : null}
@@ -327,7 +327,7 @@ function nextStepSuggestion({
   }
   return {
     message: "可以从一个低强度场景开始，例如课堂发言开场白、宿舍沟通短句或邀请同学吃饭。",
-    href: "/practice",
+    href: "/chat",
     actionLabel: "开始角色扮演"
   };
 }

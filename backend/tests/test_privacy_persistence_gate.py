@@ -7,12 +7,20 @@ import pytest
 
 from app.auth.tokens import create_auth_token
 from app.main import app
+from app.models_exposure import (
+    ExposureCompleteRequest,
+    ExposureFeedbackStatus,
+    ExposurePlanRequest,
+)
+from app.models_worksheet import WorksheetCreateRequest
 from app.privacy.persistence_gate import PersistenceGate
 from app.privacy.policy import PersistenceKind
 from app.privacy.redaction import (
     detect_sensitive_categories,
     redact_sensitive_identifiers,
 )
+from app.services.exposure_service import exposure_service
+from app.services.worksheet_service import worksheet_service
 
 TEST_AUTH_SECRET = "privacy-test-secret"
 
@@ -360,17 +368,17 @@ async def test_worksheet_source_message_is_minimized_before_persistence(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = f"privacy_worksheet_user_{uuid4().hex}"
-    response = await client.post(
-        "/api/worksheet/create",
-        json={
-            "user_id": user_id,
-            "message": "情境：课堂发言。我的邮箱是 sheet@example.com。情绪：紧张。强度：6。",
-        },
+    response = await worksheet_service.create_worksheet(
+        WorksheetCreateRequest(
+            user_id=user_id,
+            message="情境：课堂发言。我的邮箱是 sheet@example.com。情绪：紧张。强度：6。",
+        )
     )
 
-    worksheet = response.json()["worksheet"]
-    assert worksheet["source_message"] == "[raw worksheet source minimized by privacy policy]"
-    assert "sheet@example.com" not in worksheet["source_message"]
+    assert response.worksheet is not None
+    worksheet = response.worksheet
+    assert worksheet.source_message == "[raw worksheet source minimized by privacy policy]"
+    assert "sheet@example.com" not in (worksheet.source_message or "")
 
 
 @pytest.mark.anyio
@@ -378,25 +386,24 @@ async def test_worksheet_fields_are_redacted_before_persistence(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = f"privacy_worksheet_fields_{uuid4().hex}"
-    response = await client.post(
-        "/api/worksheet/create",
-        json={
-            "user_id": user_id,
-            "message": (
+    response = await worksheet_service.create_worksheet(
+        WorksheetCreateRequest(
+            user_id=user_id,
+            message=(
                 "情境：姓名：张三 在学校：清华大学课堂发言，电话 13912345678。"
                 "自动想法：我会被同学笑。情绪：焦虑。强度：7。"
                 "支持证据：之前发言卡过壳。反对证据：老师给过邮箱 field@example.com 鼓励。"
                 "替代想法：我可以先说核心观点。"
                 "下一步：微信号 wxfield12345 先写开场，地址：北京市海淀区中关村大街27号。"
             ),
-        },
+        )
     )
 
-    payload = response.json()
-    worksheet = payload["worksheet"]
-    worksheet_id = worksheet["worksheet_id"]
-    serialized_fields = str(worksheet["fields"])
-    assert worksheet["source_message"] == "[raw worksheet source minimized by privacy policy]"
+    assert response.worksheet is not None
+    worksheet = response.worksheet
+    worksheet_id = worksheet.worksheet_id
+    serialized_fields = str(worksheet.fields.model_dump(mode="json"))
+    assert worksheet.source_message == "[raw worksheet source minimized by privacy policy]"
     for raw in [
         "张三",
         "清华大学",
@@ -469,43 +476,42 @@ async def test_exposure_reflection_and_previous_attempts_are_minimized(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = f"privacy_exposure_user_{uuid4().hex}"
-    plan_response = await client.post(
-        "/api/exposure/plan",
-        json={
-            "user_id": user_id,
-            "target_scenario": "课堂发言",
-            "current_anxiety_level": 6,
-            "previous_attempts": ["之前把手机号 13912345678 写进了草稿"],
-        },
+    plan_response = await exposure_service.create_plan(
+        ExposurePlanRequest(
+            user_id=user_id,
+            target_scenario="课堂发言",
+            current_anxiety_level=6,
+            previous_attempts=["之前把手机号 13912345678 写进了草稿"],
+        )
     )
-    plan = plan_response.json()["plan"]
-    task_id = plan["tasks"][0]["task_id"]
+    assert plan_response.plan is not None
+    plan = plan_response.plan
+    task_id = plan.tasks[0].task_id
 
-    complete_response = await client.post(
-        "/api/exposure/complete",
-        json={
-            "user_id": user_id,
-            "task_id": task_id,
-            "status": "completed",
-            "anxiety_before": 6,
-            "anxiety_after": 4,
-            "reflection": "完成了，也提到了邮箱 exposure@example.com。",
-        },
+    complete_response = await exposure_service.complete_task(
+        ExposureCompleteRequest(
+            user_id=user_id,
+            task_id=task_id,
+            status=ExposureFeedbackStatus.COMPLETED,
+            anxiety_before=6,
+            anxiety_after=4,
+            reflection="完成了，也提到了邮箱 exposure@example.com。",
+        )
     )
 
-    updated_plan = complete_response.json()["plan"]
-    assert updated_plan["previous_attempts"] == [
+    updated_plan = complete_response.plan
+    assert updated_plan.previous_attempts == [
         "[raw previous attempt minimized by privacy policy]"
     ]
-    assert updated_plan["attempts"][-1]["reflection"] == (
+    assert updated_plan.attempts[-1].reflection == (
         "[raw exposure reflection minimized by privacy policy]"
     )
-    assert updated_plan["target_scenario"] == (
+    assert updated_plan.target_scenario == (
         "[raw exposure target scenario minimized by privacy policy]"
     )
-    assert "课堂发言" not in updated_plan["target_scenario"]
-    assert "13912345678" not in updated_plan["tasks"][3]["description"]
-    assert "exposure@example.com" not in updated_plan["attempts"][-1]["reflection"]
+    assert "课堂发言" not in updated_plan.target_scenario
+    assert "13912345678" not in updated_plan.tasks[3].description
+    assert "exposure@example.com" not in updated_plan.attempts[-1].reflection
 
 
 @pytest.mark.anyio
@@ -514,22 +520,21 @@ async def test_exposure_target_scenario_is_minimized_in_plan_tasks_and_export(
 ) -> None:
     user_id = f"privacy_exposure_target_user_{uuid4().hex}"
     raw_target = "和李四同学约饭后聊我的手机号 13912345678"
-    response = await client.post(
-        "/api/exposure/plan",
-        json={
-            "user_id": user_id,
-            "target_scenario": raw_target,
-            "current_anxiety_level": 7,
-            "previous_attempts": [],
-        },
+    response = await exposure_service.create_plan(
+        ExposurePlanRequest(
+            user_id=user_id,
+            target_scenario=raw_target,
+            current_anxiety_level=7,
+        )
     )
 
-    plan = response.json()["plan"]
-    serialized_plan = str(plan)
+    assert response.plan is not None
+    plan = response.plan
+    serialized_plan = plan.model_dump_json()
     export_response = await client.get(f"/api/users/{user_id}/memory/export")
     serialized_export = str(export_response.json()["records"]["exposure_plans"])
 
-    assert plan["target_scenario"] == "[raw exposure target scenario minimized by privacy policy]"
+    assert plan.target_scenario == "[raw exposure target scenario minimized by privacy policy]"
     assert raw_target not in serialized_plan
     assert "李四" not in serialized_plan
     assert "13912345678" not in serialized_plan

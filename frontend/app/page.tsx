@@ -18,7 +18,7 @@ const primaryFlows = [
     description: "从一段社交压力描述开始，系统会先做安全判断，再路由到合适功能。"
   },
   {
-    href: "/practice",
+    href: "/chat",
     title: "角色扮演练习",
     description: "选择课堂发言、宿舍沟通、拒绝请求等场景，练习表达并获得反馈。"
   },

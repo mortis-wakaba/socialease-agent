@@ -90,7 +90,7 @@ curl -fsS https://your-api.example.edu/ready
 - 数据库能执行 `SELECT 1`；
 - repository capability matrix 支持当前 runtime；
 - Alembic migration graph 有效；
-- Role-play、Worksheet Draft 和 Support Search 的 Redis 状态后端均可用；
+- 统一 Conversation Context、Module Overlay 和短期任务状态的 Redis 后端可用；
 - aggregate metrics backend 能返回 snapshot。
 
 Readiness response 不返回数据库 URL 或 secret。

@@ -2,6 +2,7 @@
 
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from binascii import Error as Base64DecodeError
+import asyncio
 from dataclasses import dataclass
 import os
 from typing import Protocol
@@ -160,8 +161,28 @@ class CachedConversationContextProvider:
         self._store = store
         self._protector = protector
         self._ttl_seconds = min(max(ttl_seconds, 60), 86_400)
+        self._rebuild_locks = tuple(asyncio.Lock() for _ in range(64))
 
     async def load(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        recent_limit: int,
+    ) -> ConversationContextSnapshot:
+        """Coalesce concurrent cache misses without affecting DB correctness."""
+        lock = self._rebuild_locks[
+            hash((user_id, conversation_id, recent_limit))
+            % len(self._rebuild_locks)
+        ]
+        async with lock:
+            return await self._load_projection(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                recent_limit=recent_limit,
+            )
+
+    async def _load_projection(
         self,
         *,
         conversation_id: str,

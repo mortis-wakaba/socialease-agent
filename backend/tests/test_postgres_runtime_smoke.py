@@ -106,6 +106,8 @@ _SMOKE_CODE = textwrap.dedent(
     from uuid import uuid4
 
     from app.main import app
+    from app.models_worksheet import WorksheetCreateRequest
+    from app.services.worksheet_service import worksheet_service
 
 
     async def main():
@@ -129,46 +131,55 @@ _SMOKE_CODE = textwrap.dedent(
             )
             assert login.status_code == 200, login.text
 
-            first_chat = await client.post(
-                "/api/chat",
+            created = await client.post(
+                "/api/conversations",
+                headers=headers,
+                json={
+                    "user_id": user_id,
+                    "title": "PostgreSQL unified conversation smoke",
+                    "history_notice_version": "2026-07-01",
+                    "history_notice_acknowledged": True,
+                },
+            )
+            assert created.status_code == 200, created.text
+            conversation_id = created.json()["conversation_id"]
+
+            proposed = await client.post(
+                f"/api/conversations/{conversation_id}/messages",
                 headers=headers,
                 json={
                     "user_id": user_id,
                     "message": "我想模拟课堂发言，先从低强度练习开始。",
-                    "context": {},
+                    "idempotency_key": f"postgres-smoke-{uuid4().hex}",
                 },
             )
-            assert first_chat.status_code == 200, first_chat.text
-            first_payload = first_chat.json()
-            assert first_payload["structured_data"]["action"] == "consent_required"
-            protocol_id = first_payload["structured_data"]["protocol_id"]
+            assert proposed.status_code == 200, proposed.text
+            proposal = proposed.json()["pending_module_proposal"]
+            assert proposal["proposed_module"] == "roleplay"
 
-            approved = await client.post(
-                f"/api/protocols/{protocol_id}/respond",
-                headers=headers,
-                json={"user_id": user_id, "approved": True},
-            )
-            assert approved.status_code == 200, approved.text
-
-            second_chat = await client.post(
-                "/api/chat",
+            accepted = await client.post(
+                (
+                    f"/api/conversations/{conversation_id}/module-proposals/"
+                    f"{proposal['proposal_id']}/accept"
+                ),
                 headers=headers,
                 json={
                     "user_id": user_id,
-                    "message": "我想模拟课堂发言，先从低强度练习开始。",
-                    "context": {"protocol_id": protocol_id},
+                    "request_hash": proposal["request_hash"],
                 },
             )
-            assert second_chat.status_code == 200, second_chat.text
-            second_payload = second_chat.json()
-            assert second_payload["structured_data"]["action"] == "roleplay_started"
+            assert accepted.status_code == 200, accepted.text
+            stack = accepted.json()["active_module_stack"]
+            assert len(stack) == 1
+            assert stack[0]["module_type"] == "roleplay"
 
-            export = await client.get(
-                f"/api/users/{user_id}/memory/export",
+            detail = await client.get(
+                f"/api/conversations/{conversation_id}",
                 headers=headers,
+                params={"user_id": user_id},
             )
-            assert export.status_code == 200, export.text
-            assert "runs" in export.json()["records"]
+            assert detail.status_code == 200, detail.text
+            assert len(detail.json()["events"]["items"]) >= 4
 
             deleted = await client.delete("/api/auth/account", headers=headers)
             assert deleted.status_code == 200, deleted.text
@@ -210,22 +221,18 @@ _RESTART_WRITER_CODE = textwrap.dedent(
             assert register.status_code == 201, register.text
             auth = register.json()
             user_id = auth["user"]["user_id"]
-            headers = {"Authorization": f"Bearer {auth['tokens']['access_token']}"}
-            worksheet = await client.post(
-                "/api/worksheet/create",
-                headers=headers,
-                json={
-                    "user_id": user_id,
-                    "message": "小组讨论前我担心自己说错，想先整理一个小步骤。",
-                },
+            worksheet = await worksheet_service.create_worksheet(
+                WorksheetCreateRequest(
+                    user_id=user_id,
+                    message="小组讨论前我担心自己说错，想先整理一个小步骤。",
+                )
             )
-            assert worksheet.status_code == 200, worksheet.text
-            record = worksheet.json()["worksheet"]
+            record = worksheet.worksheet
             assert record is not None
             print(json.dumps({
                 "email": email,
                 "password": password,
-                "worksheet_id": record["worksheet_id"],
+                "worksheet_id": record.worksheet_id,
             }))
 
 

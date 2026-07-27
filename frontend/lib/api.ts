@@ -3,8 +3,6 @@ import type {
   AuthConfigResponse,
   AuthMeResponse,
   AuthResponse,
-  ChatProgressEvent,
-  ChatResponse,
   Conversation,
   ConversationDetailResponse,
   ConversationExportResponse,
@@ -14,8 +12,6 @@ import type {
   LegacyRoleplayImportResponse,
   ModuleControlResponse,
   ConsentRequiredDetail,
-  ExposureCompleteResponse,
-  ExposurePlanResponse,
   InterventionPlanListResponse,
   InterventionPlanResponse,
   ProtocolResponse,
@@ -31,14 +27,8 @@ import type {
   SessionReviewCreateResponse,
   SessionReviewListResponse,
   SessionReviewSource,
-  RoleplayFeedbackResponse,
-  RoleplayMessageResponse,
-  RoleplayPauseResponse,
-  RoleplayResumeResponse,
   RoleplaySessionListResponse,
-  RoleplayStartResponse,
   LogoutResponse,
-  SupportQueryResponse,
   TraceRecord,
   UserExposureResponse,
   UserMemoryDeleteResponse,
@@ -46,8 +36,6 @@ import type {
   UserOnboardingProfile,
   UserOnboardingProfileResponse,
   UserProfileResponse,
-  WorksheetCreateResponse,
-  WorksheetRecord
 } from "./types";
 import {
   authHeaders,
@@ -62,10 +50,6 @@ import {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const PROTOCOL_HEADER_NAME = "X-SocialEase-Protocol-Id";
-
-export type ChatStreamHandlers = {
-  onProgress?: (event: ChatProgressEvent) => void;
-};
 
 export class ConsentRequiredError extends Error {
   detail: ConsentRequiredDetail;
@@ -176,101 +160,6 @@ async function parseApiError(
   return { message: text || fallback };
 }
 
-async function requestChatStream(
-  userId: string,
-  message: string,
-  context: Record<string, unknown>,
-  handlers: ChatStreamHandlers,
-  retryOnUnauthorized = true
-): Promise<ChatResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      ...authHeaders(),
-      ...csrfHeaders()
-    },
-    body: JSON.stringify({ user_id: userId, message, context })
-  });
-
-  if (response.status === 401 && retryOnUnauthorized) {
-    const refreshed = await tryRefreshSession();
-    if (refreshed) {
-      return requestChatStream(userId, message, context, handlers, false);
-    }
-  }
-  if (!response.ok) {
-    const parsed = await parseApiError(response);
-    throw new Error(parsed.message);
-  }
-  if (!response.body) {
-    throw new Error("当前浏览器无法读取流式响应。");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalResponse: ChatResponse | null = null;
-  let streamError: string | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
-
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary >= 0) {
-      const block = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      const event = parseSseBlock(block);
-      if (event) {
-        if (event.name === "progress") {
-          handlers.onProgress?.(event.payload as ChatProgressEvent);
-        } else if (event.name === "final") {
-          finalResponse = event.payload as ChatResponse;
-        } else if (event.name === "error") {
-          const payload = event.payload as { message?: unknown };
-          streamError =
-            typeof payload.message === "string"
-              ? payload.message
-              : "Agent 工作流未能生成安全回复。";
-        }
-      }
-      boundary = buffer.indexOf("\n\n");
-    }
-    if (done) {
-      break;
-    }
-  }
-
-  if (streamError) {
-    throw new Error(streamError);
-  }
-  if (!finalResponse) {
-    throw new Error("连接已结束，但没有收到最终回复。");
-  }
-  return finalResponse;
-}
-
-function parseSseBlock(
-  block: string
-): { name: string; payload: unknown } | null {
-  let name = "message";
-  const data: string[] = [];
-  for (const line of block.split("\n")) {
-    if (line.startsWith("event:")) {
-      name = line.slice(6).trim();
-    } else if (line.startsWith("data:")) {
-      data.push(line.slice(5).trimStart());
-    }
-  }
-  if (data.length === 0) {
-    return null;
-  }
-  return { name, payload: JSON.parse(data.join("\n")) as unknown };
-}
-
 function isConsentRequiredDetail(value: unknown): value is ConsentRequiredDetail {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -341,26 +230,6 @@ export const api = {
     return request<AccountDeleteResponse>("/api/auth/account", {
       method: "DELETE"
     });
-  },
-
-  chat(userId: string, message: string, context: Record<string, unknown> = {}) {
-    return request<ChatResponse>("/api/chat", {
-      method: "POST",
-      body: JSON.stringify({
-        user_id: userId,
-        message,
-        context
-      })
-    });
-  },
-
-  chatStream(
-    userId: string,
-    message: string,
-    context: Record<string, unknown> = {},
-    handlers: ChatStreamHandlers = {}
-  ) {
-    return requestChatStream(userId, message, context, handlers);
   },
 
   createConversation(userId: string, title = "新对话") {
@@ -559,157 +428,11 @@ export const api = {
     );
   },
 
-  querySupportResources(query: string, searchSessionId?: string | null) {
-    return request<SupportQueryResponse>("/api/support/query", {
-      method: "POST",
-      body: JSON.stringify({
-        query,
-        user_id: currentUserId(),
-        search_session_id: searchSessionId ?? null
-      })
-    });
-  },
-
-  startRoleplay(
-    userId: string,
-    scenarioDescription: string,
-    difficulty: number,
-    options: { protocolId?: string; practiceGoal?: string } = {}
-  ) {
-    return request<RoleplayStartResponse>("/api/roleplay/start", {
-      method: "POST",
-      headers: protocolHeaders(options.protocolId),
-      body: JSON.stringify({
-        user_id: userId,
-        scenario_description: scenarioDescription,
-        practice_goal: options.practiceGoal ?? null,
-        difficulty
-      })
-    });
-  },
-
-  getRoleplaySession(sessionId: string, userId: string) {
-    const params = new URLSearchParams({ user_id: userId });
-    return request<RoleplayStartResponse>(
-      `/api/roleplay/${encodeURIComponent(sessionId)}?${params.toString()}`
-    );
-  },
-
   listRoleplaySessions(userId: string, limit = 10) {
     const params = new URLSearchParams({ user_id: userId, limit: String(limit) });
     return request<RoleplaySessionListResponse>(
       `/api/roleplay?${params.toString()}`
     );
-  },
-
-  sendRoleplayMessage(sessionId: string, userId: string, message: string) {
-    return request<RoleplayMessageResponse>("/api/roleplay/message", {
-      method: "POST",
-      body: JSON.stringify({
-        session_id: sessionId,
-        user_id: userId,
-        message
-      })
-    });
-  },
-
-  getRoleplayFeedback(sessionId: string, userId: string) {
-    return request<RoleplayFeedbackResponse>("/api/roleplay/feedback", {
-      method: "POST",
-      body: JSON.stringify({
-        session_id: sessionId,
-        user_id: userId
-      })
-    });
-  },
-
-  pauseRoleplaySession(sessionId: string, userId: string) {
-    return request<RoleplayPauseResponse>("/api/roleplay/pause", {
-      method: "POST",
-      body: JSON.stringify({
-        session_id: sessionId,
-        user_id: userId
-      })
-    });
-  },
-
-  resumeRoleplaySession(sessionId: string, userId: string) {
-    return request<RoleplayResumeResponse>("/api/roleplay/resume", {
-      method: "POST",
-      body: JSON.stringify({
-        session_id: sessionId,
-        user_id: userId
-      })
-    });
-  },
-
-  createWorksheet(userId: string, message: string) {
-    return request<WorksheetCreateResponse>("/api/worksheet/create", {
-      method: "POST",
-      body: JSON.stringify({
-        user_id: userId,
-        message
-      })
-    });
-  },
-
-  getWorksheet(worksheetId: string) {
-    return request<WorksheetRecord>(
-      `/api/worksheet/${encodeURIComponent(worksheetId)}`
-    );
-  },
-
-  supplementWorksheet(worksheetId: string, userId: string, message: string) {
-    return request<WorksheetCreateResponse>("/api/worksheet/supplement", {
-      method: "POST",
-      body: JSON.stringify({
-        worksheet_id: worksheetId,
-        user_id: userId,
-        message
-      })
-    });
-  },
-
-  createExposurePlan(
-    userId: string,
-    targetScenario: string,
-    currentAnxietyLevel: number,
-    previousAttempts: string[],
-    options: { protocolId?: string } = {}
-  ) {
-    return request<ExposurePlanResponse>("/api/exposure/plan", {
-      method: "POST",
-      headers: protocolHeaders(options.protocolId),
-      body: JSON.stringify({
-        user_id: userId,
-        target_scenario: targetScenario,
-        current_anxiety_level: currentAnxietyLevel,
-        previous_attempts: previousAttempts
-      })
-    });
-  },
-
-  completeExposureTask(
-    userId: string,
-    taskId: string,
-    status: "completed" | "skipped" | "too_hard",
-    anxietyBefore: number,
-    anxietyAfter: number,
-    reflection: string,
-    options: { protocolId?: string } = {}
-  ) {
-    return request<ExposureCompleteResponse>("/api/exposure/complete", {
-      method: "POST",
-      headers: protocolHeaders(options.protocolId),
-      body: JSON.stringify({
-        user_id: userId,
-        task_id: taskId,
-        status,
-        anxiety_before: anxietyBefore,
-        anxiety_after: anxietyAfter,
-        reflection
-      })
-    });
   },
 
   getUserExposure(userId: string) {

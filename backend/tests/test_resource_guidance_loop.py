@@ -6,17 +6,8 @@ import pytest
 
 from app.agents.resource_guidance import ResourceGuidanceAgentLoop
 from app.knowledge.service import KnowledgeService
-from app.db.repositories import InMemoryTraceRepository
-from app.models import ChatRequest, Intent, IntentResult, RiskLevel, SafetyResult
 from app.models_resource_loop import ResourceLoopStopReason
 from app.services.support_resource_service import SupportResourceService
-from app.safety.classifier import RuleBasedSafetyClassifier
-from app.skills.base import SkillContext
-from app.skills.registry import SkillRegistry
-from app.skills.support_rag import SupportRagSkill
-from app.tracing.logger import TraceLogger
-from app.workflow.context import RunContext
-from app.workflow.engine import AgentHarness
 
 
 class SequenceLLMClient:
@@ -53,21 +44,6 @@ class FailingKnowledgeService:
 
     def query(self, query: str, kb_type: object) -> object:
         raise RuntimeError("retrieval unavailable")
-
-
-class ResourceIntentRouter:
-    """Route every safe test request to the resource skill."""
-
-    async def route(
-        self,
-        message: str,
-        safety_result: SafetyResult,
-    ) -> IntentResult:
-        return IntentResult(
-            intent=Intent.CAMPUS_RESOURCE_QUERY,
-            confidence=1.0,
-            reason="resource-loop-test",
-        )
 
 
 def _loop(
@@ -195,77 +171,3 @@ async def test_resource_loop_falls_back_on_provider_or_tool_failure() -> None:
     assert provider_result.fallback_used is True
     assert tool_result.stop_reason == ResourceLoopStopReason.TOOL_ERROR
     assert tool_result.fallback_used is True
-
-
-@pytest.mark.anyio
-async def test_support_skill_exposes_trace_safe_loop_steps() -> None:
-    client = SequenceLLMClient(
-        [
-            '{"action":"search_support_resources","reason":"手机号 13912345678 需要查资源",'
-            '"query":"social anxiety public resource","observation_ids":[]}',
-            '{"action":"finish","reason":"资源足够",'
-            '"query":null,"observation_ids":[1]}',
-        ]
-    )
-    agent_loop = _loop(client)
-    skill = SupportRagSkill(agent_loop=agent_loop)
-    context = SkillContext(
-        run=RunContext(
-            run_id="run-resource-loop",
-            user_id="demo_user",
-            session_id=None,
-            message="我想找公开支持资源",
-            request_context={},
-            safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="safe"),
-            intent_result=IntentResult(
-                intent=Intent.CAMPUS_RESOURCE_QUERY,
-                confidence=0.9,
-                reason="resource query",
-            ),
-        )
-    )
-
-    result = await skill.run(context)
-
-    assert result.selected_agent == "support_resource_rag_agent"
-    assert result.structured_data["agent_loop_used"] is True
-    assert result.structured_data["agent_loop_stop_reason"] == "FINISHED"
-    assert len(result.structured_data["agent_loop_steps"]) == 2
-    assert "answer" not in result.structured_data["agent_loop_steps"][0]
-    assert "13912345678" not in result.structured_data["agent_loop_steps"][0]["reason"]
-
-
-@pytest.mark.anyio
-async def test_agent_harness_persists_resource_loop_steps_in_run_trace() -> None:
-    client = SequenceLLMClient(
-        [
-            '{"action":"search_support_resources","reason":"查找公开资源",'
-            '"query":"social anxiety public resource","observation_ids":[]}',
-            '{"action":"finish","reason":"资源足够",'
-            '"query":null,"observation_ids":[1]}',
-        ]
-    )
-    skill = SupportRagSkill(agent_loop=_loop(client))
-    harness = AgentHarness(
-        trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
-        safety_classifier=RuleBasedSafetyClassifier(),
-        intent_router=ResourceIntentRouter(),
-        skill_registry=SkillRegistry(executable_skills=[skill]),
-    )
-
-    response = await harness.run(
-        ChatRequest(
-            user_id="resource_loop_trace_user",
-            message="我想找公开支持资源",
-        )
-    )
-
-    assert response.trace.agent_loop_used is True
-    assert response.trace.agent_loop_stop_reason == "FINISHED"
-    assert len(response.trace.agent_loop_steps) == 2
-    assert response.trace.agent_loop_steps[0]["action"] == "search_support_resources"
-    grounding = response.structured_data["grounding_metadata"]
-    assert grounding["retrieval_unknown"] is False
-    assert grounding["citation_count"] >= 1
-    assert grounding["citation_titles"]
-    assert response.trace.output_guardrail_action == "allow"

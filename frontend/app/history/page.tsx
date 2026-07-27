@@ -89,10 +89,10 @@ export default function HistoryPage() {
           <Panel title="下一步">
             <div className="space-y-2 text-sm leading-6 text-slate-700">
               <Link
-                href="/practice"
+                href="/chat"
                 className="block rounded-md border border-line px-3 py-2 hover:border-brand"
               >
-                开始新的角色扮演
+                在统一对话中开始练习
               </Link>
               <Link
                 href="/progress"
@@ -176,10 +176,10 @@ export default function HistoryPage() {
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Link
-                        href={`/practice?session_id=${encodeURIComponent(session.session_id)}`}
+                        href="/chat"
                         className="rounded-md border border-line px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand hover:text-brand"
                       >
-                        查看会话
+                        查看统一对话
                       </Link>
                     </div>
                   </div>
@@ -233,7 +233,7 @@ export default function HistoryPage() {
                       </Link>
                       {plan.session_id && !isExposurePlan(plan) ? (
                         <Link
-                          href={`/practice?session_id=${encodeURIComponent(plan.session_id)}`}
+                          href="/chat"
                           className="rounded-md border border-line px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand hover:text-brand"
                         >
                           继续练习

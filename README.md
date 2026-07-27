@@ -25,7 +25,8 @@ flowchart LR
     CTX --> DB[(PostgreSQL / SQLite)]
     T --> DB
     MEM --> DB
-    A --> Redis[(Redis Task Sessions)]
+    CTX --> Redis[(Redis Encrypted Projection Cache)]
+    M --> Redis[(Redis Typed Module Overlays)]
 ```
 
 完整设计见 [架构图](docs/architecture_diagram.md) 和 [Agent Harness 设计](docs/agent_harness_design.md)。
@@ -40,7 +41,10 @@ flowchart LR
 - **全局 Guardrails**：输入侧优先识别危机表达；输出侧结合规则与可选 LLM 检查诊断、疗效承诺、依赖诱导、现实支持劝阻和虚构资源，并对可修复问题执行一次 Repair 与二次复检。
 - **Permission / Consent**：主动练习和状态变更可要求一次性同意凭证，绑定用户、会话、动作和请求摘要，并防止过期、篡改与重复消费。
 - **Calendar MCP**：Calendar Skill 只生成有限期提醒预览；创建、修改和删除通过 owner-bound Consent、幂等键与创建后回读控制。当前内置 Provider 是 Demo，真实厂商通过 `CalendarProvider` Adapter 扩展。
-- **History / Context / Memory 分离**：完整会话历史默认长期保留，直到用户主动删除；模型只读取带 Token Budget 的可重建上下文；长期 Agent Memory 仍需独立同意。Role-play、Worksheet 与 Support 的短期任务状态保存在 Redis。
+- **History / Context / Memory 分离**：完整会话历史默认长期保留，直到用户主动删除；所有
+  模式只读取同一套带 Token Budget 的可重建上下文；长期 Agent Memory 仍需独立同意。
+  Redis 缓存加密的 Context Projection、Module Overlay 和最小任务状态，不保存第二份
+  Role-play transcript。
 - **Grounded Retrieval**：本地 BM25 检索返回 Citation；未命中时返回 `unknown`，不编造学校、电话或联系人。
 - **Trace / Eval**：记录隐私安全的执行诊断；当前生成 311 条确定性 Eval Trace（含 45 条 Output Guardrail 用例）和可选 DeepEval LLM Judge。
 
@@ -53,7 +57,7 @@ backend/app/
   skills/        可执行 Skill 与 Registry
   safety/        输入分类、权限决策和危机升级
   guardrails/    全局 Output Guardrail、Repair 与复检
-  memory/        Context Builder、Redis Task State 与 Compact
+  memory/        Agent Memory、Redis Task State 与 Token Estimator
   knowledge/     BM25 RAG、Citation 与 Unknown 策略
   calendar/      Calendar Provider、MCP Server/Client 与 Tool Contract
   db/            Repository 接口及 SQLite/PostgreSQL Adapter

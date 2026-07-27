@@ -28,6 +28,11 @@
 Trace/Protocol 的定时 cleanup 删除。用于模型输入的 Working Context 是有 token 上限的
 可重建投影，不等于完整历史；对话历史也不会自动成为长期 Agent Memory。
 
+Redis 中的 Conversation Context Projection 和 Module Overlay 使用与 Conversation 正文
+相同的版本化内容保护器加密。Redis miss 或 TTL 到期不会删除历史，也不会改变模块持久
+状态。Role-play 不在 Redis 或 Domain Session 保存第二份消息正文。危机输入作为
+`crisis_input` 保留给用户查看，但不进入摘要、Overlay、长期 Memory 或后续模型窗口。
+
 cleanup job 会删除：
 
 - 超过 trace retention window 的 `runs` rows；

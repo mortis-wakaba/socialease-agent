@@ -282,8 +282,8 @@ export default function OnboardingPage() {
               </p>
               <div className="flex flex-wrap gap-2">
                 <LinkButton href="/chat">进入对话</LinkButton>
-                <LinkButton href="/practice">开始角色扮演</LinkButton>
-                <LinkButton href="/progress">创建练习计划</LinkButton>
+                <LinkButton href="/chat">在对话中选择练习</LinkButton>
+                <LinkButton href="/chat">在对话中选择练习计划</LinkButton>
               </div>
               <FormHint>
                 你可以在设置页修改或删除偏好和练习记录。

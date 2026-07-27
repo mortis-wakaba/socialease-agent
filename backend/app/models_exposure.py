@@ -94,6 +94,7 @@ class ExposureCompleteRequest(BaseModel):
     anxiety_before: int = Field(ge=1, le=10)
     anxiety_after: int = Field(ge=1, le=10)
     reflection: str = Field(default="")
+    permission_to_increase: bool = False
 
 
 class ExposureCompleteResponse(BaseModel):

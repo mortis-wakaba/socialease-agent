@@ -143,6 +143,7 @@ class ExposureService:
             status=request.status,
             anxiety_before=request.anxiety_before,
             anxiety_after=request.anxiety_after,
+            permission_to_increase=request.permission_to_increase,
         )
         if reason.startswith("Task not found"):
             raise ServiceNotFoundError("Exposure task not found")

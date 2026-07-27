@@ -41,8 +41,16 @@
 权衡：
 
 - dispatch 行为改变时，测试和 eval fixture 需要同步；
-- 前端 chat 需要处理 `roleplay_started`、`worksheet_created`、`consent_required` 等结构化 action；
+- 旧前端 chat 曾需要处理专业模块 action；统一会话迁移后只处理
+  `use_unified_conversation` 导航结果；
 - 高强度或写状态 action 必须先加入 permission 和 consent。
+
+## ADR 0008 后的现状
+
+上面的“专业页面和领域写 API 继续可用”仅记录当时的迁移决策，现已结束。当前产品消息
+只通过 Conversation Gateway 写入；公开领域写 API 已移除，旧专业页面重定向到
+`/chat`。deprecated `/api/chat` 中的 roleplay、worksheet、exposure 和 resource skills
+均只返回 `use_unified_conversation`，不创建 Domain Session 或执行脱离时间线的模块。
 
 ## 备选方案
 

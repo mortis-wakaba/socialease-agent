@@ -20,7 +20,7 @@ test-postgres-runtime:
 	cd backend && SOCIALEASE_TEST_DATABASE_URL="$(SOCIALEASE_TEST_DATABASE_URL)" pytest -q tests/test_postgres_*.py tests/test_heavier_load.py::test_fresh_postgres_database_can_upgrade_to_head_when_configured
 
 test-redis-context:
-	cd backend && SOCIALEASE_TEST_REDIS_URL=$${SOCIALEASE_TEST_REDIS_URL:-redis://localhost:6379/0} pytest -p no:rerunfailures -m redis_integration -s tests/test_roleplay_session_context.py tests/test_task_sessions.py
+	cd backend && SOCIALEASE_TEST_REDIS_URL=$${SOCIALEASE_TEST_REDIS_URL:-redis://localhost:6379/0} pytest -p no:rerunfailures -m redis_integration -s tests/test_conversation_context_cache.py tests/test_module_overlay_store.py tests/test_task_sessions.py
 
 eval:
 	cd backend && python -m app.evals.run

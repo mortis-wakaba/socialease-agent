@@ -9,7 +9,13 @@ import pytest
 
 from app.db.engine import connect
 from app.main import app
+from app.models_exposure import (
+    ExposureCompleteRequest,
+    ExposureFeedbackStatus,
+    ExposurePlanRequest,
+)
 from app.models_roleplay import RoleplayStartRequest
+from app.services.exposure_service import exposure_service
 from app.services.roleplay_service import roleplay_service
 
 
@@ -82,26 +88,24 @@ async def test_profile_updates_after_roleplay_and_exposure(
 ) -> None:
     user_id = f"profile_practice_user_{uuid4().hex}"
     await _seed_roleplay(user_id, 4)
-    plan_response = await client.post(
-        "/api/exposure/plan",
-        json={
-            "user_id": user_id,
-            "target_scenario": "课堂发言",
-            "current_anxiety_level": 7,
-            "previous_attempts": [],
-        },
+    plan_response = await exposure_service.create_plan(
+        ExposurePlanRequest(
+            user_id=user_id,
+            target_scenario="课堂发言",
+            current_anxiety_level=7,
+        )
     )
-    task_id = plan_response.json()["plan"]["tasks"][0]["task_id"]
-    await client.post(
-        "/api/exposure/complete",
-        json={
-            "user_id": user_id,
-            "task_id": task_id,
-            "status": "completed",
-            "anxiety_before": 7,
-            "anxiety_after": 5,
-            "reflection": "完成了一次 demo 练习。",
-        },
+    assert plan_response.plan is not None
+    task_id = plan_response.plan.tasks[0].task_id
+    await exposure_service.complete_task(
+        ExposureCompleteRequest(
+            user_id=user_id,
+            task_id=task_id,
+            status=ExposureFeedbackStatus.COMPLETED,
+            anxiety_before=7,
+            anxiety_after=5,
+            reflection="完成了一次 demo 练习。",
+        )
     )
 
     response = await client.get(f"/api/users/{user_id}/profile")

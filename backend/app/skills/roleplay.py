@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.models import Intent
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
+from app.skills.unified_conversation import unified_conversation_result
 
 
 class RoleplaySkill:
@@ -21,18 +22,4 @@ class RoleplaySkill:
     async def run(self, context: SkillContext) -> SkillResult:
         """Return a migration-safe result after legacy consent."""
         del context
-        return SkillResult(
-            response=(
-                "请在统一对话中继续；系统会先给出角色扮演选项，"
-                "只有你确认后才会在当前对话里开始练习。"
-            ),
-            structured_data={
-                "agent": "lead_harness",
-                "action": "use_unified_conversation",
-                "next_ui": "chat",
-                "consent_required": True,
-                "deprecated_entrypoint": True,
-                "blocked": False,
-            },
-            selected_agent="lead_harness",
-        )
+        return unified_conversation_result("角色扮演")

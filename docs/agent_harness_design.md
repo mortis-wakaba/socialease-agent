@@ -14,7 +14,8 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 - 在社交压力场景中保持非医疗化边界；
 - crisis 输入绕过普通 agent，进入 escalation flow；
 - 所有主动练习 action 都可被 permission gate 和 consent protocol 管住；
-- 长期记忆只注入低敏结构化上下文；需要多轮连续性的任务可读取带 TTL、受 Token Budget 约束的 Redis 短期状态；
+- 长期记忆只注入低敏结构化上下文；所有多轮模式共用从 Timeline 构建、带 Token Budget
+  的 Working Context，Redis 只缓存可重建投影；
 - trace、metrics、eval gate 让系统行为可解释、可回归。
 
 ## 当前架构快照
@@ -42,7 +43,8 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 - 完整 Conversation History、提供给模型的 Working Context 和长期 Agent Memory
   是三个不同生命周期的数据面；
 - Conversation 正文在 production 使用 AES-256-GCM；缺少内容密钥时持久化层拒绝启动；
-- Role-play、Worksheet Draft 和 Support Search 使用类型化 Redis Task State；production 默认要求 Redis，并由 `/ready` 检查三类状态后端；
+- 统一 Conversation Context、Module Overlay、Worksheet Draft 和 Resource Citation
+  指代使用加密或最小化的类型化 Redis 状态；production 默认要求 Redis；
 - Calendar Planning Skill 只生成受限提醒提案，外部写操作通过 owner-bound Consent、幂等键和 MCP Tool Contract 执行；
 - 所有 Skill 输出在写 Memory、记录 Trace 和返回 API 前统一经过 Output Guardrail，并支持一次 Repair 与二次复检。
 
@@ -290,10 +292,11 @@ Eval 是 harness contract 的一部分。Crisis 拦截、隐私最小化、conse
 最近焦虑等级、active exposure plan、推荐下一步任务和 context notes，不等同于
 Conversation History。
 
-Role-play 会从 Redis 读取带 TTL 的最近消息窗口和结构化 Compact State；Worksheet
-Draft 与 Support Search 也分别使用自己的类型化短期状态。三类状态都按用户与领域
-task/session 隔离，统一会话通过 Module Run 绑定对应领域 Session；这些状态不会被自动
-提升为长期用户画像。
+Role-play、Worksheet、Exposure 和 Resource 都从同一个 Conversation Working Context
+读取近期 Timeline、Compact Summary、模块栈和受策略筛选的 Memory。Role-play 不再有
+独立消息窗口。顶层模块读取完整强类型 Overlay，suspended 父模块只暴露 Resume
+Projection。Redis 状态按用户、Conversation 和 Module Run 隔离，miss 时从数据库事实
+重建；这些状态不会被自动提升为长期用户画像。
 
 运行时用法：
 
@@ -313,7 +316,9 @@ task/session 隔离，统一会话通过 Module Run 绑定对应领域 Session�
   account、session；
 - Conversation History：默认无自动过期；单条或全部删除会事务化清理事件、模块状态、
   Compact Summary、领域 Session 和对应的派生 Memory，并保留不含正文的幂等删除回执；
-- Redis：Role-play、Worksheet Draft 和 Support Search 的短期 Task State；production 默认必须配置，连接异常会反映到 readiness；
+- Redis：统一 Conversation Context Projection、Module Overlay、Worksheet Draft 和
+  Resource Citation 指代的 cache-aside 状态；production 默认必须配置，连接异常会反映
+  到 readiness，但缓存不能替代数据库事实；
 - Alembic：PostgreSQL schema migration；
 - cleanup scheduler：过期 protocol、取消 abandoned pending-consent plan、按 retention window 删除记录；PostgreSQL 下使用 advisory lock 防止多副本重复执行；
 - metrics backend：聚合非识别性运行指标。

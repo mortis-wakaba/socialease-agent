@@ -1,6 +1,6 @@
 # SocialEase Agent Benchmark Report
 
-> 2026-07-27 基线：backend pytest `552 passed, 43 skipped`；311 条确定性
+> 2026-07-27 统一上下文完成基线：backend pytest `507 passed, 44 skipped`；311 条确定性
 > Eval 全部通过；eval gate `passed`；PostgreSQL migration/runtime 与 Redis-backed
 > task state 由 CI 服务容器验证。
 
@@ -83,7 +83,7 @@ make check
 2026-07-27 本地与 CI 基线：
 
 ```text
-backend pytest: 552 passed, 43 skipped
+backend pytest: 507 passed, 44 skipped
 eval suite: all metrics passed
 eval gate: passed
 deterministic eval trace cases: 311 / 311 passed

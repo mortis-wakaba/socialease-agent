@@ -31,6 +31,17 @@ starting a permitted child suspends its parent; completing or explicitly
 terminating the child resumes the parent. Users can terminate the top frame or all
 frames. The maximum depth is three and parent-child combinations are allow-listed.
 
+All ordinary and module generation uses one `ConversationContextProvider` and one
+turn-aware token allocator. `conversation_events` is the sole transcript source.
+Module-specific state is represented by typed, rebuildable overlays. The active
+overlay is injected in full; suspended parents contribute only bounded resume
+projections. Role-play does not maintain an independent Redis transcript.
+
+Redis remains a required production dependency for performance and multi-instance
+task state, but it is cache-aside rather than authoritative. Context projections
+and overlays are encrypted and versioned. A miss or timeout rebuilds from the
+database; a database failure is never hidden by cached content.
+
 Crisis classification preempts general and module routing at every depth.
 Conversation history is retained after a versioned persistence notice until the
 user deletes it. Deleting a conversation must also remove its events, module
@@ -44,5 +55,6 @@ memory according to the documented deletion policy.
 - Full history is available to users, while prompt context remains token-bounded.
 - History persistence is not permission to create long-term memory.
 - Every repository operation must bind both user and conversation ownership.
-- Existing domain APIs remain during a migration window; new clients use the
-  conversation gateway.
+- Legacy domain write APIs are removed from the public router. Owner-scoped
+  read/detail endpoints may remain for history and progress views.
+- Legacy module pages redirect to `/chat`; `/progress` is a read-only view.

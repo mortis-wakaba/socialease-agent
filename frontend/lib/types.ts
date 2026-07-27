@@ -120,6 +120,7 @@ export type ConversationEventType =
   | "module_resumed"
   | "module_completed"
   | "module_terminated"
+  | "crisis_input"
   | "crisis_escalated";
 export type ModuleType = "roleplay" | "worksheet" | "exposure" | "resource";
 export type ModuleProposalStatus =
@@ -249,21 +250,6 @@ export type LegacyRoleplayImportResponse = {
   user_id: string;
   scanned_count: number;
   imported_count: number;
-};
-
-export type ChatWorkflowStage =
-  | "safety"
-  | "routing"
-  | "skill"
-  | "output_guardrail"
-  | "trace";
-
-export type ChatProgressEvent = {
-  type: "run_started" | "stage_completed";
-  run_id: string;
-  stage: ChatWorkflowStage | null;
-  stage_latency_ms: number | null;
-  elapsed_ms: number;
 };
 
 export type AuthUser = {
@@ -763,10 +749,7 @@ export type HarnessAction =
   | "consent_required"
   | "action_blocked"
   | "skill_failed"
-  | "roleplay_started"
-  | "worksheet_created"
-  | "exposure_plan_created"
-  | "support_resources_queried"
+  | "use_unified_conversation"
   | "clarification_requested"
   | "out_of_scope"
   | "crisis_escalation"

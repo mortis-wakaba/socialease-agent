@@ -467,15 +467,15 @@ async def test_protocol_response_returns_404_for_wrong_user(
 
 
 @pytest.mark.anyio
-async def test_chat_dispatches_specialized_skills(
+async def test_legacy_chat_redirects_module_intents_to_unified_conversation(
     client: httpx.AsyncClient,
 ) -> None:
     cases = [
-        ("我想做一个自动想法 worksheet，情境是小组讨论前很紧张", "cbt_worksheet", "worksheet_agent", "worksheet_created"),
-        ("学校心理中心和辅导员资源怎么找", "campus_resource_query", "support_resource_rag_agent", "support_resources_queried"),
+        ("我想做一个自动想法 worksheet，情境是小组讨论前很紧张", "cbt_worksheet"),
+        ("学校心理中心和辅导员资源怎么找", "campus_resource_query"),
     ]
 
-    for message, expected_intent, expected_agent, expected_action in cases:
+    for message, expected_intent in cases:
         response = await client.post(
             "/api/chat",
             json={"user_id": "demo_user", "message": message, "context": {}},
@@ -485,10 +485,11 @@ async def test_chat_dispatches_specialized_skills(
         payload = response.json()
         assert payload["risk_level"] == "low"
         assert payload["intent"] == expected_intent
-        assert payload["structured_data"]["agent"] == expected_agent
-        assert payload["structured_data"]["action"] == expected_action
-        assert payload["trace"]["selected_agent"] == expected_agent
-        assert payload["trace"]["action"] == expected_action
+        assert payload["structured_data"]["agent"] == "lead_harness"
+        assert payload["structured_data"]["action"] == "use_unified_conversation"
+        assert payload["structured_data"]["next_ui"] == "chat"
+        assert payload["structured_data"]["deprecated_entrypoint"] is True
+        assert payload["trace"]["selected_agent"] == "lead_harness"
 
 
 @pytest.mark.anyio
@@ -577,15 +578,12 @@ async def test_chat_medium_risk_exposure_requires_consent_and_downshifts_after_a
         },
     )
     followup_payload = followup_response.json()
-    assert followup_payload["structured_data"]["agent"] == "exposure_planner"
-    assert followup_payload["structured_data"]["action"] == "exposure_plan_created"
-    plan_id = followup_payload["structured_data"]["plan_id"]
-    assert followup_payload["structured_data"]["session_id"] == plan_id
-    assert followup_payload["structured_data"]["intervention_plan"]["session_id"] == plan_id
-    assert followup_payload["trace"]["session_id"] == plan_id
+    assert followup_payload["structured_data"]["agent"] == "lead_harness"
+    assert followup_payload["structured_data"]["action"] == "use_unified_conversation"
+    assert followup_payload["structured_data"]["next_ui"] == "chat"
+    assert followup_payload["structured_data"]["deprecated_entrypoint"] is True
     assert followup_payload["structured_data"]["permission_intensity_adjusted"] is True
     assert followup_payload["structured_data"]["permission_intensity_adjustment"] == -2
-    assert followup_payload["structured_data"]["preview_tasks"][0]["difficulty"] == 2
     assert followup_payload["trace"]["permission_action"] == "allow"
 
 
@@ -605,7 +603,7 @@ async def test_chat_privacy_guard_blocks_sensitive_memory_write(
     assert response.status_code == 200
     payload = response.json()
     assert payload["intent"] == "cbt_worksheet"
-    assert payload["structured_data"]["agent"] == "worksheet_agent"
+    assert payload["structured_data"]["agent"] == "lead_harness"
     assert payload["structured_data"]["privacy_guard_blocked"] is True
     assert payload["structured_data"]["privacy_guard_detected"] == ["email"]
     assert "intervention_plan_id" not in payload["structured_data"]

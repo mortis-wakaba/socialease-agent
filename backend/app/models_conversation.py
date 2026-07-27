@@ -175,6 +175,9 @@ class ExposureMessageEventPayload(StrictConversationModel):
     plan_id: str | None = None
     awaiting_anxiety_level: bool = False
     blocked: bool = False
+    attempt_status: Literal["completed", "skipped", "too_hard"] | None = None
+    next_task_id: str | None = None
+    permission_to_increase: bool = False
 
 
 class ResourceMessageEventPayload(StrictConversationModel):

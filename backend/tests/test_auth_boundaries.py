@@ -7,8 +7,12 @@ import pytest
 
 from app.auth.tokens import create_auth_token
 from app.main import app
+from app.models_exposure import ExposurePlanRequest
 from app.models_roleplay import RoleplayStartRequest
+from app.models_worksheet import WorksheetCreateRequest
+from app.services.exposure_service import exposure_service
 from app.services.roleplay_service import roleplay_service
+from app.services.worksheet_service import worksheet_service
 from app.safety.direct_actions import PROTOCOL_HEADER_NAME
 
 
@@ -108,16 +112,15 @@ async def test_worksheet_cannot_be_read_by_another_authenticated_user(
 ) -> None:
     owner_id = f"worksheet_owner_{uuid4().hex}"
     other_id = f"worksheet_other_{uuid4().hex}"
-    create_response = await client.post(
-        "/api/worksheet/create",
-        headers=demo_headers(owner_id),
-        json={
-            "user_id": "ignored_body_user",
-            "message": "情境：课堂发言。情绪：紧张。强度：6。下一步：先写一个开场句。",
-        },
+    create_response = await worksheet_service.create_worksheet(
+        WorksheetCreateRequest(
+            user_id=owner_id,
+            message="情境：课堂发言。情绪：紧张。强度：6。下一步：先写一个开场句。",
+        )
     )
-    worksheet = create_response.json()["worksheet"]
-    worksheet_id = worksheet["worksheet_id"]
+    assert create_response.worksheet is not None
+    worksheet = create_response.worksheet
+    worksheet_id = worksheet.worksheet_id
 
     owner_response = await client.get(
         f"/api/worksheet/{worksheet_id}",
@@ -128,7 +131,7 @@ async def test_worksheet_cannot_be_read_by_another_authenticated_user(
         headers=demo_headers(other_id),
     )
 
-    assert worksheet["user_id"] == owner_id
+    assert worksheet.user_id == owner_id
     assert owner_response.status_code == 200
     assert other_response.status_code == 404
 
@@ -168,28 +171,26 @@ async def test_exposure_plan_cannot_be_read_by_another_authenticated_user(
 ) -> None:
     owner_id = f"exposure_owner_{uuid4().hex}"
     other_id = f"exposure_other_{uuid4().hex}"
-    plan_response = await client.post(
-        "/api/exposure/plan",
-        headers=demo_headers(owner_id),
-        json={
-            "user_id": "ignored_body_user",
-            "target_scenario": "课堂发言",
-            "current_anxiety_level": 6,
-            "previous_attempts": [],
-        },
+    plan_response = await exposure_service.create_plan(
+        ExposurePlanRequest(
+            user_id=owner_id,
+            target_scenario="课堂发言",
+            current_anxiety_level=6,
+        )
     )
-    plan = plan_response.json()["plan"]
+    assert plan_response.plan is not None
+    plan = plan_response.plan
 
     owner_response = await client.get(
-        f"/api/exposure/{plan['plan_id']}",
+        f"/api/exposure/{plan.plan_id}",
         headers=demo_headers(owner_id),
     )
     other_response = await client.get(
-        f"/api/exposure/{plan['plan_id']}",
+        f"/api/exposure/{plan.plan_id}",
         headers=demo_headers(other_id),
     )
 
-    assert plan["user_id"] == owner_id
+    assert plan.user_id == owner_id
     assert owner_response.status_code == 200
     assert other_response.status_code == 404
 
@@ -363,7 +364,7 @@ async def test_production_direct_roleplay_requires_and_consumes_consent(
 
 
 @pytest.mark.anyio
-async def test_production_direct_exposure_plan_requires_consent(
+async def test_production_direct_exposure_plan_is_removed(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -382,10 +383,7 @@ async def test_production_direct_exposure_plan_requires_consent(
         },
     )
 
-    assert response.status_code == 409
-    detail = response.json()["detail"]
-    assert detail["consent_required"] is True
-    assert detail["harness_action"] == "create_exposure_plan"
+    assert response.status_code == 405
 
 
 @pytest.mark.anyio

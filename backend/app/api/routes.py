@@ -20,7 +20,6 @@ from app.api.memory_doctor import router as memory_doctor_router
 from app.api.profile import router as profile_router
 from app.api.protocols import router as protocols_router
 from app.api.roleplay import router as roleplay_router
-from app.api.support import router as support_router
 from app.api.worksheet import router as worksheet_router
 from app.auth.context import AuthContext
 from app.auth.dependencies import (
@@ -50,7 +49,6 @@ router.include_router(memory_doctor_router)
 router.include_router(profile_router)
 router.include_router(protocols_router)
 router.include_router(roleplay_router)
-router.include_router(support_router)
 router.include_router(worksheet_router)
 
 

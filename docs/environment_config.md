@@ -114,25 +114,24 @@ Provider 失败或关闭时，系统仍必须保持安全。
 | `LLM_MAX_CONCURRENCY` | pilot | 推荐的全局 LLM 并发上限变量 |
 | `SOCIALEASE_LLM_MAX_CONCURRENCY` | legacy | `LLM_MAX_CONCURRENCY` 的兼容别名 |
 | `SOCIALEASE_SLOW_REQUEST_MS` | pilot | structured log 和 slow-request metrics 阈值 |
-| `SOCIALEASE_REDIS_URL` | task sessions / multi-instance | Role-play、Worksheet 草稿和 Support Search Session 共用的 Redis URL |
+| `SOCIALEASE_REDIS_URL` | context cache / multi-instance | 统一 Conversation Context、Module Overlay、Worksheet Draft 和 Resource 引用状态共用的 Redis URL |
 | `SOCIALEASE_REQUIRE_REDIS` | production | production 默认 `true`；缺少 Redis URL 时拒绝启动，Redis 探针失败时 `/ready` 返回 503 |
 | `SOCIALEASE_DOCKER_REDIS_URL` | local compose | 可选的 backend 容器 Redis URL；默认 `redis://redis:6379/0`，避免把宿主机的 `localhost` 地址传入容器 |
-| `WORKSHEET_DRAFT_TTL_SECONDS` | worksheet | Worksheet 原始补充回答和草稿会话的滑动 TTL，默认 3600 秒 |
-| `SUPPORT_SEARCH_TTL_SECONDS` | support | Support 查询历史和 Citation 指代状态的滑动 TTL，默认 1800 秒 |
-| `ROLEPLAY_SESSION_CONTEXT_TTL_SECONDS` | role-play | 活跃 Role-play 原始短期 Context 的滑动 TTL |
-| `ROLEPLAY_PAUSED_CONTEXT_TTL_SECONDS` | role-play | 暂停 Role-play Context 的 TTL |
-| `ROLEPLAY_CONTEXT_MAX_INPUT_TOKENS` | role-play | 应用级 Role-play 输入 Token Budget |
-| `ROLEPLAY_RECENT_MIN_MESSAGES` | role-play | 预算允许时优先保留的最少最近消息数 |
-| `ROLEPLAY_RECENT_TARGET_MESSAGES` | role-play | Compact 后目标最近消息数 |
-| `ROLEPLAY_RECENT_MAX_MESSAGES` | role-play | Compact 前允许的最大最近消息数 |
-| `ROLEPLAY_COMPACT_TARGET_TOKENS` | role-play | 结构化 Compact State 的目标预算 |
-| `ROLEPLAY_COMPACT_TRIGGER_RATIO` | role-play | 输入预算利用率达到该比例时触发 Compact |
-| `ROLEPLAY_TOKENIZER_BACKEND` | role-play | `auto`、`heuristic` 或 `tiktoken`；不支持当前模型时保守降级 |
-| `ROLEPLAY_TOKENIZER_MODEL` | role-play | Tokenizer 使用的模型名；为空时复用 `LLM_MODEL` |
+| `SOCIALEASE_REDIS_SOCKET_TIMEOUT_SECONDS` | Redis | 所有 Redis projection/task state 共用的有界连接超时，默认 0.5 秒 |
+| `CONVERSATION_CONTEXT_CACHE_TTL_SECONDS` | conversation | 加密 Working Context Projection Cache TTL，默认 3600 秒 |
+| `MODULE_OVERLAY_CACHE_TTL_SECONDS` | modules | 加密 Module Overlay Cache TTL，默认 3600 秒 |
+| `WORKSHEET_DRAFT_TTL_SECONDS` | worksheet | Worksheet 当前字段引用和草稿状态 TTL，默认 3600 秒；不复制统一 Timeline 原文 |
+| `SUPPORT_SEARCH_TTL_SECONDS` | resource | Resource Citation ID 指代状态 TTL，默认 1800 秒；不缓存任意网页正文 |
 | `SOCIALEASE_RATE_LIMIT_BACKEND` | pilot | `local` 进程内限流；`gateway` 表示网关限流；`redis` 目前 fail fast |
 | `SOCIALEASE_LLM_CONCURRENCY_BACKEND` | future multi-instance | `local` 进程内 semaphore；`redis` 为未来共享 provider semaphore |
 
-Role-play 使用 Redis 保存带 TTL、受 Token Budget 约束的最近消息与 Compact State；Worksheet Draft 保存未完成字段和少量补充内容；Support Search 保存短期查询与 Citation 指代状态。长期数据库仍只保存经过持久化策略处理的结构化业务记录。production 模式默认要求 Redis：未配置 URL 时拒绝启动，三类状态后端任一探针失败时 `/ready` 返回 503；请求执行中的短暂故障仍由各服务按边界降级。当前限流仍是进程内实现，多实例试点时只有部署网关真正执行请求预算，才设置 `SOCIALEASE_RATE_LIMIT_BACKEND=gateway`；限流后端的 `redis` 值仍会 fail fast，因为共享 limiter adapter 尚未实现。
+Redis 保存加密、版本化的统一 Conversation Context Projection 和 Module Overlay，以及
+Worksheet 当前字段引用、Resource Citation ID 等允许过期的任务状态。Role-play 消息不再
+拥有独立 Redis window，正文只来自 Conversation Timeline。Redis miss/timeout 会从数据库
+重建，不能改变用户历史或冒充数据库事实。production 模式默认要求 Redis：未配置 URL 时
+拒绝启动，探针失败时 `/ready` 返回 503；请求正确性仍不以缓存命中为前提。当前限流仍是
+进程内实现，多实例试点时只有部署网关真正执行请求预算，才设置
+`SOCIALEASE_RATE_LIMIT_BACKEND=gateway`。
 
 ## Operational Alerts
 

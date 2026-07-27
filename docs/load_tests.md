@@ -51,7 +51,7 @@ SOCIALEASE_TEST_DATABASE_URL=postgresql+psycopg://socialease:socialease@127.0.0.
 
 ## 最近本地结果
 
-负载测试记录日期：2026-07-03（历史快照）
+负载测试记录日期：2026-07-27（统一上下文完成基线）
 
 命令：
 
@@ -69,6 +69,11 @@ pytest -m load
 | 50 concurrent chat runs | passed |
 | Memory export/delete with cleanup | passed |
 | Fresh PostgreSQL migration | 未设置 `SOCIALEASE_TEST_DATABASE_URL` 时跳过 |
+
+本地汇总：`4 passed, 3 skipped`；跳过项需要独立 PostgreSQL/Redis 服务。统一 Context
+Cache 的 hit、miss、并发 single-flight、Redis timeout 后 DB rebuild 分别由
+`test_conversation_context_cache.py` 验证；真实 Redis 与 PostgreSQL 延迟仍以 CI 服务
+容器或部署环境为准，不把内存 fake 的耗时当成生产 benchmark。
 
 2026-07-20 的完整外部状态集成基线为：PostgreSQL `29 passed`，Redis `2 passed`。这些数字是 Repository/Runtime 集成结果，不是正式吞吐量 benchmark。
 

@@ -1,6 +1,7 @@
 """Contracts for encrypted, rebuildable Redis conversation-context caches."""
 
 from datetime import UTC, datetime
+import asyncio
 import os
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from app.memory.task_state_store import (
     DisabledTaskStateStore,
     InMemoryTaskStateStore,
     RedisTaskStateStore,
+    TaskStateStoreUnavailable,
 )
 from app.models_conversation import (
     ConversationEventRole,
@@ -116,6 +118,63 @@ async def test_cache_failure_falls_back_to_authoritative_database(
 
     assert snapshot.conversation is not None
     assert snapshot.cache_status == "degraded"
+
+
+@pytest.mark.anyio
+async def test_concurrent_cache_misses_are_single_flight(
+    repository: SQLiteConversationRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation = repository.create(user_id="owner", title="Single flight")
+    calls = 0
+    original = repository.list_recent_events
+
+    def counting_recent_events(**kwargs):
+        nonlocal calls
+        calls += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(repository, "list_recent_events", counting_recent_events)
+    provider = CachedConversationContextProvider(
+        repository=repository,
+        store=InMemoryTaskStateStore(),
+        protector=LocalPlaintextContentProtector(),
+    )
+
+    first, second = await asyncio.gather(
+        provider.load(
+            conversation_id=conversation.conversation_id,
+            user_id="owner",
+            recent_limit=32,
+        ),
+        provider.load(
+            conversation_id=conversation.conversation_id,
+            user_id="owner",
+            recent_limit=32,
+        ),
+    )
+
+    assert {first.cache_status, second.cache_status} == {"miss", "hit"}
+    assert calls == 1
+
+
+@pytest.mark.anyio
+async def test_cache_outage_cannot_block_durable_deletion() -> None:
+    class UnavailableDeleteStore(InMemoryTaskStateStore):
+        async def delete(self, **kwargs: object) -> None:
+            raise TaskStateStoreUnavailable("test")
+
+        async def delete_user(self, **kwargs: object) -> int:
+            raise TaskStateStoreUnavailable("test")
+
+    provider = CachedConversationContextProvider(
+        repository=None,  # type: ignore[arg-type]
+        store=UnavailableDeleteStore(),
+        protector=LocalPlaintextContentProtector(),
+    )
+
+    await provider.invalidate(conversation_id="conversation-1", user_id="owner")
+    assert await provider.delete_user(user_id="owner") == 0
 
 
 @pytest.mark.anyio
