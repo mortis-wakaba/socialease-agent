@@ -182,14 +182,13 @@ class ConversationService:
         """Backfill owned legacy sessions as archived unified timelines."""
         if any(session.user_id != user_id for session in sessions):
             raise ValueError("legacy import owner scope does not match")
-        conversations, imported_count = (
+        _, imported_count = (
             self._legacy_importer.import_roleplay_sessions(sessions)
         )
         return LegacyRoleplayImportResponse(
             user_id=user_id,
             scanned_count=len(sessions),
             imported_count=imported_count,
-            conversations=conversations,
         )
 
     def list_events(

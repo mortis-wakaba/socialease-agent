@@ -554,11 +554,20 @@ class RoleplayService:
         opening_message = session.messages[0].content if session.messages else ""
         return RoleplayStartResponse(session=session, opening_message=opening_message)
 
-    def list_sessions(self, user_id: str, limit: int = 20) -> RoleplaySessionListResponse:
+    def list_sessions(
+        self,
+        user_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> RoleplaySessionListResponse:
         """Return recent role-play sessions for history views."""
         return RoleplaySessionListResponse(
             user_id=user_id,
-            sessions=self.store.list_for_user(user_id=user_id, limit=limit),
+            sessions=self.store.list_for_user(
+                user_id=user_id,
+                limit=limit,
+                offset=offset,
+            ),
         )
 
     async def delete_user_context(self, user_id: str) -> int:

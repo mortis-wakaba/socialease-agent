@@ -249,7 +249,6 @@ export type LegacyRoleplayImportResponse = {
   user_id: string;
   scanned_count: number;
   imported_count: number;
-  conversations: Conversation[];
 };
 
 export type ChatWorkflowStage =

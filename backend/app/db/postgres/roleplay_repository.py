@@ -58,7 +58,12 @@ class PostgresRoleplaySessionRepository:
             ).mappings().first()
         return RoleplaySession.model_validate(row["payload"]) if row else None
 
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]:
+    def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RoleplaySession]:
         """Return recent role-play sessions for one user."""
         with self.engine.connect() as connection:
             rows = connection.execute(
@@ -66,8 +71,8 @@ class PostgresRoleplaySessionRepository:
                     """SELECT payload FROM roleplay_sessions
                     WHERE user_id = :user_id
                     ORDER BY updated_at DESC
-                    LIMIT :limit"""
+                    LIMIT :limit OFFSET :offset"""
                 ),
-                {"user_id": user_id, "limit": limit},
+                {"user_id": user_id, "limit": limit, "offset": offset},
             ).mappings().all()
         return [RoleplaySession.model_validate(row["payload"]) for row in rows]

@@ -98,19 +98,34 @@ async def list_conversations(
 )
 async def import_legacy_roleplay(
     user_id: str | None = None,
-    limit: int = Query(default=100, ge=1, le=500),
     current_user: AuthContext = Depends(get_current_user),
 ) -> LegacyRoleplayImportResponse:
     """Idempotently expose legacy role-play sessions as archived timelines."""
     effective_user_id = resolve_optional_user_id(user_id, current_user)
-    legacy = roleplay_service.list_sessions(
-        user_id=effective_user_id,
-        limit=limit,
-    )
+    batch_size = 200
+    offset = 0
+    scanned_count = 0
+    imported_count = 0
     try:
-        return conversation_service().import_legacy_roleplay_sessions(
+        while True:
+            legacy = roleplay_service.list_sessions(
+                user_id=effective_user_id,
+                limit=batch_size,
+                offset=offset,
+            )
+            result = conversation_service().import_legacy_roleplay_sessions(
+                user_id=effective_user_id,
+                sessions=legacy.sessions,
+            )
+            scanned_count += result.scanned_count
+            imported_count += result.imported_count
+            if len(legacy.sessions) < batch_size:
+                break
+            offset += batch_size
+        return LegacyRoleplayImportResponse(
             user_id=effective_user_id,
-            sessions=legacy.sessions,
+            scanned_count=scanned_count,
+            imported_count=imported_count,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -7,6 +7,7 @@ import pytest
 
 from app.conversation.legacy_importer import LegacyConversationImporter
 from app.conversation.repository import SQLiteConversationRepository
+from app.db.repositories import SQLiteRoleplaySessionRepository
 from app.models_conversation import (
     ConversationEventRole,
     ConversationEventType,
@@ -73,6 +74,34 @@ def test_roleplay_import_is_atomic_idempotent_and_read_only(
             content="不能继续写入旧记录",
             idempotency_key="legacy-readonly-check",
         )
+
+
+def test_legacy_roleplay_source_supports_complete_batched_scans(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "legacy-pages.db"))
+    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
+    repository = SQLiteRoleplaySessionRepository()
+    base = _roleplay_session()
+    for index in range(3):
+        repository.save(
+            base.model_copy(
+                update={
+                    "session_id": f"legacy-session-{index}",
+                    "updated_at": base.updated_at + timedelta(minutes=index),
+                }
+            )
+        )
+
+    first = repository.list_for_user("owner", limit=2)
+    second = repository.list_for_user("owner", limit=2, offset=2)
+
+    assert [session.session_id for session in first] == [
+        "legacy-session-2",
+        "legacy-session-1",
+    ]
+    assert [session.session_id for session in second] == ["legacy-session-0"]
 
 
 def _roleplay_session() -> RoleplaySession:

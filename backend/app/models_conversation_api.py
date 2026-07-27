@@ -126,4 +126,3 @@ class LegacyRoleplayImportResponse(StrictConversationModel):
     user_id: str = Field(min_length=1)
     scanned_count: int = Field(ge=0)
     imported_count: int = Field(ge=0)
-    conversations: list[Conversation] = Field(default_factory=list)

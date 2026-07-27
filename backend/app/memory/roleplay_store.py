@@ -57,9 +57,18 @@ class RoleplaySessionStore:
         """Return a session only if it belongs to the user."""
         return self.repository.get_for_user(session_id, user_id)
 
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]:
+    def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RoleplaySession]:
         """Return recent sessions for one user."""
-        return self.repository.list_for_user(user_id=user_id, limit=limit)
+        return self.repository.list_for_user(
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+        )
 
     def append_message(
         self,

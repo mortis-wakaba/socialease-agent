@@ -34,7 +34,12 @@ class RoleplaySessionRepository(Protocol):
 
     def save(self, session: RoleplaySession) -> RoleplaySession: ...
     def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None: ...
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]: ...
+    def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RoleplaySession]: ...
 
 
 class WorksheetRepository(Protocol):
@@ -118,15 +123,20 @@ class SQLiteRoleplaySessionRepository:
             ).fetchone()
         return RoleplaySession.model_validate_json(row["payload"]) if row else None
 
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]:
+    def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RoleplaySession]:
         """Return recent role-play sessions for one user."""
         with connect() as connection:
             rows = connection.execute(
                 """SELECT payload FROM roleplay_sessions
                 WHERE user_id = ?
                 ORDER BY updated_at DESC
-                LIMIT ?""",
-                (user_id, limit),
+                LIMIT ? OFFSET ?""",
+                (user_id, limit, offset),
             ).fetchall()
         return [RoleplaySession.model_validate_json(row["payload"]) for row in rows]
 
@@ -281,9 +291,15 @@ class InMemoryRoleplaySessionRepository:
     def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
         session = self.sessions.get(session_id)
         return session if session and session.user_id == user_id else None
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[RoleplaySession]:
+    def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RoleplaySession]:
         sessions = [session for session in self.sessions.values() if session.user_id == user_id]
-        return sorted(sessions, key=lambda session: session.updated_at, reverse=True)[:limit]
+        ordered = sorted(sessions, key=lambda session: session.updated_at, reverse=True)
+        return ordered[offset : offset + limit]
 
 
 class InMemoryWorksheetRepository:
