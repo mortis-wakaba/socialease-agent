@@ -120,6 +120,10 @@ async def get_conversation(
                 conversation_id=conversation_id,
                 user_id=effective_user_id,
             ),
+            pending_module_proposals=service.list_pending_proposals(
+                conversation_id=conversation_id,
+                user_id=effective_user_id,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

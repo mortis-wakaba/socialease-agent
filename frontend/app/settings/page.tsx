@@ -402,8 +402,13 @@ export default function SettingsPage() {
               <div className="space-y-3 text-sm leading-6 text-slate-700">
                 <div className="flex flex-wrap gap-2">
                   <Badge tone="info">{userId ?? "未登录"}</Badge>
+                  <Badge tone={profile.consent_state.store_conversation_history ? "good" : "warn"}>
+                    {profile.consent_state.store_conversation_history
+                      ? "对话历史长期保存"
+                      : "对话历史未保存"}
+                  </Badge>
                   <Badge tone={profile.consent_state.do_not_store_raw_messages ? "good" : "warn"}>
-                    原始文本最小化
+                    Agent Memory 原始文本最小化
                   </Badge>
                   <Badge tone={profile.consent_state.consent_to_save_preferences ? "good" : "neutral"}>
                     偏好保存同意

@@ -9,12 +9,8 @@ const baseNavItems = [
   { href: "/", label: "首页" },
   { href: "/onboarding", label: "开始" },
   { href: "/chat", label: "对话" },
-  { href: "/practice", label: "练习" },
-  { href: "/worksheet", label: "反思" },
   { href: "/progress", label: "进度" },
-  { href: "/history", label: "历史" },
   { href: "/memory", label: "记忆" },
-  { href: "/support", label: "资源" },
   { href: "/settings", label: "设置" },
   { href: "/privacy", label: "隐私" },
   { href: "/terms", label: "知情说明" }

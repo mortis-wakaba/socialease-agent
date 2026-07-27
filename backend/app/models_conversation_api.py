@@ -66,6 +66,7 @@ class ConversationDetailResponse(StrictConversationModel):
     conversation: Conversation
     events: ConversationEventPage
     active_module_stack: list[ModuleRun] = Field(default_factory=list)
+    pending_module_proposals: list[ModuleProposal] = Field(default_factory=list)
 
 
 class ModuleControlResponse(StrictConversationModel):

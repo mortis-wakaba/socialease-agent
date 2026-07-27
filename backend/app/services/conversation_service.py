@@ -197,6 +197,24 @@ class ConversationService:
             user_id=user_id,
         )
 
+    def list_pending_proposals(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleProposal]:
+        """Return pending proposals for timeline restoration."""
+        now = datetime.now(UTC)
+        return [
+            proposal
+            for proposal in self._repository.list_proposals(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            if proposal.status == ModuleProposalStatus.PENDING
+            and proposal.expires_at > now
+        ]
+
     def update_conversation(
         self,
         *,

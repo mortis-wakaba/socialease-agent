@@ -5,6 +5,13 @@ import type {
   AuthResponse,
   ChatProgressEvent,
   ChatResponse,
+  Conversation,
+  ConversationDetailResponse,
+  ConversationExportResponse,
+  ConversationMessageResponse,
+  ConversationPage,
+  ConversationStatus,
+  ModuleControlResponse,
   ConsentRequiredDetail,
   ExposureCompleteResponse,
   ExposurePlanResponse,
@@ -353,6 +360,163 @@ export const api = {
     handlers: ChatStreamHandlers = {}
   ) {
     return requestChatStream(userId, message, context, handlers);
+  },
+
+  createConversation(userId: string, title = "新对话") {
+    return request<Conversation>("/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        user_id: userId,
+        title,
+        history_notice_version: "2026-07-01",
+        history_notice_acknowledged: true
+      })
+    });
+  },
+
+  listConversations(userId: string, limit = 100) {
+    const params = new URLSearchParams({
+      user_id: userId,
+      limit: String(limit)
+    });
+    return request<ConversationPage>(
+      `/api/conversations?${params.toString()}`
+    );
+  },
+
+  getConversation(
+    conversationId: string,
+    userId: string,
+    cursor?: string | null
+  ) {
+    const params = new URLSearchParams({
+      user_id: userId,
+      limit: "200"
+    });
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    return request<ConversationDetailResponse>(
+      `/api/conversations/${encodeURIComponent(conversationId)}?${params.toString()}`
+    );
+  },
+
+  sendConversationMessage(
+    conversationId: string,
+    userId: string,
+    message: string,
+    idempotencyKey: string
+  ) {
+    return request<ConversationMessageResponse>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: userId,
+          message,
+          idempotency_key: idempotencyKey
+        })
+      }
+    );
+  },
+
+  acceptModuleProposal(
+    conversationId: string,
+    proposalId: string,
+    userId: string,
+    requestHash: string
+  ) {
+    return request<ModuleControlResponse>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/module-proposals/${encodeURIComponent(proposalId)}/accept`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: userId,
+          request_hash: requestHash
+        })
+      }
+    );
+  },
+
+  rejectModuleProposal(
+    conversationId: string,
+    proposalId: string,
+    userId: string,
+    requestHash: string
+  ) {
+    return request(
+      `/api/conversations/${encodeURIComponent(conversationId)}/module-proposals/${encodeURIComponent(proposalId)}/reject`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: userId,
+          request_hash: requestHash
+        })
+      }
+    );
+  },
+
+  terminateModule(
+    conversationId: string,
+    moduleRunId: string,
+    userId: string
+  ) {
+    return request<ModuleControlResponse>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/modules/${encodeURIComponent(moduleRunId)}/terminate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId })
+      }
+    );
+  },
+
+  terminateAllModules(conversationId: string, userId: string) {
+    return request<ModuleControlResponse>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/modules/terminate-all`,
+      {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId })
+      }
+    );
+  },
+
+  updateConversation(
+    conversationId: string,
+    userId: string,
+    expectedVersion: number,
+    update: { title?: string; status?: ConversationStatus }
+  ) {
+    return request<Conversation>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          user_id: userId,
+          expected_version: expectedVersion,
+          ...update
+        })
+      }
+    );
+  },
+
+  exportConversation(conversationId: string, userId: string) {
+    const params = new URLSearchParams({ user_id: userId });
+    return request<ConversationExportResponse>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/export?${params.toString()}`
+    );
+  },
+
+  deleteConversation(conversationId: string, userId: string) {
+    return request(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({
+          user_id: userId,
+          confirm_delete: true
+        })
+      }
+    );
   },
 
   respondToProtocol(protocolId: string, userId: string, approved: boolean) {

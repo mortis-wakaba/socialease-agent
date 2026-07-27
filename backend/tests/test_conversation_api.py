@@ -77,6 +77,10 @@ async def test_conversation_api_keeps_proposal_in_one_timeline(
     )
     assert detail.status_code == 200
     assert len(detail.json()["events"]["items"]) == 2
+    assert [
+        item["proposal_id"]
+        for item in detail.json()["pending_module_proposals"]
+    ] == [payload["pending_module_proposal"]["proposal_id"]]
 
     proposal = payload["pending_module_proposal"]
     rejected = await client.post(

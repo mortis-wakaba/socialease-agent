@@ -123,60 +123,179 @@ test("onboarding completes without saving long-term preferences", async ({ page 
   await expect(page.getByText("长期练习偏好没有保存")).toBeVisible();
 });
 
-test("chat uses backend onboarding state instead of stale local cache", async ({
+test("unified chat keeps confirmed nested modules in one durable timeline", async ({
   page
 }) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem(
-      "socialease.onboarding",
-      JSON.stringify({
-        completed: true,
-        primaryGoal: "clearer_classroom_expression",
-        preferredScenario: "classroom_speech",
-        anxietyLevel: 5,
-        savePreferences: false,
-        boundaryAcknowledged: true,
-        completedAt: "2026-07-03T00:00:00Z"
-      })
-    );
-  });
-  await page.route(`${API}/users/demo_user/onboarding`, async (route) => {
-    await route.fulfill({
-      json: {
-        user_id: "demo_user",
-        onboarding_profile: emptyOnboardingProfile()
-      }
-    });
+  const now = "2026-07-27T08:00:00Z";
+  const conversation = {
+    conversation_id: "conversation_1",
+    user_id: "demo_user",
+    title: "新对话",
+    status: "active",
+    active_module_depth: 0,
+    version: 1,
+    created_at: now,
+    updated_at: now,
+    history_notice_version: "2026-07-01"
+  };
+  const events: Array<Record<string, unknown>> = [];
+  let moduleStack: Array<Record<string, unknown>> = [];
+  let created = false;
+  let messageCount = 0;
+
+  await page.route("**/api/conversations**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    if (path === "/api/conversations" && request.method() === "GET") {
+      await route.fulfill({
+        json: { items: created ? [conversation] : [], next_cursor: null }
+      });
+      return;
+    }
+    if (path === "/api/conversations" && request.method() === "POST") {
+      const payload = request.postDataJSON();
+      expect(payload.history_notice_acknowledged).toBe(true);
+      created = true;
+      await route.fulfill({ json: conversation });
+      return;
+    }
+    if (path.endsWith("/messages")) {
+      messageCount += 1;
+      const moduleType = messageCount === 1 ? "roleplay" : "exposure";
+      const proposalId = `proposal_${messageCount}`;
+      const startSequence = events.length + 1;
+      const appended = [
+        conversationEvent(
+          `event_${startSequence}`,
+          startSequence,
+          "user_message",
+          "user",
+          request.postDataJSON().message
+        ),
+        conversationEvent(
+          `event_${startSequence + 1}`,
+          startSequence + 1,
+          "module_proposed",
+          "assistant",
+          moduleType === "roleplay"
+            ? "我可以提供角色扮演选项，由你决定是否进入。"
+            : "我可以在当前角色扮演中加入低强度分级练习。",
+          { proposal_id: proposalId }
+        )
+      ];
+      events.push(...appended);
+      await route.fulfill({
+        json: {
+          conversation,
+          appended_events: appended,
+          active_module_stack: moduleStack,
+          pending_module_proposal: moduleProposal(proposalId, moduleType, now),
+          response: appended[1].content,
+          safety_result: safety("low"),
+          context_diagnostics: conversationDiagnostics()
+        }
+      });
+      return;
+    }
+    if (path.endsWith("/accept")) {
+      const moduleType = path.includes("proposal_1") ? "roleplay" : "exposure";
+      const depth = moduleStack.length + 1;
+      const run = moduleRun(
+        `module_${depth}`,
+        moduleType,
+        depth,
+        depth === 1 ? null : "module_1",
+        now
+      );
+      moduleStack = [
+        ...moduleStack.map((item) => ({ ...item, status: "suspended" })),
+        run
+      ];
+      const event = conversationEvent(
+        `event_${events.length + 1}`,
+        events.length + 1,
+        "module_started",
+        "system",
+        `已进入${moduleType === "roleplay" ? "角色扮演" : "分级练习"}。`
+      );
+      events.push(event);
+      await route.fulfill({
+        json: {
+          conversation: { ...conversation, active_module_depth: depth },
+          active_module_stack: moduleStack,
+          appended_events: [event],
+          response: event.content
+        }
+      });
+      return;
+    }
+    if (path.endsWith("/terminate")) {
+      moduleStack = moduleStack.slice(0, -1).map((item) => ({
+        ...item,
+        status: "active"
+      }));
+      const event = conversationEvent(
+        `event_${events.length + 1}`,
+        events.length + 1,
+        "module_terminated",
+        "system",
+        "已结束当前模块并返回上一层。"
+      );
+      events.push(event);
+      await route.fulfill({
+        json: {
+          conversation: {
+            ...conversation,
+            active_module_depth: moduleStack.length
+          },
+          active_module_stack: moduleStack,
+          appended_events: [event],
+          response: event.content
+        }
+      });
+      return;
+    }
+    if (path === "/api/conversations/conversation_1") {
+      await route.fulfill({
+        json: {
+          conversation: {
+            ...conversation,
+            active_module_depth: moduleStack.length
+          },
+          events: { items: events, next_cursor: null },
+          active_module_stack: moduleStack,
+          pending_module_proposals: []
+        }
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { detail: "unmocked route" } });
   });
 
   await page.goto("/chat");
+  await page.getByRole("button", { name: "新建对话" }).click();
+  await page.getByLabel("我已了解上述保存、导出和删除方式。").check();
+  await page.getByRole("button", { name: "了解并新建" }).click();
 
-  await expect(page.getByText("建议先完成开始前设置")).toBeVisible();
-  await expect(page.getByRole("link", { name: "去设置" })).toBeVisible();
-});
-
-test("chat shows safe workflow progress and blocks duplicate submission", async ({
-  page
-}) => {
-  await page.route(`${API}/chat/stream`, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    await fulfillChatStream(route, {
-      run_id: "run_progress_1",
-      risk_level: "low",
-      intent: "emotional_support",
-      response: "我们可以先把现在最紧张的一点说清楚。",
-      structured_data: { action: "general_support" },
-      trace: trace("run_progress_1", "low", "emotional_support")
-    });
-  });
-
-  await page.goto("/chat");
+  await page.locator("textarea").fill("我想练习和同学打招呼");
   await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByText("是否进入角色扮演？")).toBeVisible();
+  await page.getByRole("button", { name: "确认进入" }).click();
+  await expect(page.getByRole("button", { name: "结束当前模块" })).toBeVisible();
 
-  await expect(page.getByText("最终回复会在输出安全检查完成后展示")).toBeVisible();
-  await expect(page.getByPlaceholder("输入一个社交压力场景...")).toBeDisabled();
-  await expect(page.getByRole("button", { name: "发送中..." })).toBeDisabled();
-  await expect(page.getByText("我们可以先把现在最紧张的一点说清楚")).toBeVisible();
+  await page.locator("textarea").fill("能否先做一个更低强度的分级练习");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByText("是否进入分级练习？")).toBeVisible();
+  await page.getByRole("button", { name: "确认进入" }).click();
+  await expect(page.getByText("角色扮演", { exact: true })).toBeVisible();
+  await expect(page.getByText("分级练习", { exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText("我想练习和同学打招呼")).toBeVisible();
+  await expect(page.getByText("分级练习", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "结束当前模块" }).click();
+  await expect(page.getByText("已结束当前模块并返回上一层。")).toBeVisible();
 });
 
 test("settings resets onboarding through backend", async ({ page }) => {
@@ -557,48 +676,6 @@ test("direct exposure plan pause persists intervention status", async ({ page })
   await expect(page.getByText("已暂停").first()).toBeVisible();
 });
 
-test("pause failure does not show saved paused state", async ({ page }) => {
-  await page.route(`${API}/users/demo_user/onboarding`, async (route) => {
-    await route.fulfill({
-      json: {
-        user_id: "demo_user",
-        onboarding_profile: {
-          ...emptyOnboardingProfile(),
-          boundary_acknowledged: true
-        }
-      }
-    });
-  });
-  await page.route(`${API}/chat/stream`, async (route) => {
-    await fulfillChatStream(
-      route,
-      {
-        run_id: "run_pause_1",
-        risk_level: "low",
-        intent: "roleplay_practice",
-        response: "可以先从一句短开场开始。",
-        structured_data: {},
-        trace: {
-          ...trace("run_pause_1", "low", "roleplay_practice"),
-          intervention_plan_id: "intervention_pause_1"
-        }
-      }
-    );
-  });
-  await page.route(`${API}/intervention-plans/intervention_pause_1/pause?user_id=demo_user`, async (route) => {
-    await route.fulfill({ status: 503, json: { detail: "pause backend unavailable" } });
-  });
-
-  await page.goto("/chat");
-  await page.getByRole("button", { name: "发送" }).click();
-  await page.getByRole("button", { name: "暂停练习" }).click();
-
-  await expect(page.getByText("pause backend unavailable")).toBeVisible();
-  await expect(page.getByText("已保存暂停状态。")).toHaveCount(0);
-  await expect(page.getByText("已暂停", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("可随时暂停")).toBeVisible();
-});
-
 test("progress pauses restored intervention plan through backend", async ({ page }) => {
   let pauseCalled = false;
   await page.route(`${API}/intervention-plans/intervention_1?user_id=demo_user`, async (route) => {
@@ -679,6 +756,7 @@ test("practice summary personalization consent can be revoked", async ({ page })
         json: {
           user_id: "demo_user",
           consent_state: {
+            store_conversation_history: true,
             consent_to_practice_summary: false,
             consent_to_save_preferences: false,
             do_not_store_raw_messages: true,
@@ -773,6 +851,7 @@ test("memory center separates agent memory and supports archive control", async 
         user_id: "demo_user",
         stable_memory: {
           consent_state: {
+            store_conversation_history: true,
             consent_to_practice_summary: true,
             consent_to_save_preferences: false,
             do_not_store_raw_messages: true,
@@ -848,27 +927,63 @@ test("cross-user denied surfaces as a retryable error", async ({ page }) => {
 });
 
 test("crisis chat flow shows safety-first response", async ({ page }) => {
-  await page.route(`${API}/chat/stream`, async (route) => {
-    await fulfillChatStream(
-      route,
-      {
-        run_id: "run_crisis_1",
-        risk_level: "crisis",
-        intent: "crisis",
-        response:
-          "我很担心你的安全。请现在联系可信任的人、学校心理中心或当地紧急服务。",
-        structured_data: {},
-        trace: trace("run_crisis_1", "crisis", "crisis")
-      }
+  const now = "2026-07-27T08:00:00Z";
+  const conversation = unifiedConversation(now);
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "socialease:history-notice:2026-07-01",
+      "acknowledged"
     );
+  });
+  await page.route("**/api/conversations**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/conversations" && request.method() === "GET") {
+      await route.fulfill({ json: { items: [conversation], next_cursor: null } });
+      return;
+    }
+    if (path === "/api/conversations/conversation_1") {
+      await route.fulfill({
+        json: {
+          conversation,
+          events: { items: [], next_cursor: null },
+          active_module_stack: [],
+          pending_module_proposals: []
+        }
+      });
+      return;
+    }
+    if (path.endsWith("/messages")) {
+      const appended = [
+        conversationEvent("crisis_user", 1, "user_message", "user", "我不想活了"),
+        conversationEvent(
+          "crisis_response",
+          2,
+          "crisis_escalated",
+          "assistant",
+          "我很担心你的安全。请现在联系可信任的人、学校心理中心或当地紧急服务。"
+        )
+      ];
+      await route.fulfill({
+        json: {
+          conversation,
+          appended_events: appended,
+          active_module_stack: [],
+          pending_module_proposal: null,
+          response: appended[1].content,
+          safety_result: safety("crisis"),
+          context_diagnostics: conversationDiagnostics()
+        }
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { detail: "unmocked route" } });
   });
 
   await page.goto("/chat");
-  await page.getByPlaceholder("输入一个社交压力场景...").fill("我不想活了");
+  await page.locator("textarea").fill("我不想活了");
   await page.getByRole("button", { name: "发送" }).click();
 
-  await expect(page.getByRole("heading", { name: "练习状态" })).toBeVisible();
-  await expect(page.getByText("已暂停普通练习")).toBeVisible();
   await expect(page.getByText("风险: crisis")).toHaveCount(0);
   await expect(page.getByText("请现在联系可信任的人")).toBeVisible();
 });
@@ -960,6 +1075,102 @@ test("default product pages hide developer diagnostics", async ({ page }) => {
   await expect(page.getByText("LLM", { exact: false })).toHaveCount(0);
 });
 
+function unifiedConversation(now: string) {
+  return {
+    conversation_id: "conversation_1",
+    user_id: "demo_user",
+    title: "新对话",
+    status: "active",
+    active_module_depth: 0,
+    version: 1,
+    created_at: now,
+    updated_at: now,
+    history_notice_version: "2026-07-01"
+  };
+}
+
+function conversationEvent(
+  eventId: string,
+  sequenceNo: number,
+  eventType: string,
+  role: string,
+  content: unknown,
+  structuredPayload: Record<string, unknown> | null = null
+) {
+  return {
+    event_id: eventId,
+    conversation_id: "conversation_1",
+    user_id: "demo_user",
+    sequence_no: sequenceNo,
+    event_type: eventType,
+    role,
+    content,
+    structured_payload: structuredPayload,
+    module_run_id: null,
+    parent_module_run_id: null,
+    idempotency_key: `idempotency-${eventId}`,
+    created_at: "2026-07-27T08:00:00Z"
+  };
+}
+
+function moduleProposal(
+  proposalId: string,
+  moduleType: string,
+  now: string
+) {
+  return {
+    proposal_id: proposalId,
+    conversation_id: "conversation_1",
+    user_id: "demo_user",
+    proposed_module: moduleType,
+    reason_code: "user_requested",
+    bounded_parameters: {},
+    status: "pending",
+    request_hash: "a".repeat(64),
+    expires_at: "2026-07-27T09:00:00Z",
+    created_at: now
+  };
+}
+
+function moduleRun(
+  moduleRunId: string,
+  moduleType: string,
+  depth: number,
+  parentModuleRunId: string | null,
+  now: string
+) {
+  return {
+    module_run_id: moduleRunId,
+    conversation_id: "conversation_1",
+    user_id: "demo_user",
+    module_type: moduleType,
+    parent_module_run_id: parentModuleRunId,
+    depth,
+    status: "active",
+    module_parameters: {},
+    domain_session_id: null,
+    started_at: now,
+    ended_at: null,
+    version: 1
+  };
+}
+
+function conversationDiagnostics() {
+  return {
+    conversation_id_hash: "hashed-conversation",
+    recent_event_count: 0,
+    recent_event_sequence_start: null,
+    recent_event_sequence_end: null,
+    compact_summary_version: null,
+    active_module_count: 0,
+    selected_memory_count: 0,
+    estimated_tokens: 0,
+    total_token_budget: 4096,
+    dropped_sections: [],
+    tokenizer_backend: "mock"
+  };
+}
+
 async function mockProfile(page: Page) {
   await page.route(`${API}/users/demo_user/profile`, async (route) => {
     await route.fulfill({ json: userProfile() });
@@ -1033,6 +1244,7 @@ function userProfile() {
       preferred_difficulty: null
     },
     consent_state: {
+      store_conversation_history: true,
       consent_to_practice_summary: true,
       consent_to_save_preferences: false,
       do_not_store_raw_messages: true,

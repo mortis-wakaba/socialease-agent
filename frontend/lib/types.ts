@@ -109,6 +109,142 @@ export type ChatResponse = {
   trace: TraceRecord;
 };
 
+export type ConversationStatus = "active" | "archived" | "deleted";
+export type ConversationEventType =
+  | "user_message"
+  | "assistant_message"
+  | "module_proposed"
+  | "module_started"
+  | "module_message"
+  | "module_suspended"
+  | "module_resumed"
+  | "module_completed"
+  | "module_terminated"
+  | "crisis_escalated";
+export type ModuleType = "roleplay" | "worksheet" | "exposure" | "resource";
+export type ModuleProposalStatus =
+  | "pending"
+  | "accepted"
+  | "rejected"
+  | "expired";
+export type ModuleRunStatus =
+  | "active"
+  | "suspended"
+  | "completed"
+  | "terminated";
+
+export type Conversation = {
+  conversation_id: string;
+  user_id: string;
+  title: string;
+  status: ConversationStatus;
+  active_module_depth: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  history_notice_version: string;
+};
+
+export type ConversationEvent = {
+  event_id: string;
+  conversation_id: string;
+  user_id: string;
+  sequence_no: number;
+  event_type: ConversationEventType;
+  role: "user" | "assistant" | "system";
+  content: string;
+  structured_payload?: Record<string, unknown> | null;
+  module_run_id?: string | null;
+  parent_module_run_id?: string | null;
+  idempotency_key: string;
+  created_at: string;
+};
+
+export type ModuleProposal = {
+  proposal_id: string;
+  conversation_id: string;
+  user_id: string;
+  proposed_module: ModuleType;
+  reason_code: string;
+  bounded_parameters: Record<string, unknown>;
+  status: ModuleProposalStatus;
+  request_hash: string;
+  expires_at: string;
+  created_at: string;
+};
+
+export type ModuleRun = {
+  module_run_id: string;
+  conversation_id: string;
+  user_id: string;
+  module_type: ModuleType;
+  parent_module_run_id?: string | null;
+  depth: number;
+  status: ModuleRunStatus;
+  module_parameters: Record<string, unknown>;
+  domain_session_id?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+  version: number;
+};
+
+export type ConversationPage = {
+  items: Conversation[];
+  next_cursor?: string | null;
+};
+
+export type ConversationEventPage = {
+  items: ConversationEvent[];
+  next_cursor?: string | null;
+};
+
+export type ConversationContextDiagnostics = {
+  conversation_id_hash: string;
+  recent_event_count: number;
+  recent_event_sequence_start?: number | null;
+  recent_event_sequence_end?: number | null;
+  compact_summary_version?: number | null;
+  active_module_count: number;
+  selected_memory_count: number;
+  estimated_tokens: number;
+  total_token_budget: number;
+  dropped_sections: string[];
+  tokenizer_backend: string;
+};
+
+export type ConversationDetailResponse = {
+  conversation: Conversation;
+  events: ConversationEventPage;
+  active_module_stack: ModuleRun[];
+  pending_module_proposals: ModuleProposal[];
+};
+
+export type ConversationMessageResponse = {
+  conversation: Conversation;
+  appended_events: ConversationEvent[];
+  active_module_stack: ModuleRun[];
+  pending_module_proposal?: ModuleProposal | null;
+  response: string;
+  safety_result: SafetyResult;
+  context_diagnostics: ConversationContextDiagnostics;
+  workflow_response?: ChatResponse | null;
+};
+
+export type ModuleControlResponse = {
+  conversation: Conversation;
+  active_module_stack: ModuleRun[];
+  appended_events: ConversationEvent[];
+  response: string;
+};
+
+export type ConversationExportResponse = {
+  conversation: Conversation;
+  events: ConversationEvent[];
+  module_runs: ModuleRun[];
+  module_proposals: ModuleProposal[];
+  exported_at: string;
+};
+
 export type ChatWorkflowStage =
   | "safety"
   | "routing"
@@ -177,6 +313,7 @@ export type UserPracticeSummary = {
 };
 
 export type UserConsentState = {
+  store_conversation_history: boolean;
   consent_to_practice_summary: boolean;
   consent_to_save_preferences: boolean;
   do_not_store_raw_messages: boolean;
