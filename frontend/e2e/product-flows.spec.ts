@@ -267,6 +267,22 @@ test("unified chat keeps confirmed nested modules in one durable timeline", asyn
       });
       return;
     }
+    if (
+      path === "/api/conversations/conversation_1" &&
+      request.method() === "DELETE"
+    ) {
+      created = false;
+      events.length = 0;
+      moduleStack = [];
+      await route.fulfill({
+        json: {
+          conversation_id: "conversation_1",
+          deleted: true,
+          deleted_counts: { events: 7, module_runs: 2 }
+        }
+      });
+      return;
+    }
     if (path === "/api/conversations/conversation_1") {
       await route.fulfill({
         json: {
@@ -307,6 +323,9 @@ test("unified chat keeps confirmed nested modules in one durable timeline", asyn
   await expect(page.getByText("分级练习", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "结束当前模块" }).click();
   await expect(page.getByText("已结束当前模块并返回上一层。")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除" }).click();
+  await expect(page.getByText("还没有对话")).toBeVisible();
 });
 
 test("settings resets onboarding through backend", async ({ page }) => {

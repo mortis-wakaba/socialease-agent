@@ -51,7 +51,12 @@ export default function ChatPage() {
     setLoading(true);
     setError(null);
     try {
-      await api.importLegacyRoleplay(effectiveUserId);
+      let importWarning: string | null = null;
+      try {
+        await api.importLegacyRoleplay(effectiveUserId);
+      } catch {
+        importWarning = "旧版练习记录暂时无法导入；现有统一对话仍可继续使用。";
+      }
       const result = await api.listConversations(effectiveUserId);
       setConversations(result.items);
       if (result.items.length > 0) {
@@ -66,6 +71,7 @@ export default function ChatPage() {
         setCurrent(null);
         setEvents([]);
       }
+      setError(importWarning);
     } catch (err) {
       setError(errorMessage(err, "无法载入对话历史"));
     } finally {
@@ -436,6 +442,7 @@ export default function ChatPage() {
             />
           ) : null}
 
+          <ErrorBox message={error} />
           <Panel title={current?.title ?? "对话"}>
             {current ? (
               <>
@@ -512,7 +519,7 @@ export default function ChatPage() {
                     disabled={loading || current.status === "archived"}
                   />
                   <div className="flex items-center justify-between gap-3">
-                    <ErrorBox message={error} />
+                    <span />
                     <Button
                       type="submit"
                       disabled={loading || current.status === "archived"}

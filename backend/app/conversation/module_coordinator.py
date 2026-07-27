@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from hashlib import sha256
+import logging
 
 from app.conversation.adapters import ModuleAdapter, ModuleAdapterResult
 from app.conversation.module_policy import ModuleStackPolicy
@@ -18,6 +19,9 @@ from app.models_conversation import (
     ModuleType,
 )
 from app.models_conversation_api import ModuleControlResponse
+
+
+logger = logging.getLogger(__name__)
 
 
 class ModuleCoordinator:
@@ -300,6 +304,62 @@ class ModuleCoordinator:
             events=events,
             response="已结束全部模块，返回普通对话。",
         )
+
+    async def preempt_for_crisis(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ConversationEvent]:
+        """Stop every frame without letting adapter failure delay safety."""
+        stack = self._repository.list_module_stack(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        events: list[ConversationEvent] = []
+        for run in reversed(stack):
+            try:
+                await self._adapter(run.module_type).terminate(run)
+            except Exception:
+                # Durable safety state must not depend on optional runtime state.
+                logger.exception(
+                    "Module runtime termination failed during crisis preemption",
+                    extra={
+                        "module_type": run.module_type.value,
+                        "module_run_id_hash": sha256(
+                            run.module_run_id.encode("utf-8")
+                        ).hexdigest()[:16],
+                    },
+                )
+            terminated = self._repository.transition_module_run(
+                module_run_id=run.module_run_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                expected_status=run.status,
+                expected_version=run.version,
+                target_status=ModuleRunStatus.TERMINATED,
+                ended_at=datetime.now(UTC),
+            )
+            if terminated is None:
+                continue
+            events.append(
+                self._append_lifecycle_event(
+                    run=terminated,
+                    event_type=ConversationEventType.MODULE_TERMINATED,
+                    content="安全升级已停止当前模块。",
+                    idempotency_key=(
+                        f"crisis-module-terminated:{run.module_run_id}:"
+                        f"{run.version}"
+                    ),
+                )
+            )
+        if stack:
+            self._set_active_depth(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                depth=0,
+            )
+        return events
 
     async def delete_runtime_contexts(self, runs: list[ModuleRun]) -> None:
         """Delete short-lived adapter state before durable conversation deletion."""

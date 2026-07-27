@@ -441,6 +441,10 @@ class ConversationService:
             current_user_message=message,
         )
         if safety_result.risk_level == RiskLevel.CRISIS:
+            preemption_events = await self._module_coordinator.preempt_for_crisis(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             response = crisis_escalation_response(
                 paused_activity="当前对话和练习"
             )
@@ -468,7 +472,7 @@ class ConversationService:
             return self._response(
                 conversation_id=conversation_id,
                 user_id=user_id,
-                appended_events=[user_event, crisis_event],
+                appended_events=[user_event, *preemption_events, crisis_event],
                 response=response,
                 safety_result=safety_result,
                 context_diagnostics=context.diagnostics,

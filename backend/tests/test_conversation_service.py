@@ -1,6 +1,6 @@
 """Tests for consent-gated module proposals in unified conversations."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -8,7 +8,15 @@ import pytest
 from app.conversation.compactor import ConversationCompactor
 from app.conversation.context_manager import ConversationContextManager
 from app.conversation.repository import SQLiteConversationRepository
-from app.models import Intent, IntentResult, RiskLevel, SafetyResult
+from app.db.engine import connect
+from app.models import (
+    ChatResponse,
+    Intent,
+    IntentResult,
+    RiskLevel,
+    SafetyResult,
+    TraceRecord,
+)
 from app.models_conversation import (
     HISTORY_NOTICE_VERSION,
     ModuleProposalStatus,
@@ -52,6 +60,48 @@ class RoleplayIntent:
             intent=Intent.ROLEPLAY_PRACTICE,
             confidence=0.95,
             reason="test",
+        )
+
+
+class GeneralIntent:
+    async def route(
+        self,
+        message: str,
+        safety_result: SafetyResult,
+    ) -> IntentResult:
+        del message, safety_result
+        return IntentResult(
+            intent=Intent.EMOTIONAL_SUPPORT,
+            confidence=0.8,
+            reason="test",
+        )
+
+
+class GeneralHarness:
+    async def run(
+        self,
+        request,
+        *,
+        trusted_safety_result: SafetyResult,
+        trusted_intent_result: IntentResult,
+    ) -> ChatResponse:
+        response = "可以先说说现在最困扰你的部分。"
+        return ChatResponse(
+            run_id="general-run",
+            risk_level=trusted_safety_result.risk_level,
+            intent=trusted_intent_result.intent,
+            response=response,
+            trace=TraceRecord(
+                run_id="general-run",
+                user_id=request.user_id,
+                input="[minimized]",
+                safety_result=trusted_safety_result,
+                intent_result=trusted_intent_result,
+                selected_agent="general_support",
+                output=response,
+                latency_ms=1,
+                created_at=datetime.now(UTC),
+            ),
         )
 
 
@@ -143,6 +193,17 @@ async def test_module_intent_only_creates_an_option_until_user_confirms(
         cursor=None,
         limit=20,
     ).items) == 2
+    with connect() as connection:
+        episodic_count = connection.execute(
+            "SELECT COUNT(*) AS total FROM episodic_memories WHERE user_id = ?",
+            ("owner",),
+        ).fetchone()["total"]
+        proposal_count = connection.execute(
+            "SELECT COUNT(*) AS total FROM memory_proposals WHERE user_id = ?",
+            ("owner",),
+        ).fetchone()["total"]
+    assert episodic_count == 0
+    assert proposal_count == 0
 
 
 @pytest.mark.asyncio
@@ -219,3 +280,40 @@ async def test_proposal_reject_checks_hash_state_and_owner(
             user_id="owner",
             request_hash=proposal.request_hash,
         )
+
+
+@pytest.mark.asyncio
+async def test_general_support_abstains_from_module_proposal(
+    repository: SQLiteConversationRepository,
+) -> None:
+    service = ConversationService(
+        harness=GeneralHarness(),  # type: ignore[arg-type]
+        repository=repository,
+        safety_classifier=LowSafety(),
+        intent_router=GeneralIntent(),
+        context_manager=ConversationContextManager(
+            repository=repository,
+            compactor=ConversationCompactor(),
+        ),
+    )
+    conversation = service.create_conversation(
+        user_id="owner",
+        title="General",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+
+    response = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="今天和同学聊完后有点失落",
+        idempotency_key="general-support-001",
+    )
+
+    assert response.pending_module_proposal is None
+    assert response.active_module_stack == []
+    assert response.response == "可以先说说现在最困扰你的部分。"
+    assert [event.event_type.value for event in response.appended_events] == [
+        "user_message",
+        "assistant_message",
+    ]

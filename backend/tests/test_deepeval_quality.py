@@ -36,6 +36,7 @@ from app.safety.classifier import RuleBasedSafetyClassifier
 from app.tracing.logger import TraceLogger
 from app.workflow.engine import AgentHarness
 from app.workflow.router import RuleBasedIntentRouter
+from app.workflow.router import LlmIntentRouter
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -58,6 +59,9 @@ def _load_cases(name: str) -> list[dict[str, object]]:
 RESOURCE_CASES = _load_cases("deepeval_resource.jsonl")
 BOUNDARY_CASES = _load_cases("deepeval_boundary.jsonl")
 BOUNDARY_NEGATIVE_CASES = _load_cases("deepeval_boundary_negative.jsonl")
+UNIFIED_CONVERSATION_CASES = _load_cases(
+    "deepeval_unified_conversation.jsonl"
+)
 SUPPORT_CASES = [
     case for case in BOUNDARY_CASES if case["intent"] == Intent.EMOTIONAL_SUPPORT.value
 ]
@@ -79,6 +83,15 @@ def support_generation_agent() -> SupportGenerationAgent:
     if llm_client is None:
         pytest.fail("LLM must be enabled for DeepEval support-generation checks.")
     return SupportGenerationAgent(llm_client=llm_client)
+
+
+@pytest.fixture(scope="module")
+def llm_intent_router() -> LlmIntentRouter:
+    """Create the production LLM router for unified proposal regression cases."""
+    llm_client = create_llm_client()
+    if llm_client is None:
+        pytest.fail("LLM must be enabled for unified conversation checks.")
+    return LlmIntentRouter(llm_client=llm_client)
 
 
 def _boundary_metric(
@@ -256,6 +269,36 @@ def test_roleplay_cases_follow_harness_routing_and_consent(
     assert response.structured_data["harness_action"] == "start_roleplay"
     assert response.structured_data["required_protocol"] == "start_roleplay_consent"
     assert response.structured_data["consent_required"] is True
+
+
+@pytest.mark.parametrize(
+    "case",
+    UNIFIED_CONVERSATION_CASES,
+    ids=lambda case: str(case["id"]),
+)
+def test_unified_conversation_router_proposes_only_for_module_intent(
+    case: dict[str, object],
+    llm_intent_router: LlmIntentRouter,
+) -> None:
+    """Measure explicit module intent and abstention with the configured model."""
+    message = str(case["input"])
+    safety = RuleBasedSafetyClassifier()
+    safety_result = asyncio.run(safety.classify(message))
+    if safety_result.risk_level == RiskLevel.CRISIS:
+        actual_intent = Intent.CRISIS
+        proposed = False
+    else:
+        result = asyncio.run(llm_intent_router.route(message, safety_result))
+        actual_intent = result.intent
+        proposed = actual_intent in {
+            Intent.ROLEPLAY_PRACTICE,
+            Intent.CBT_WORKSHEET,
+            Intent.EXPOSURE_PLANNING,
+            Intent.CAMPUS_RESOURCE_QUERY,
+        }
+
+    assert actual_intent == Intent(str(case["expected_intent"]))
+    assert proposed is bool(case["expected_proposal"])
 
 
 @pytest.mark.parametrize(

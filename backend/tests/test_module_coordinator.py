@@ -67,6 +67,14 @@ class RecordingAdapter:
         )
 
 
+class FailingTerminateAdapter(RecordingAdapter):
+    """Simulate an unavailable legacy runtime during crisis escalation."""
+
+    async def terminate(self, run: ModuleRun) -> None:
+        self.actions.append(f"terminate-failed:{run.module_run_id}")
+        raise RuntimeError("runtime unavailable")
+
+
 @pytest.fixture
 def repository(
     monkeypatch: pytest.MonkeyPatch,
@@ -216,6 +224,53 @@ async def test_active_module_receives_messages_on_same_timeline(
     assert result.response == "reply:我的练习回复"
     assert event.module_run_id == started.active_module_stack[-1].module_run_id
     assert event.sequence_no == 3
+
+
+@pytest.mark.asyncio
+async def test_crisis_preemption_stops_nested_stack_even_if_runtime_fails(
+    repository: SQLiteConversationRepository,
+) -> None:
+    conversation = repository.create(user_id="owner", title="Crisis nested")
+    roleplay_adapter = RecordingAdapter(ModuleType.ROLEPLAY)
+    exposure_adapter = FailingTerminateAdapter(ModuleType.EXPOSURE)
+    coordinator = ModuleCoordinator(
+        repository=repository,
+        adapters={
+            ModuleType.ROLEPLAY: roleplay_adapter,
+            ModuleType.EXPOSURE: exposure_adapter,
+        },
+    )
+    roleplay = _proposal(
+        conversation_id=conversation.conversation_id,
+        proposal_id="crisis-roleplay",
+        module_type=ModuleType.ROLEPLAY,
+    )
+    exposure = _proposal(
+        conversation_id=conversation.conversation_id,
+        proposal_id="crisis-exposure",
+        module_type=ModuleType.EXPOSURE,
+    )
+    repository.save_proposal(roleplay)
+    await coordinator.accept(roleplay)
+    repository.save_proposal(exposure)
+    await coordinator.accept(exposure)
+
+    events = await coordinator.preempt_for_crisis(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+    )
+
+    assert len(events) == 2
+    assert repository.list_module_stack(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+    ) == []
+    refreshed = repository.get_for_user(
+        conversation.conversation_id,
+        "owner",
+    )
+    assert refreshed is not None
+    assert refreshed.active_module_depth == 0
 
 
 def _proposal(

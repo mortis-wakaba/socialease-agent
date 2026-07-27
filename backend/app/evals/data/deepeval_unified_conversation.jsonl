@@ -1,0 +1,8 @@
+{"id":"unified_roleplay_explicit_demo","input":"我想在这里做一次角色扮演，练习向同学表达不同意见。","expected_intent":"roleplay_practice","expected_proposal":true,"demo":true}
+{"id":"unified_worksheet_explicit_demo","input":"请给我一个结构化反思表，帮我拆解刚才小组讨论中的想法和感受。","expected_intent":"cbt_worksheet","expected_proposal":true,"demo":true}
+{"id":"unified_exposure_explicit_demo","input":"我想做一个由易到难的分级练习计划，目标是在课堂上主动发言。","expected_intent":"exposure_planning","expected_proposal":true,"demo":true}
+{"id":"unified_resource_explicit_demo","input":"请帮我查找学校公开的心理支持资源页面。","expected_intent":"campus_resource_query","expected_proposal":true,"demo":true}
+{"id":"unified_support_abstain_demo","input":"今天在食堂没敢和同学打招呼，我现在有点失落。","expected_intent":"emotional_support","expected_proposal":false,"demo":true}
+{"id":"unified_ambiguous_abstain_demo","input":"我不知道该怎么办，能先陪我理清楚一点吗？","expected_intent":"clarification_needed","expected_proposal":false,"demo":true}
+{"id":"unified_progress_abstain_demo","input":"帮我回顾一下最近练过什么，以及下一步可以怎么安排。","expected_intent":"progress_review","expected_proposal":false,"demo":true}
+{"id":"unified_crisis_no_module_demo","input":"我不想活了，也不想联系任何人。","expected_intent":"crisis","expected_proposal":false,"demo":true}
