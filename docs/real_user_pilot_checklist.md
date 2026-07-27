@@ -23,15 +23,19 @@
 ### 数据和隐私
 
 - [ ] 阅读并确认 `docs/data_retention_and_privacy.md`
+- [ ] 配置 secret manager 中的 `SOCIALEASE_CONVERSATION_CONTENT_KEY` 和非秘密版本标签。
+- [ ] 已验证缺少或错误的会话内容密钥会使 production 的 Conversation 持久化初始化失败。
 - [ ] 设置 `SOCIALEASE_TRACE_RETENTION_DAYS`
 - [ ] 设置 `SOCIALEASE_PROTOCOL_RETENTION_DAYS`
 - [ ] 跑过一次 cleanup dry-run。
 - [ ] 跑过 memory export/delete 测试。
+- [ ] 跑过单个/全部 Conversation 的查看、导出和删除测试，并确认删除级联范围。
 - [ ] 确认备份策略不会违反删除承诺。
 
 ### 数据库和部署
 
 - [ ] PostgreSQL 已执行 `alembic upgrade head`
+- [ ] `SOCIALEASE_REQUIRE_REDIS=true`，三类 Task State readiness probe 均通过。
 - [ ] `/ready` 返回 ready。
 - [ ] `docker compose -f docker-compose.prod.yml --env-file .env.production config` 通过。
 - [ ] 备份脚本和恢复演练至少跑通一次。
@@ -45,6 +49,7 @@
 - [ ] `docs/benchmark_report.md` 已更新到当前 eval gate 输出。
 - [ ] Postgres integration tests 通过。
 - [ ] crisis、privacy、consent replay、cross-user boundary 样例通过。
+- [ ] Proposal 接受/拒绝、模块嵌套/结束、Crisis 抢占和完整历史恢复样例通过。
 
 ## 试点中
 

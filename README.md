@@ -9,18 +9,23 @@ SocialEase Agent 是面向大学生社交压力练习场景的安全可控 Agent
 ```mermaid
 flowchart LR
     U[User] --> FE[Next.js]
-    FE --> API[FastAPI]
-    API --> H[Agent Harness]
-    H --> S[Input Safety]
+    FE --> C[Conversation API]
+    C --> S[Input Safety]
     S --> R[Intent Router]
-    R --> P[Permission / Consent]
-    P --> K[Skill Registry]
-    K --> A[Support / Role-play / Worksheet / Exposure / Resource Loop / Calendar / Crisis]
+    R --> P[Module Proposal]
+    P -->|用户确认| M[Module Stack]
+    C --> H[Agent Harness]
+    H --> A[Support / Role-play / Worksheet / Exposure / Resource Loop / Calendar / Crisis]
+    M --> A
     A --> O[Output Guardrail + Repair]
-    A --> M[Context + Memory]
-    O --> T[Trace + Eval]
-    M --> DB[(PostgreSQL / SQLite)]
-    M --> Redis[(Redis Task Sessions)]
+    C --> CTX[Bounded Context]
+    C --> T[(Conversation Timeline)]
+    A --> MEM[Consent-gated Memory]
+    O --> TR[Trace + Eval]
+    CTX --> DB[(PostgreSQL / SQLite)]
+    T --> DB
+    MEM --> DB
+    A --> Redis[(Redis Task Sessions)]
 ```
 
 完整设计见 [架构图](docs/architecture_diagram.md) 和 [Agent Harness 设计](docs/agent_harness_design.md)。
@@ -28,19 +33,22 @@ flowchart LR
 ## 核心能力
 
 - **Agent Harness**：统一执行 Safety、Intent Routing、Permission、Skill Dispatch、Output Guardrail、Memory Write、Trace 和失败降级。
+- **统一会话**：`/chat` 是唯一主对话入口；普通交流和 Role-play、Worksheet、Exposure、Resource 模块共享同一 Conversation、完整时间线和有界上下文。
+- **用户确认的模块栈**：LLM 只能提出经过校验的模块选项，不能自行进入、结束或切换模块；用户确认后才启动，并可手动结束当前或全部模块。允许的模块可嵌套，最大深度为三层。
 - **开放输入路由**：显式区分专业 Skill、普通支持、信息不足和领域外请求；低置信度动作先澄清，不把未知输入强塞给业务模块。
 - **有界 Skills**：包含普通支持、Role-play、CBT 风格 Worksheet、分级练习、资源导航和 Crisis Escalation；资源导航可运行最多三步的只读工具循环。
 - **全局 Guardrails**：输入侧优先识别危机表达；输出侧结合规则与可选 LLM 检查诊断、疗效承诺、依赖诱导、现实支持劝阻和虚构资源，并对可修复问题执行一次 Repair 与二次复检。
 - **Permission / Consent**：主动练习和状态变更可要求一次性同意凭证，绑定用户、会话、动作和请求摘要，并防止过期、篡改与重复消费。
 - **Calendar MCP**：Calendar Skill 只生成有限期提醒预览；创建、修改和删除通过 owner-bound Consent、幂等键与创建后回读控制。当前内置 Provider 是 Demo，真实厂商通过 `CalendarProvider` Adapter 扩展。
-- **Context / Memory**：数据库保存经授权、脱敏的结构化长期状态；Redis 保存带 TTL 的任务状态。Role-play 使用 Token Budget、动态消息窗口和结构化 Compact，Worksheet 与 Support 使用各自的类型化 State。
+- **History / Context / Memory 分离**：完整会话历史默认长期保留，直到用户主动删除；模型只读取带 Token Budget 的可重建上下文；长期 Agent Memory 仍需独立同意。Role-play、Worksheet 与 Support 的短期任务状态保存在 Redis。
 - **Grounded Retrieval**：本地 BM25 检索返回 Citation；未命中时返回 `unknown`，不编造学校、电话或联系人。
-- **Trace / Eval**：记录隐私安全的执行诊断；提供 294 条确定性 Eval、45 条 Output Guardrail 边界用例和可选 DeepEval LLM Judge。
+- **Trace / Eval**：记录隐私安全的执行诊断；提供 309 条确定性 Eval（含 45 条 Output Guardrail 用例）和可选 DeepEval LLM Judge。
 
 ## 项目结构
 
 ```text
 backend/app/
+  conversation/ 统一会话状态机、模块策略、上下文与内容保护
   workflow/      AgentHarness、Router、Hooks、运行时 Context
   skills/        可执行 Skill 与 Registry
   safety/        输入分类、权限决策和危机升级
@@ -53,7 +61,7 @@ backend/app/
   evals/         Eval 数据、Runner、Metrics 与 Gate
   api/           FastAPI Routes
 backend/tests/   单元、架构、边界与集成测试
-frontend/app/    Chat、Practice、Worksheet、Progress 等页面
+frontend/app/    统一 Chat、Progress、Memory、Settings 等页面
 docs/            架构、部署、隐私、知识库与 ADR
 ```
 
@@ -300,7 +308,8 @@ Eval 的设计、指标和局限见 [Benchmark Report](docs/benchmark_report.md)
 - 资源回答必须来自检索结果；未知时明确返回 `unknown`。
 - 长期 Memory 只保存授权后的低敏结构化信息，模型不能自主决定永久记忆。
 - Trace 和 Context Diagnostics 不复制敏感字段原值。
-- 用户可以导出和删除本人记录；Crisis、任务结束和账号删除会清理相应短期状态。
+- 用户可以查看、导出和主动删除完整会话；生产模式下会话正文使用 AES-256-GCM 加密，删除会级联清理对应模块、上下文和派生记忆。
+- Crisis 会抢占普通对话和任意深度的模块栈，并清理相应短期状态。
 - 示例数据必须标记为 Demo，不硬编码未经核验的校园电话和联系人。
 
 更多说明见 [数据留存与隐私](docs/data_retention_and_privacy.md) 和 [真实用户试点清单](docs/real_user_pilot_checklist.md)。
@@ -319,4 +328,4 @@ Eval 的设计、指标和局限见 [Benchmark Report](docs/benchmark_report.md)
 
 ## 当前边界
 
-当前项目是安全敏感场景下的 Agent 工程原型，不是通用 Agent Framework，也不是医疗产品。现阶段仍以本地/合成评测为主，尚未经过真实用户试点；自建认证、BM25 检索和应用级 Trace 均保留进一步生产化空间。
+当前项目是安全敏感场景下的 Agent 工程原型，不是通用 Agent Framework，也不是医疗产品。现阶段仍以本地/合成评测为主，尚未经过真实用户试点；自建认证、BM25 检索、应用级 Trace 和旧领域 API 的迁移收口均保留进一步生产化空间。

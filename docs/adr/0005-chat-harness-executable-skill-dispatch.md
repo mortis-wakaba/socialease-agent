@@ -1,5 +1,8 @@
 # ADR 0005：Chat Harness 迁移到 Executable Skill Dispatch
 
+- 状态：产品入口部分已由 [ADR 0008](0008-unified-conversation-timeline-and-module-stack.md)
+  取代；Executable Skill Dispatch 作为内部 Harness 能力继续保留。
+
 ## 背景
 
 早期 SocialEase 有两条路径：

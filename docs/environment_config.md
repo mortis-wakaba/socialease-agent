@@ -79,10 +79,15 @@ OAuth Token 管理；不能把共享 Token、用户日程正文或凭据写入 T
 | `SOCIALEASE_DATABASE_URL` | staging/production target | 数据库 URL；为空时使用本地 SQLite 默认值 |
 | `SOCIALEASE_DB_PATH` | local/Docker | SQLite 数据库路径覆盖 |
 | `SOCIALEASE_SQLITE_TIMEOUT_SECONDS` | local | SQLite busy timeout |
+| `SOCIALEASE_CONVERSATION_CONTENT_KEY` | production auth | 32 字节随机密钥的 URL-safe Base64；用于 Conversation 正文 AES-256-GCM，加密模式缺少或格式错误时拒绝初始化 Conversation 持久化 |
+| `SOCIALEASE_CONVERSATION_CONTENT_KEY_VERSION` | production auth | 非秘密的密钥版本标签；用于识别密文所需密钥，轮换前必须先设计旧密文重加密流程 |
 | `SOCIALEASE_TEST_DATABASE_URL` | integration tests | 集成测试使用的 PostgreSQL URL |
 | `SOCIALEASE_BACKUP_DIR` | staging/production | `scripts/backup_database.sh` 的备份输出目录 |
 
-SQLite 是默认本地开发运行时。PostgreSQL repository adapters 已覆盖当前主要运行路径，但真实试点前仍需托管备份、恢复演练和 migration 检查。
+SQLite 是默认本地开发运行时，demo auth 未配置内容密钥时会明确使用本地明文保护器。
+Production auth 不允许这一降级。PostgreSQL repository adapters 已覆盖当前主要运行路径，
+但真实试点前仍需在 secret manager 中生成和保管内容密钥，并完成托管备份、恢复演练、
+密钥轮换方案和 migration 检查。不要在已有密文仍需读取时直接替换或删除旧密钥。
 
 ## LLM Provider
 
@@ -152,4 +157,6 @@ Role-play 使用 Redis 保存带 TTL、受 Token Budget 约束的最近消息与
 | `SOCIALEASE_PROTOCOL_RETENTION_DAYS` | pilot | 删除超过该天数的 terminal protocol/intervention-plan rows |
 | `SOCIALEASE_ABANDONED_PLAN_MINUTES` | cleanup job | pending-consent plan 自动取消窗口 |
 
-真实用户部署前，retention 设置必须和隐私说明、试点同意材料保持一致。
+Conversation History 在用户确认版本化持久化告知后默认 `expires_at = NULL`，不受上述
+Trace/Protocol cleanup window 影响，直到用户主动删除。真实用户部署前，retention 设置
+必须和隐私说明、试点同意材料保持一致。

@@ -7,7 +7,7 @@
 
 | 信号 | 来源 | 默认阈值环境变量 | 处理方式 |
 |---|---|---|---|
-| readiness failed | `/ready` | 不适用 | 暂停发布，检查数据库和 migration graph |
+| readiness failed | `/ready` | 不适用 | 暂停发布，检查数据库、migration graph 和三类 Redis Task State probe |
 | crisis runs spike | `/api/harness/metrics` | `SOCIALEASE_ALERT_CRISIS_RUNS` | 人工复核 crisis flow 和试点支持流程 |
 | fallback runs spike | metrics | `SOCIALEASE_ALERT_FALLBACK_RUNS` | 检查 LLM provider、网络和 fallback 是否安全 |
 | rate limit hits | metrics | `SOCIALEASE_ALERT_RATE_LIMIT_HITS` | 检查异常流量或试点用户操作模式 |

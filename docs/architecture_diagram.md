@@ -5,10 +5,30 @@
 ```mermaid
 flowchart TD
     U[大学生用户] --> FE[Next.js 产品界面]
+    FE --> ConversationUI["/chat 统一对话与完整历史"]
+    FE --> DetailUI[旧领域详情页<br/>迁移兼容 / 深链接]
     FE --> API[FastAPI routes]
 
-    API --> H[AgentHarness]
-    API --> Direct[直接练习 API]
+    ConversationUI --> ConversationAPI[Conversation API]
+    ConversationAPI --> ConversationService[Conversation Service<br/>Owner + 顺序 + 幂等]
+    ConversationService --> ConversationSafety[每轮 Safety Classifier]
+    ConversationSafety --> ConversationCrisis{Crisis Preemption}
+    ConversationCrisis -->|crisis| ModulePreempt[终止模块栈 + Crisis Event]
+    ConversationCrisis -->|ordinary| ConversationRouter[Intent Router]
+    ConversationRouter -->|普通交流| H[AgentHarness]
+    ConversationRouter -->|适合模块| Proposal[Module Proposal<br/>只提供选项]
+    Proposal -->|用户接受| Stack[Module Stack Policy<br/>最大深度 3 + 组合白名单]
+    Proposal -->|用户拒绝| ConversationService
+    Stack --> Coordinator[Module Coordinator]
+    Coordinator --> Adapters[Role-play / Worksheet / Exposure / Resource Adapters]
+    Adapters --> ConversationService
+    Adapters --> RoleplayService
+    Adapters --> WorksheetService
+    Adapters --> ExposureService
+    Adapters --> SupportResourceService
+
+    API --> H
+    API --> Direct[旧领域 API<br/>详情与迁移兼容]
     API --> CalendarAPI[Calendar API]
 
     H --> Ctx[RunContext<br/>认证 + 记忆上下文 + 请求上下文]
@@ -73,6 +93,11 @@ flowchart TD
     Provider -. 真实厂商扩展 .-> ExternalCalendar[Google / Microsoft 等]
 
     H --> Privacy[Privacy Persistence Gate]
+    ConversationService --> ConversationContext[Working Context<br/>Token Budget + Compact Summary]
+    ConversationService --> ConversationHistory[Append-only Timeline<br/>默认保留到用户删除]
+    ConversationHistory --> ContentProtection[AES-256-GCM<br/>production fail closed]
+    ConversationContext --> Factory
+    ContentProtection --> Factory
     RoleplayService --> Privacy
     WorksheetService --> Privacy
     ExposureService --> Privacy
@@ -91,16 +116,22 @@ flowchart TD
     CleanupLock --> PG
 
     FE --> TraceUI["/trace 开发诊断视图"]
-    FE --> PracticeUI["/practice rubric feedback"]
     TraceUI --> Trace
-    PracticeUI --> RoleplayService
+    DetailUI --> Direct
 ```
 
 ## 讲解口径
 
-- 前端是产品体验入口；真正的安全边界放在后端 harness、permission gate 和服务层 safety floor。
+- `/chat` 是唯一主对话入口，普通交流与模块共用一个 Conversation ID、时间线和输入框；
+  `/practice`、`/worksheet` 等旧页面只保留为迁移期详情或深链接，不再承担主流程导航。
+- LLM 只能生成严格校验的 Module Proposal；用户接受后才能进入模块。模块由用户结束，
+  允许白名单内嵌套，结束子模块后恢复父模块。
+- 完整历史、模型 Working Context 和长期 Agent Memory 分离：用户能查看完整时间线，
+  模型只读取有界投影，历史不会自动成为长期记忆。
+- 前端是产品体验入口；真正的安全边界放在 Conversation Service、harness、permission gate 和服务层 safety floor。
 - LLM 是可选增强，不是系统唯一依赖；关闭 API key 时仍可用 deterministic fallback 跑完整流程。
 - Crisis 输入绕过普通 agent，进入危机转介流程。
+- Crisis 在任意模块深度抢占当前流程并终止栈；不能因 Adapter 清理失败继续练习。
 - 信息不足时先澄清，明确领域外请求返回产品边界；这两个分支不创建练习计划。
 - 会改变用户状态的主动练习必须经过权限判断和 consent protocol。
 - Role-play feedback 使用隐私安全的派生特征和 rubric；Redis 只在 TTL 内保存受 Token Budget 约束的任务上下文，不把原始对话提升为长期记忆。
@@ -109,4 +140,6 @@ flowchart TD
 - SQLite 用于本地开发和展示；RepositoryFactory 在生产运行时选择 PostgreSQL，并由 Alembic 和集成测试验证迁移与主要 Repository 路径。
 - 全局 Output Guardrail 位于 Skill 之后、Memory/Trace/API 返回之前；Repair 最多一次，并对同一修复文本再次检查。
 - PostgreSQL cleanup scheduler 使用 advisory lock，避免多个副本重复执行同一轮清理。
+- Conversation History 不受 Trace/Protocol cleanup window 影响，默认保留到用户主动删除；
+  production 会话正文使用 AES-256-GCM，缺少密钥时拒绝持久化启动。
 - Trace、metrics 和 eval gate 让安全、隐私、同意和多用户边界可观察、可回归。

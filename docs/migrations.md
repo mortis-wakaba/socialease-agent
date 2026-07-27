@@ -64,3 +64,12 @@ SOCIALEASE_DATABASE_URL=postgresql+psycopg://socialease:socialease@127.0.0.1:543
 CI 应在 backend tests 前，对临时 PostgreSQL service 运行 migration。这样可以在合并前发现 DDL 错误、依赖缺失和 revision graph 问题。
 
 Live migration check 只证明 schema 可以升级到 head。当前独立 PostgreSQL Runtime 测试已覆盖主要 Repository、事务边界、ownership 和 fresh-process 持久化；真实部署仍需在目标基础设施上验证连接池配置、备份恢复与 migration/rollback 流程。
+
+当前 head 是 `0014_conversation_deletion`。统一会话相关 schema 分布在：
+
+- `0012_unified_conversations`：Conversation、Event、Module Proposal/Run；
+- `0013_conversation_context`：有界上下文 Compact Summary；
+- `0014_conversation_deletion`：幂等删除回执与级联删除支持。
+
+不要依赖这里的编号判断部署状态；发布时仍必须以 `alembic heads` 和
+`python -m app.db.migration_check` 的实际结果为准。

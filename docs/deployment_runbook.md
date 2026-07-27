@@ -38,6 +38,10 @@ SOCIALEASE_DATABASE_URL=postgresql+psycopg://...
 SOCIALEASE_CORS_ORIGINS=https://your-frontend.example.edu
 SOCIALEASE_AUTH_MODE=production
 SOCIALEASE_AUTH_TOKEN_SECRET=...
+SOCIALEASE_CONVERSATION_CONTENT_KEY=...
+SOCIALEASE_CONVERSATION_CONTENT_KEY_VERSION=v1
+SOCIALEASE_REDIS_URL=rediss://...
+SOCIALEASE_REQUIRE_REDIS=true
 LLM_ENABLED=false
 ```
 
@@ -51,6 +55,11 @@ NEXT_PUBLIC_SOCIALEASE_TOKEN_STORAGE=cookie
 NEXT_PUBLIC_SOCIALEASE_SHOW_TRACE=false
 NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOSTICS=false
 ```
+
+`SOCIALEASE_CONVERSATION_CONTENT_KEY` 必须是 URL-safe Base64 编码的 32 字节随机密钥。
+它和认证密钥、数据库凭据一样必须保存在 secret manager，不能提交到 Git；已有密文仍
+需读取时不能直接替换或丢弃旧密钥。当前 `v1` 标签不等于自动轮换机制，轮换前必须先
+完成旧密文重加密方案。
 
 所有真实 secret 必须留在 Git 外部。
 修改 `NEXT_PUBLIC_*` 后需要重新 build frontend image，不能只重启容器。
@@ -81,6 +90,7 @@ curl -fsS https://your-api.example.edu/ready
 - 数据库能执行 `SELECT 1`；
 - repository capability matrix 支持当前 runtime；
 - Alembic migration graph 有效；
+- Role-play、Worksheet Draft 和 Support Search 的 Redis 状态后端均可用；
 - aggregate metrics backend 能返回 snapshot。
 
 Readiness response 不返回数据库 URL 或 secret。

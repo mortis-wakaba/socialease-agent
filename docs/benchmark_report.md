@@ -1,6 +1,8 @@
 # SocialEase Agent Benchmark Report
 
-> 当前基线：backend pytest `479 passed, 38 skipped`；PostgreSQL integration `34 passed`；Redis integration `2 passed`；303 条确定性 Eval 全部通过；eval gate `passed`。
+> 2026-07-27 基线：backend pytest `549 passed, 43 skipped`；309 条确定性
+> Eval 全部通过；eval gate `passed`；PostgreSQL migration/runtime 与 Redis-backed
+> task state 由 CI 服务容器验证。
 
 本报告记录 SocialEase Agent 的确定性评测集，用于防止安全边界、产品边界和 agent workflow 在迭代中回退。它不是临床效果评估，不证明系统可以诊断、治疗或改善心理健康问题。
 
@@ -12,6 +14,7 @@ SocialEase 是面向大学生社交压力场景的安全可控 agent harness。B
 - Intent router 是否能把请求路由到正确的有界 skill；
 - RAG 是否给出 citation，并在不知道时避免编造资源；
 - Role-play、worksheet、exposure 等 agent 是否保持结构化输出契约；
+- 统一会话是否保持事件顺序、模块确认/嵌套、Crisis 抢占、owner scope、加密与删除级联；
 - 隐私、consent replay、多用户访问和 unsafe progression 是否被拦截；
 - 代码修改后完整工作流是否仍能跑通。
 
@@ -77,18 +80,20 @@ make check
 
 ## 3. 当前结果
 
-最近本地基线：
+2026-07-27 本地与 CI 基线：
 
 ```text
-backend pytest: 479 passed, 38 skipped
-PostgreSQL integration: 34 passed
-Redis integration: 2 passed
+backend pytest: 549 passed, 43 skipped
 eval suite: all metrics passed
 eval gate: passed
-deterministic eval cases: 303 / 303 passed
+deterministic eval cases: 309 / 309 passed
+PostgreSQL migration/runtime CI: passed
+Redis-backed task state CI: passed
 ```
 
-Eval 指标：
+精确数字是该提交附近的快照；最新结果以当前 CI 和生成的 `latest.json` 为准。
+
+核心 Eval 指标：
 
 | Metric | Passed / Total | Score |
 |---|---:|---:|
@@ -100,6 +105,9 @@ Eval 指标：
 | retrieval recall@3 | 6 / 6 | 1.000 |
 | retrieval MRR | 6 / 6 | 1.000 |
 | unknown precision | 1 / 1 | 1.000 |
+| memory retrieval recall@3 | 10 / 10 | 1.000 |
+| memory false-recall avoidance | 14 / 14 | 1.000 |
+| memory context token budget | 17 / 17 | 1.000 |
 | roleplay feedback pass rate | 2 / 2 | 1.000 |
 | worksheet extraction pass rate | 2 / 2 | 1.000 |
 | E2E workflow pass rate | 5 / 5 | 1.000 |
@@ -110,6 +118,12 @@ Eval 指标：
 | continuation crisis detection | 10 / 10 | 1.000 |
 | unsafe exposure progression block rate | 6 / 6 | 1.000 |
 | stale plan cancellation rate | 4 / 4 | 1.000 |
+| output guardrail hard-safety detection recall | 25 / 25 | 1.000 |
+| output guardrail safe-allow precision | 15 / 15 | 1.000 |
+| output guardrail repair recheck block rate | 2 / 2 | 1.000 |
+
+`latest.json` 是完整指标和逐 case 结果的事实来源；上表只列核心发布边界，避免在文档中
+复制全部派生指标。
 
 ## 4. 评测类别
 

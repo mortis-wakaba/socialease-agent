@@ -4,8 +4,8 @@
 
 ## 推荐阅读顺序
 
-1. [`architecture_diagram.md`](architecture_diagram.md)：系统架构图，包含全局 Output Guardrail、Redis Task State 与 Calendar MCP 边界。
-2. [`agent_harness_design.md`](agent_harness_design.md)：Agent Harness、skills、permission、memory 和 trace 设计。
+1. [`architecture_diagram.md`](architecture_diagram.md)：系统架构图，包含统一会话、模块栈、全局 Output Guardrail、Redis Task State 与 Calendar MCP 边界。
+2. [`agent_harness_design.md`](agent_harness_design.md)：Conversation Gateway、Agent Harness、skills、permission、memory 和 trace 设计。
 3. [`benchmark_report.md`](benchmark_report.md)：评测目标和当前基线。
 4. [`production_readiness.md`](production_readiness.md)：生产化能力和剩余差距。
 
@@ -37,4 +37,9 @@ ADR 保存在 [`adr/`](adr/)：
 - OpenAI-compatible LLM fallback；
 - executable skill dispatch；
 - product-boundary eval；
-- production database and boundary gates。
+- production database and boundary gates；
+- unified conversation timeline and consent-gated module stack；
+- legacy role-play read-only import。
+
+ADR 记录当时的背景和决策，不会因后续架构演进而删除。若旧 ADR 的入口描述与当前
+产品不同，以后续 ADR 及当前架构文档为准。

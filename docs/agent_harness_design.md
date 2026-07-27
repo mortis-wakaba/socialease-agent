@@ -21,9 +21,16 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 
 当前 SocialEase 是一个产品化 Agent 原型，核心链路已经可运行：
 
-- `/api/chat` 是主 harness 入口；
+- `/chat` 是唯一主对话界面，写入统一的 Conversation Timeline；
+- `/api/conversations/{conversation_id}/messages` 是当前产品消息入口；旧 `/api/chat`
+  和 `/api/chat/stream` 只保留为已标记 deprecated 的迁移兼容接口；
+- Conversation Service 在 Harness 之外负责 owner scope、事件顺序、幂等键、有界上下文、
+  模块 Proposal 和模块栈生命周期；
 - Safety classification 在 routing 和 skill execution 前执行；
-- Intent routing 可分发到 support、role-play、worksheet、exposure planning、support-resource RAG、calendar planning、clarification、out-of-scope 和 crisis escalation；
+- Intent routing 可继续普通 support，也可生成 role-play、worksheet、exposure 或
+  resource 的严格校验 Proposal；模型不能接受 Proposal 或启动、结束模块；
+- 用户确认后，模块通过独立 Adapter 复用领域 Service；允许的父子组合可以嵌套，
+  最大深度三层，当前顶层模块接收下一条消息；
 - 主动练习通过 `SafetyPermissionGate` 和 consent protocol；
 - hooks 提供 metrics、privacy guard 和未来审计扩展点；
 - memory export/delete、practice preference consent 已实现；
@@ -32,42 +39,40 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 - intervention plan 可视化为 timeline，记录当前步骤、进度、protocol 绑定、stop condition 和结果摘要；
 - auth 同时支持本地演示模式和 production bearer-token/cookie 模式；
 - PostgreSQL repository adapters 覆盖当前主要运行路径，SQLite 保留为本地开发路径。
+- 完整 Conversation History、提供给模型的 Working Context 和长期 Agent Memory
+  是三个不同生命周期的数据面；
+- Conversation 正文在 production 使用 AES-256-GCM；缺少内容密钥时持久化层拒绝启动；
 - Role-play、Worksheet Draft 和 Support Search 使用类型化 Redis Task State；production 默认要求 Redis，并由 `/ready` 检查三类状态后端；
 - Calendar Planning Skill 只生成受限提醒提案，外部写操作通过 owner-bound Consent、幂等键和 MCP Tool Contract 执行；
 - 所有 Skill 输出在写 Memory、记录 Trace 和返回 API 前统一经过 Output Guardrail，并支持一次 Repair 与二次复检。
 
-当前验证基线：
+验证不在设计文档中固化易过期的测试数字。当前可复现基线以
+[`benchmark_report.md`](benchmark_report.md) 和 CI 为准，主要门禁包括：
 
 ```text
-backend pytest: 437 passed, 32 skipped
-PostgreSQL integration: 29 passed
-Redis integration: 2 passed
-eval suite: all metrics passed
-eval gate: passed
-frontend typecheck: passed
-frontend lint: passed
-frontend build: passed
-frontend E2E: 23 passed
-production auth E2E suite: 17 cases
-real frontend/backend smoke E2E: 1 passed
+backend pytest + PostgreSQL/Redis integration
+deterministic eval + product-boundary gate
+frontend typecheck + lint + build
+demo auth / production auth E2E + real-stack smoke
 ```
 
-## Runtime Loop
+## 统一会话 Runtime Loop
 
 ```text
 User Input
-  -> AgentHarness
+  -> ConversationService: owner scope + idempotency + append user event
+  -> build bounded Working Context from timeline + compact summary
+  -> SafetyClassifier
+  -> crisis: preempt module stack and append escalation result
+  -> active module: dispatch to top ModuleAdapter
+  -> ordinary conversation: AgentHarness
   -> before_safety hooks
   -> load RunContext: auth, profile, memory context, request context
-  -> SafetyClassifier
-  -> crisis preemption check
   -> IntentRouter, unless crisis requires escalation
-  -> map Intent to HarnessAction
-  -> SafetyPermissionGate for the selected action
-  -> consent protocol check, if required
-  -> before_action hooks
-  -> SkillRegistry.resolve_for_chat(...)
-  -> Skill.run(...)
+  -> ordinary support response OR validated ModuleProposal
+  -> user accepts/rejects proposal
+  -> on accept: policy check + push ModuleRun
+  -> ModuleAdapter executes domain service
   -> Global Output Guardrail: allow | one-shot repair | replace
   -> repaired output recheck, if repair was attempted
   -> after_action / after_skill hooks
@@ -76,10 +81,17 @@ User Input
   -> TraceLogger
   -> after_trace hooks
   -> on_stop hooks
-  -> API Response
+  -> append assistant/module lifecycle events
+  -> API Response with latest events, proposal and active stack
 ```
 
-Harness 决定“能不能做”和“以什么边界做”。LLM 即使启用，也不能拥有 safety boundary。
+Conversation Service 决定时间线和模块状态，Harness 决定普通对话中的安全、路由和
+Skill 边界，Module Adapter 连接既有领域服务。LLM 即使启用，也不能拥有 safety
+boundary 或模块生命周期权限。
+
+用户可以结束当前顶层模块并恢复父模块，也可以一次结束全部模块回到普通对话。Crisis
+在每个深度都优先于模块 dispatch；即使某个 Adapter 的清理失败，持久化模块栈仍会进入
+安全终态。
 
 ## Permission Gate
 
@@ -259,8 +271,9 @@ Eval 是 harness contract 的一部分。Crisis 拦截、隐私最小化、conse
 
 ## Memory 与 Privacy
 
-当前 memory 相关对象：
+当前数据面：
 
+- conversation timeline、module proposals/runs 与 compact summaries；
 - role-play sessions；
 - worksheet records；
 - exposure plans and attempts；
@@ -271,9 +284,16 @@ Eval 是 harness contract 的一部分。Crisis 拦截、隐私最小化、conse
 - memory export/delete endpoints；
 - practice preferences 写入前的 explicit consent。
 
-`MemoryContext` 在 run 开始时构造，包含近期安全场景摘要、偏好难度、最近焦虑等级、active exposure plan、推荐下一步任务和 context notes。它不注入原始聊天历史。
+完整 Conversation Timeline 是用户可见的历史事实来源，默认长期保留到用户主动删除。
+模型输入由 `ContextAssembler` 从 Timeline 和 Compact Summary 构建，并受 Token Budget
+限制；它不是第二份历史记录。`MemoryContext` 则包含近期安全场景摘要、偏好难度、
+最近焦虑等级、active exposure plan、推荐下一步任务和 context notes，不等同于
+Conversation History。
 
-这里的“不注入原始聊天历史”仅指数据库长期 `MemoryContext`。为保证任务内多轮连续性，Role-play 会从 Redis 读取带 TTL 的最近消息窗口和结构化 Compact State；Worksheet Draft 与 Support Search 也分别使用自己的类型化短期状态。三类状态都按用户与任务隔离，不会被提升为长期用户画像。
+Role-play 会从 Redis 读取带 TTL 的最近消息窗口和结构化 Compact State；Worksheet
+Draft 与 Support Search 也分别使用自己的类型化短期状态。三类状态都按用户与领域
+task/session 隔离，统一会话通过 Module Run 绑定对应领域 Session；这些状态不会被自动
+提升为长期用户画像。
 
 运行时用法：
 
@@ -288,7 +308,11 @@ Eval 是 harness contract 的一部分。Crisis 拦截、隐私最小化、conse
 ## 存储与运维
 
 - SQLite：本地开发和展示路径；
-- PostgreSQL：生产运行路径，已覆盖 trace、roleplay、worksheet、exposure、user profile、memory settings、protocol、intervention plan、metrics、account、session；
+- PostgreSQL：生产运行路径，已覆盖 unified conversation、trace、roleplay、worksheet、
+  exposure、user profile、memory settings、protocol、intervention plan、metrics、
+  account、session；
+- Conversation History：默认无自动过期；单条或全部删除会事务化清理事件、模块状态、
+  Compact Summary、领域 Session 和对应的派生 Memory，并保留不含正文的幂等删除回执；
 - Redis：Role-play、Worksheet Draft 和 Support Search 的短期 Task State；production 默认必须配置，连接异常会反映到 readiness；
 - Alembic：PostgreSQL schema migration；
 - cleanup scheduler：过期 protocol、取消 abandoned pending-consent plan、按 retention window 删除记录；PostgreSQL 下使用 advisory lock 防止多副本重复执行；

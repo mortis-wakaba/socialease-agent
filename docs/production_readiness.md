@@ -4,21 +4,20 @@ SocialEase 是一个**产品化 Agent 原型**，不是医疗产品，也不是�
 
 ## 当前基线
 
-最近一次产品化检查点：
+2026-07-27 本地与 CI 检查点：
 
 ```text
-backend pytest: 437 passed, 32 skipped
-PostgreSQL integration: 29 passed
-Redis integration: 2 passed
+backend pytest: 549 passed, 43 skipped
 eval suite: all metrics passed
 eval gate: passed
 frontend typecheck: passed
 frontend lint: passed
 frontend build: passed
-frontend E2E: 23 passed
-production auth E2E suite: 17 cases
-real frontend/backend smoke E2E: 1 passed
+PostgreSQL migration/runtime CI: passed
+Redis-backed task state CI: passed
 ```
+
+精确数字是带日期的验证快照，不是永久能力声明；最新结果以当前提交的 CI 为准。
 
 ## 已实现的生产化控制
 
@@ -46,6 +45,11 @@ real frontend/backend smoke E2E: 1 passed
 
 已实现：
 
+- `/chat` 单一主对话入口和 owner-scoped Conversation API；
+- 普通交流与 Role-play、Worksheet、Exposure、Resource 模块共享 Conversation Timeline
+  和有界 Working Context；
+- LLM 只能提供严格校验的 Module Proposal，必须由用户接受后才创建 Module Run；
+- 用户可结束当前或全部模块，白名单组合支持最大三层嵌套，Crisis 在任意深度抢占模块栈；
 - 主 `AgentHarness`：safety、routing、permission、skill dispatch、hooks、memory/update、trace、recovery；
 - support、role-play、worksheet、exposure planning、support-resource RAG、calendar planning、clarification、out-of-scope、crisis escalation 等 executable skills；
 - 主动练习 action 的 consent protocol；
@@ -59,6 +63,7 @@ real frontend/backend smoke E2E: 1 passed
 真实试点前仍需：
 
 - 使用 OIDC 或托管身份服务替换自建 HS256 JWT/session；
+- 完成旧 `/api/chat`、`/api/chat/stream` 和领域写 API 的消费者盘点及移除窗口；
 - 根据产品政策扩展高风险 support/practice 的策略组合；
 - 为直接写状态 API 补更深的 HTTP-level eval；
 - 为 Google/Outlook 等真实 Calendar Provider 实现用户级 OAuth、Token 生命周期和撤销流程。
@@ -129,6 +134,14 @@ real frontend/backend smoke E2E: 1 passed
 
 已实现：
 
+- Conversation、Event、Module Proposal/Run、Compact Summary 和幂等删除回执的
+  SQLite/PostgreSQL 持久化；
+- Conversation History 默认长期保留到用户主动删除，独立于模型 Working Context 和
+  consent-gated Agent Memory；
+- production 会话正文使用 AES-256-GCM，缺少内容密钥时 fail closed；
+- 单个/全部 Conversation 的导出和事务化级联删除，覆盖领域 Session、Redis Context、
+  Pending Memory Proposal 和来源于该会话的长期 Memory；
+- 旧 Role-play Session 可幂等导入只读归档时间线，不进行新旧双写；
 - SQLite 本地开发持久化；
 - repository interfaces for storage replacement;
 - repository factory with SQLite default and PostgreSQL adapters for trace, roleplay, worksheet, exposure, user profile, memory settings, protocol, intervention plan, metrics, account, and session records;
@@ -152,7 +165,7 @@ real frontend/backend smoke E2E: 1 passed
 - OIDC 或托管身份服务接入；
 - 对新增持久化用户派生字段持续审计；
 - 试点 owner 审核 retention window 和删除/匿名化策略；
-- 静态和传输加密；
+- 为会话正文以外的敏感持久化字段补齐统一静态加密策略，并在目标基础设施验证 TLS；
 - admin 角色和访问控制；
 - privacy impact assessment。
 
@@ -164,6 +177,8 @@ real frontend/backend smoke E2E: 1 passed
 - bounded resource agent-loop tests 覆盖双工具 observation、只读工具白名单、finish grounding、step budget、provider/tool failure 和 deterministic fallback；
 - eval suite 覆盖 safety、routing、citation、unknown handling、roleplay feedback、worksheet extraction、retrieval metrics、E2E workflow；
 - product-boundary eval gate with 210 bundled Chinese boundary cases;
+- unified conversation state machine、Proposal confirmation、module nesting、crisis
+  preemption、ownership、encryption、deletion cascade 和 legacy import 回归；
 - heavier local load regression tests for 50-user requests、Consent 原子消费、Calendar 幂等副作用和 migration readiness;
 - PostgreSQL 完整 Repository/Runtime CI，以及 fresh-process 重启持久化验证；
 - Redis 对 Role-play、Worksheet 和 Support Search 的统一 readiness 探针；
