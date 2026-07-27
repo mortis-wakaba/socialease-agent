@@ -17,6 +17,7 @@ from app.conversation.repository import (
     ConversationIdempotencyError,
     SQLiteConversationRepository,
 )
+from app.db.engine import connect
 from app.models_conversation import (
     ConversationEventRole,
     ConversationEventType,
@@ -282,3 +283,69 @@ def test_production_content_protection_fails_closed_without_key(
 
     with pytest.raises(ConversationContentProtectionError):
         configured_content_protector()
+
+
+def test_delete_cascades_timeline_memory_source_and_is_idempotent(
+    repository: SQLiteConversationRepository,
+) -> None:
+    conversation = repository.create(user_id="owner", title="Delete")
+    event = repository.append_event(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        event_type=ConversationEventType.USER_MESSAGE,
+        role=ConversationEventRole.USER,
+        content="delete this",
+        idempotency_key="delete-message",
+    )
+    now = datetime.now(UTC).isoformat()
+    with connect() as connection:
+        connection.execute(
+            """INSERT INTO memory_proposals
+            (proposal_id, user_id, memory_type, summary, scenario_type,
+             source_type, source_id, evidence_type, confidence, occurred_at,
+             status, policy_reason, content_hash, idempotency_key, version,
+             created_at, updated_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "memory-proposal-1",
+                "owner",
+                "helpful_strategy",
+                "demo summary",
+                None,
+                "chat",
+                event.event_id,
+                "explicit_user_statement",
+                0.9,
+                now,
+                "pending_confirmation",
+                "test",
+                "hash",
+                "memory-delete-test",
+                1,
+                now,
+                now,
+                (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            ),
+        )
+
+    counts = repository.delete_for_user(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+    )
+    replay = repository.delete_for_user(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+    )
+
+    assert counts is not None
+    assert counts["events"] == 1
+    assert counts["memory_proposals"] == 1
+    assert replay == counts
+    assert repository.get_for_user(conversation.conversation_id, "owner") is None
+    assert (
+        repository.delete_for_user(
+            conversation_id=conversation.conversation_id,
+            user_id="other",
+        )
+        is None
+    )

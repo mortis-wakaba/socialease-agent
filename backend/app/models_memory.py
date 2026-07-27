@@ -28,8 +28,9 @@ class UserPracticeSummary(BaseModel):
 
 
 class UserConsentState(BaseModel):
-    """User-controlled consent flags for long-term memory behavior."""
+    """Separate history persistence and long-term agent-memory controls."""
 
+    store_conversation_history: bool = True
     consent_to_practice_summary: bool = False
     consent_to_save_preferences: bool = False
     do_not_store_raw_messages: bool = True

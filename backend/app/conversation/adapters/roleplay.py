@@ -80,6 +80,13 @@ class RoleplayModuleAdapter:
     async def terminate(self, run: ModuleRun) -> None:
         await self.suspend(run)
 
+    async def delete_runtime_context(self, run: ModuleRun) -> None:
+        if run.domain_session_id:
+            await self._service.context_manager.delete(
+                user_id=run.user_id,
+                session_id=run.domain_session_id,
+            )
+
 
 def _parameters(run: ModuleRun) -> RoleplayParameters:
     if not isinstance(run.module_parameters, RoleplayParameters):

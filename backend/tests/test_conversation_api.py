@@ -173,3 +173,62 @@ async def test_conversation_api_accepts_and_manually_terminates_roleplay(
     )
     assert terminated.status_code == 200
     assert terminated.json()["active_module_stack"] == []
+
+
+@pytest.mark.anyio
+async def test_conversation_api_exports_and_idempotently_deletes_history(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = {"X-Demo-User-Id": "owner"}
+    created = await client.post(
+        "/api/conversations",
+        headers=headers,
+        json={
+            "user_id": "owner",
+            "title": "Export then delete",
+            "history_notice_version": HISTORY_NOTICE_VERSION,
+            "history_notice_acknowledged": True,
+        },
+    )
+    conversation_id = created.json()["conversation_id"]
+    await client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={
+            "user_id": "owner",
+            "message": "我想做角色扮演练习",
+            "idempotency_key": "api-delete-001",
+        },
+    )
+
+    exported = await client.get(
+        f"/api/conversations/{conversation_id}/export",
+        headers=headers,
+        params={"user_id": "owner"},
+    )
+    assert exported.status_code == 200
+    assert len(exported.json()["events"]) == 2
+
+    delete_payload = {"user_id": "owner", "confirm_delete": True}
+    deleted = await client.request(
+        "DELETE",
+        f"/api/conversations/{conversation_id}",
+        headers=headers,
+        json=delete_payload,
+    )
+    replay = await client.request(
+        "DELETE",
+        f"/api/conversations/{conversation_id}",
+        headers=headers,
+        json=delete_payload,
+    )
+    assert deleted.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["deleted_counts"] == deleted.json()["deleted_counts"]
+
+    hidden = await client.get(
+        f"/api/conversations/{conversation_id}",
+        headers=headers,
+        params={"user_id": "owner"},
+    )
+    assert hidden.status_code == 404

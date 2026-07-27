@@ -293,6 +293,13 @@ CREATE TABLE IF NOT EXISTS conversation_context_summaries (
     CHECK (compacted_through_sequence >= 0),
     CHECK (version >= 1)
 );
+CREATE TABLE IF NOT EXISTS conversation_deletion_receipts (
+    conversation_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    deleted_counts TEXT NOT NULL,
+    deleted_at TEXT NOT NULL,
+    PRIMARY KEY(conversation_id, user_id)
+);
 CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_roleplay_sessions_user_id ON roleplay_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_worksheets_user_id ON worksheets(user_id);
@@ -345,4 +352,6 @@ CREATE INDEX IF NOT EXISTS idx_conversation_module_runs_stack
 ON conversation_module_runs(user_id, conversation_id, depth);
 CREATE INDEX IF NOT EXISTS idx_conversation_context_summaries_owner
 ON conversation_context_summaries(user_id, conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_deletion_receipts_owner
+ON conversation_deletion_receipts(user_id, deleted_at);
 """

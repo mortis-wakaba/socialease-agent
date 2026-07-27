@@ -135,6 +135,27 @@ class ConversationRepository(Protocol):
         user_id: str,
     ) -> ModuleRun | None: ...
 
+    def list_all_module_runs(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleRun]: ...
+
+    def list_proposals(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleProposal]: ...
+
+    def delete_for_user(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> dict[str, int] | None: ...
+
 
 class SQLiteConversationRepository:
     """SQLite timeline adapter with transactional ordering and idempotency."""
@@ -742,6 +763,200 @@ class SQLiteConversationRepository:
             ).fetchone()
         return ModuleRun.model_validate_json(row["payload"]) if row else None
 
+    def list_all_module_runs(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleRun]:
+        """Return every active and terminal module run for export/deletion."""
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT payload FROM conversation_module_runs
+                WHERE conversation_id = ? AND user_id = ?
+                ORDER BY depth ASC, started_at ASC""",
+                (conversation_id, user_id),
+            ).fetchall()
+        return [ModuleRun.model_validate_json(row["payload"]) for row in rows]
+
+    def list_proposals(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleProposal]:
+        """Return all owner-scoped module proposals for export."""
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT payload FROM conversation_module_proposals
+                WHERE conversation_id = ? AND user_id = ?
+                ORDER BY created_at ASC""",
+                (conversation_id, user_id),
+            ).fetchall()
+        return [
+            ModuleProposal.model_validate_json(row["payload"]) for row in rows
+        ]
+
+    def delete_for_user(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> dict[str, int] | None:
+        """Delete one conversation and directly attributable durable data."""
+        connection = connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            receipt = connection.execute(
+                """SELECT deleted_counts
+                FROM conversation_deletion_receipts
+                WHERE conversation_id = ? AND user_id = ?""",
+                (conversation_id, user_id),
+            ).fetchone()
+            if receipt is not None:
+                connection.commit()
+                return {
+                    key: int(value)
+                    for key, value in json.loads(
+                        receipt["deleted_counts"]
+                    ).items()
+                }
+            owner = connection.execute(
+                """SELECT 1 FROM conversations
+                WHERE conversation_id = ? AND user_id = ?""",
+                (conversation_id, user_id),
+            ).fetchone()
+            if owner is None:
+                connection.rollback()
+                return None
+            event_rows = connection.execute(
+                """SELECT event_id FROM conversation_events
+                WHERE conversation_id = ? AND user_id = ?""",
+                (conversation_id, user_id),
+            ).fetchall()
+            run_rows = connection.execute(
+                """SELECT module_type, domain_session_id
+                FROM conversation_module_runs
+                WHERE conversation_id = ? AND user_id = ?""",
+                (conversation_id, user_id),
+            ).fetchall()
+            event_ids = [row["event_id"] for row in event_rows]
+            domain_ids = [
+                row["domain_session_id"]
+                for row in run_rows
+                if row["domain_session_id"]
+            ]
+            source_ids = [*event_ids, *domain_ids]
+            counts = {
+                "events": len(event_ids),
+                "module_runs": len(run_rows),
+                "module_proposals": connection.execute(
+                    """SELECT COUNT(*) AS count
+                    FROM conversation_module_proposals
+                    WHERE conversation_id = ? AND user_id = ?""",
+                    (conversation_id, user_id),
+                ).fetchone()["count"],
+                "compact_summaries": connection.execute(
+                    """SELECT COUNT(*) AS count
+                    FROM conversation_context_summaries
+                    WHERE conversation_id = ? AND user_id = ?""",
+                    (conversation_id, user_id),
+                ).fetchone()["count"],
+                "episodic_memories": 0,
+                "memory_proposals": 0,
+                "domain_sessions": 0,
+            }
+            if source_ids:
+                placeholders = ",".join("?" for _ in source_ids)
+                memory_ids = [
+                    row["memory_id"]
+                    for row in connection.execute(
+                        f"""SELECT memory_id FROM episodic_memories
+                        WHERE user_id = ? AND source_id IN ({placeholders})""",
+                        [user_id, *source_ids],
+                    ).fetchall()
+                ]
+                memory_proposal_ids = [
+                    row["proposal_id"]
+                    for row in connection.execute(
+                        f"""SELECT proposal_id FROM memory_proposals
+                        WHERE user_id = ? AND source_id IN ({placeholders})""",
+                        [user_id, *source_ids],
+                    ).fetchall()
+                ]
+                subject_ids = [*memory_ids, *memory_proposal_ids]
+                if subject_ids:
+                    subject_placeholders = ",".join("?" for _ in subject_ids)
+                    connection.execute(
+                        f"""DELETE FROM memory_events
+                        WHERE user_id = ? AND subject_id IN
+                        ({subject_placeholders})""",
+                        [user_id, *subject_ids],
+                    )
+                counts["memory_proposals"] = connection.execute(
+                    f"""DELETE FROM memory_proposals
+                    WHERE user_id = ? AND source_id IN ({placeholders})""",
+                    [user_id, *source_ids],
+                ).rowcount
+                counts["episodic_memories"] = connection.execute(
+                    f"""DELETE FROM episodic_memories
+                    WHERE user_id = ? AND source_id IN ({placeholders})""",
+                    [user_id, *source_ids],
+                ).rowcount
+            counts["domain_sessions"] = _delete_sqlite_domain_sessions(
+                connection,
+                user_id=user_id,
+                run_rows=run_rows,
+            )
+            connection.execute(
+                """DELETE FROM conversations
+                WHERE conversation_id = ? AND user_id = ?""",
+                (conversation_id, user_id),
+            )
+            counts["conversations"] = 1
+            normalized_counts = {
+                key: int(value) for key, value in counts.items()
+            }
+            connection.execute(
+                """INSERT INTO conversation_deletion_receipts
+                (conversation_id, user_id, deleted_counts, deleted_at)
+                VALUES (?, ?, ?, ?)""",
+                (
+                    conversation_id,
+                    user_id,
+                    json.dumps(normalized_counts, separators=(",", ":")),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            connection.commit()
+            return normalized_counts
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def delete_all_for_user(self, *, user_id: str) -> dict[str, int]:
+        """Delete all conversations by repeatedly applying scoped deletion."""
+        page = self.list_for_user(user_id, limit=100)
+        totals: dict[str, int] = {}
+        while True:
+            for conversation in page.items:
+                counts = self.delete_for_user(
+                    conversation_id=conversation.conversation_id,
+                    user_id=user_id,
+                )
+                for key, value in (counts or {}).items():
+                    totals[key] = totals.get(key, 0) + value
+            if page.next_cursor is None:
+                break
+            page = self.list_for_user(
+                user_id,
+                cursor=page.next_cursor,
+                limit=100,
+            )
+        return totals
+
     def update_module_domain_session(
         self,
         *,
@@ -1005,3 +1220,46 @@ def _decode_event_cursor(cursor: str) -> int:
     if sequence_no < 0:
         raise ValueError("invalid event cursor")
     return sequence_no
+
+
+def _delete_sqlite_domain_sessions(
+    connection: sqlite3.Connection,
+    *,
+    user_id: str,
+    run_rows: list[sqlite3.Row],
+) -> int:
+    """Delete durable domain rows referenced only by this conversation."""
+    grouped: dict[str, list[str]] = {}
+    for row in run_rows:
+        domain_session_id = row["domain_session_id"]
+        if domain_session_id:
+            grouped.setdefault(row["module_type"], []).append(domain_session_id)
+    deleted = 0
+    table_specs = {
+        "roleplay": ("roleplay_sessions", "session_id"),
+        "worksheet": ("worksheets", "worksheet_id"),
+    }
+    for module_type, (table, id_column) in table_specs.items():
+        identifiers = grouped.get(module_type, [])
+        if not identifiers:
+            continue
+        placeholders = ",".join("?" for _ in identifiers)
+        deleted += connection.execute(
+            f"""DELETE FROM {table}
+            WHERE user_id = ? AND {id_column} IN ({placeholders})""",
+            [user_id, *identifiers],
+        ).rowcount
+    exposure_ids = grouped.get("exposure", [])
+    if exposure_ids:
+        placeholders = ",".join("?" for _ in exposure_ids)
+        connection.execute(
+            f"""DELETE FROM exposure_attempts
+            WHERE user_id = ? AND plan_id IN ({placeholders})""",
+            [user_id, *exposure_ids],
+        )
+        deleted += connection.execute(
+            f"""DELETE FROM exposure_plans
+            WHERE user_id = ? AND plan_id IN ({placeholders})""",
+            [user_id, *exposure_ids],
+        ).rowcount
+    return deleted

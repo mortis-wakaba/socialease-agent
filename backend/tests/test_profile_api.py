@@ -44,6 +44,7 @@ async def test_profile_returns_empty_demo_summary(client: httpx.AsyncClient) -> 
         "preferred_difficulty": None,
     }
     assert payload["consent_state"] == {
+        "store_conversation_history": True,
         "consent_to_practice_summary": False,
         "consent_to_save_preferences": False,
         "do_not_store_raw_messages": True,

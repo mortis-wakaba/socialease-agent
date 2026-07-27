@@ -17,11 +17,16 @@ from app.models_conversation import (
 )
 from app.models_conversation_api import (
     ConversationCreateRequest,
+    ConversationDeleteRequest,
+    ConversationDeleteResponse,
     ConversationDetailResponse,
+    ConversationExportCollectionResponse,
+    ConversationExportResponse,
     ConversationMessageRequest,
     ConversationMessageResponse,
     ConversationModuleDecisionRequest,
     ConversationModuleTerminateRequest,
+    ConversationUpdateRequest,
     ModuleControlResponse,
 )
 from app.services.conversation_service import (
@@ -118,6 +123,98 @@ async def get_conversation(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/{conversation_id}", response_model=Conversation)
+async def update_conversation(
+    conversation_id: str,
+    request: ConversationUpdateRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> Conversation:
+    """Rename, archive, or unarchive one owner conversation."""
+    user_id = resolve_request_user_id(request.user_id, current_user)
+    try:
+        updated = conversation_service().update_conversation(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            expected_version=request.expected_version,
+            title=request.title,
+            status=request.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return updated
+
+
+@router.get(
+    "/{conversation_id}/export",
+    response_model=ConversationExportResponse,
+)
+async def export_conversation(
+    conversation_id: str,
+    user_id: str | None = None,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ConversationExportResponse:
+    """Export one complete decrypted owner timeline."""
+    effective_user_id = resolve_optional_user_id(user_id, current_user)
+    exported = conversation_service().export_conversation(
+        conversation_id=conversation_id,
+        user_id=effective_user_id,
+    )
+    if exported is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return exported
+
+
+@router.get(
+    "/all/export",
+    response_model=ConversationExportCollectionResponse,
+)
+async def export_all_conversations(
+    user_id: str | None = None,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ConversationExportCollectionResponse:
+    """Export all complete timelines owned by the current user."""
+    effective_user_id = resolve_optional_user_id(user_id, current_user)
+    return conversation_service().export_all_conversations(
+        user_id=effective_user_id
+    )
+
+
+@router.delete(
+    "/{conversation_id}",
+    response_model=ConversationDeleteResponse,
+)
+async def delete_conversation(
+    conversation_id: str,
+    request: ConversationDeleteRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ConversationDeleteResponse:
+    """Permanently delete one conversation after explicit confirmation."""
+    if not request.confirm_delete:
+        raise HTTPException(status_code=409, detail="Delete confirmation required")
+    user_id = resolve_request_user_id(request.user_id, current_user)
+    try:
+        return await conversation_service().delete_conversation(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc
+
+
+@router.delete("", response_model=ConversationDeleteResponse)
+async def delete_all_conversations(
+    request: ConversationDeleteRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ConversationDeleteResponse:
+    """Permanently delete every owner conversation after confirmation."""
+    if not request.confirm_delete:
+        raise HTTPException(status_code=409, detail="Delete confirmation required")
+    user_id = resolve_request_user_id(request.user_id, current_user)
+    return await conversation_service().delete_all_conversations(user_id=user_id)
 
 
 @router.post(

@@ -74,6 +74,13 @@ class WorksheetModuleAdapter:
     async def terminate(self, run: ModuleRun) -> None:
         del run
 
+    async def delete_runtime_context(self, run: ModuleRun) -> None:
+        if run.domain_session_id:
+            await self._service.draft_store.delete(
+                user_id=run.user_id,
+                task_id=run.domain_session_id,
+            )
+
 
 def _parameters(run: ModuleRun) -> WorksheetParameters:
     if not isinstance(run.module_parameters, WorksheetParameters):

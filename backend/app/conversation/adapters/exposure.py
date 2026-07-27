@@ -69,6 +69,9 @@ class ExposureModuleAdapter:
     async def terminate(self, run: ModuleRun) -> None:
         del run
 
+    async def delete_runtime_context(self, run: ModuleRun) -> None:
+        del run
+
     async def _create_plan(
         self,
         run: ModuleRun,

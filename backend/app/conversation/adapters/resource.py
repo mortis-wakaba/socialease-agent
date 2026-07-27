@@ -39,6 +39,13 @@ class ResourceModuleAdapter:
     async def terminate(self, run: ModuleRun) -> None:
         del run
 
+    async def delete_runtime_context(self, run: ModuleRun) -> None:
+        if run.domain_session_id:
+            await self._service.search_store.delete(
+                user_id=run.user_id,
+                task_id=run.domain_session_id,
+            )
+
     async def _query(
         self,
         run: ModuleRun,

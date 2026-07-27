@@ -1,10 +1,11 @@
 """PostgreSQL adapter for ordered, encrypted-capable conversation timelines."""
 
 from datetime import UTC, datetime
+import json
 from uuid import uuid4
 
-from sqlalchemy import text
-from sqlalchemy.engine import Engine, RowMapping
+from sqlalchemy import bindparam, text
+from sqlalchemy.engine import Connection, Engine, RowMapping
 
 from app.conversation.content_protector import (
     ConversationContentProtector,
@@ -729,6 +730,263 @@ class PostgresConversationRepository:
             ).mappings().first()
         return ModuleRun.model_validate(row["payload"]) if row else None
 
+    def list_all_module_runs(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleRun]:
+        """Return all active and terminal module runs for export/deletion."""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """SELECT payload FROM conversation_module_runs
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                    ORDER BY depth ASC, started_at ASC"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            ).mappings().all()
+        return [ModuleRun.model_validate(row["payload"]) for row in rows]
+
+    def list_proposals(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleProposal]:
+        """Return all owner-scoped proposals for export."""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """SELECT payload FROM conversation_module_proposals
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                    ORDER BY created_at ASC"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            ).mappings().all()
+        return [ModuleProposal.model_validate(row["payload"]) for row in rows]
+
+    def delete_for_user(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> dict[str, int] | None:
+        """Delete one conversation and its directly attributable records."""
+        with self.engine.begin() as connection:
+            receipt = connection.execute(
+                text(
+                    """SELECT deleted_counts
+                    FROM conversation_deletion_receipts
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            ).mappings().first()
+            if receipt is not None:
+                return {
+                    key: int(value)
+                    for key, value in receipt["deleted_counts"].items()
+                }
+            owner = connection.execute(
+                text(
+                    """SELECT 1 FROM conversations
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                    FOR UPDATE"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            ).first()
+            if owner is None:
+                return None
+            event_ids = list(
+                connection.execute(
+                    text(
+                        """SELECT event_id FROM conversation_events
+                        WHERE conversation_id = :conversation_id
+                          AND user_id = :user_id"""
+                    ),
+                    {
+                        "conversation_id": conversation_id,
+                        "user_id": user_id,
+                    },
+                ).scalars()
+            )
+            run_rows = connection.execute(
+                text(
+                    """SELECT module_type, domain_session_id
+                    FROM conversation_module_runs
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            ).mappings().all()
+            domain_ids = [
+                row["domain_session_id"]
+                for row in run_rows
+                if row["domain_session_id"]
+            ]
+            source_ids = [*event_ids, *domain_ids]
+            counts = {
+                "events": len(event_ids),
+                "module_runs": len(run_rows),
+                "module_proposals": int(
+                    connection.execute(
+                        text(
+                            """SELECT COUNT(*)
+                            FROM conversation_module_proposals
+                            WHERE conversation_id = :conversation_id
+                              AND user_id = :user_id"""
+                        ),
+                        {
+                            "conversation_id": conversation_id,
+                            "user_id": user_id,
+                        },
+                    ).scalar_one()
+                ),
+                "compact_summaries": int(
+                    connection.execute(
+                        text(
+                            """SELECT COUNT(*)
+                            FROM conversation_context_summaries
+                            WHERE conversation_id = :conversation_id
+                              AND user_id = :user_id"""
+                        ),
+                        {
+                            "conversation_id": conversation_id,
+                            "user_id": user_id,
+                        },
+                    ).scalar_one()
+                ),
+                "episodic_memories": 0,
+                "memory_proposals": 0,
+                "domain_sessions": 0,
+            }
+            if source_ids:
+                memory_ids = list(
+                    connection.execute(
+                        _expanding_text(
+                            """SELECT memory_id FROM episodic_memories
+                            WHERE user_id = :user_id
+                              AND source_id IN :source_ids""",
+                            "source_ids",
+                        ),
+                        {"user_id": user_id, "source_ids": source_ids},
+                    ).scalars()
+                )
+                proposal_ids = list(
+                    connection.execute(
+                        _expanding_text(
+                            """SELECT proposal_id FROM memory_proposals
+                            WHERE user_id = :user_id
+                              AND source_id IN :source_ids""",
+                            "source_ids",
+                        ),
+                        {"user_id": user_id, "source_ids": source_ids},
+                    ).scalars()
+                )
+                subject_ids = [*memory_ids, *proposal_ids]
+                if subject_ids:
+                    connection.execute(
+                        _expanding_text(
+                            """DELETE FROM memory_events
+                            WHERE user_id = :user_id
+                              AND subject_id IN :subject_ids""",
+                            "subject_ids",
+                        ),
+                        {"user_id": user_id, "subject_ids": subject_ids},
+                    )
+                counts["memory_proposals"] = int(
+                    connection.execute(
+                        _expanding_text(
+                            """DELETE FROM memory_proposals
+                            WHERE user_id = :user_id
+                              AND source_id IN :source_ids""",
+                            "source_ids",
+                        ),
+                        {"user_id": user_id, "source_ids": source_ids},
+                    ).rowcount
+                    or 0
+                )
+                counts["episodic_memories"] = int(
+                    connection.execute(
+                        _expanding_text(
+                            """DELETE FROM episodic_memories
+                            WHERE user_id = :user_id
+                              AND source_id IN :source_ids""",
+                            "source_ids",
+                        ),
+                        {"user_id": user_id, "source_ids": source_ids},
+                    ).rowcount
+                    or 0
+                )
+            counts["domain_sessions"] = _delete_postgres_domain_sessions(
+                connection,
+                user_id=user_id,
+                run_rows=run_rows,
+            )
+            connection.execute(
+                text(
+                    """DELETE FROM conversations
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            )
+            counts["conversations"] = 1
+            connection.execute(
+                text(
+                    """INSERT INTO conversation_deletion_receipts
+                    (conversation_id, user_id, deleted_counts, deleted_at)
+                    VALUES
+                    (:conversation_id, :user_id,
+                     CAST(:deleted_counts AS jsonb), :deleted_at)"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "deleted_counts": json.dumps(counts),
+                    "deleted_at": datetime.now(UTC),
+                },
+            )
+        return counts
+
+    def delete_all_for_user(self, *, user_id: str) -> dict[str, int]:
+        """Delete every user conversation through the scoped delete path."""
+        totals: dict[str, int] = {}
+        while True:
+            page = self.list_for_user(user_id, limit=100)
+            if not page.items:
+                break
+            for conversation in page.items:
+                counts = self.delete_for_user(
+                    conversation_id=conversation.conversation_id,
+                    user_id=user_id,
+                )
+                for key, value in (counts or {}).items():
+                    totals[key] = totals.get(key, 0) + value
+        return totals
+
     def update_module_domain_session(
         self,
         *,
@@ -958,3 +1216,63 @@ def _run_params(run: ModuleRun) -> dict[str, object]:
         "started_at": run.started_at,
         "ended_at": run.ended_at,
     }
+
+
+def _expanding_text(statement: str, parameter: str):
+    return text(statement).bindparams(bindparam(parameter, expanding=True))
+
+
+def _delete_postgres_domain_sessions(
+    connection: Connection,
+    *,
+    user_id: str,
+    run_rows: list[RowMapping],
+) -> int:
+    """Delete durable domain sessions attributable to one conversation."""
+    grouped: dict[str, list[str]] = {}
+    for row in run_rows:
+        domain_session_id = row["domain_session_id"]
+        if domain_session_id:
+            grouped.setdefault(row["module_type"], []).append(domain_session_id)
+    deleted = 0
+    for module_type, table, id_column in (
+        ("roleplay", "roleplay_sessions", "session_id"),
+        ("worksheet", "worksheets", "worksheet_id"),
+    ):
+        identifiers = grouped.get(module_type, [])
+        if not identifiers:
+            continue
+        deleted += int(
+            connection.execute(
+                _expanding_text(
+                    f"""DELETE FROM {table}
+                    WHERE user_id = :user_id
+                      AND {id_column} IN :identifiers""",
+                    "identifiers",
+                ),
+                {"user_id": user_id, "identifiers": identifiers},
+            ).rowcount
+            or 0
+        )
+    exposure_ids = grouped.get("exposure", [])
+    if exposure_ids:
+        connection.execute(
+            _expanding_text(
+                """DELETE FROM exposure_attempts
+                WHERE user_id = :user_id AND plan_id IN :identifiers""",
+                "identifiers",
+            ),
+            {"user_id": user_id, "identifiers": exposure_ids},
+        )
+        deleted += int(
+            connection.execute(
+                _expanding_text(
+                    """DELETE FROM exposure_plans
+                    WHERE user_id = :user_id AND plan_id IN :identifiers""",
+                    "identifiers",
+                ),
+                {"user_id": user_id, "identifiers": exposure_ids},
+            ).rowcount
+            or 0
+        )
+    return deleted

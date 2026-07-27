@@ -8,6 +8,7 @@
 | 数据类别 | 示例 | 是否可能包含用户原文 | 当前保护方式 | 用户控制 |
 |---|---|---:|---|---|
 | 账号数据 | email、密码哈希、session/token id | 否 | 密码只保存哈希；refresh token 保存 hash | 可退出登录；可删除账号并撤销会话 |
+| 对话历史 | unified conversation timeline、模块生命周期与结果 | 是 | owner scope、顺序/幂等约束；生产环境 AES-256-GCM，缺少密钥时拒绝启动持久化 | 首次持久化告知；可逐条/全部导出和删除 |
 | 练习记录 | roleplay session、worksheet、exposure plan | 部分字段可能来自用户输入 | privacy persistence gate、敏感信息脱敏、raw text 最小化 | `/settings` 导出/删除 |
 | Trace | safety、intent、permission、selected agent、输出摘要 | 默认不应保存完整原始心理文本 | trace field policy、最小化 input/output | retention cleanup |
 | Protocol | consent request、approval/rejection/consumed 状态 | 否，主要是动作和请求绑定 | protocol id、request hash、过期时间 | 过期/终态后 cleanup |
@@ -22,6 +23,10 @@
 - `SOCIALEASE_TRACE_RETENTION_DAYS=30`
 - `SOCIALEASE_PROTOCOL_RETENTION_DAYS=30`
 - `SOCIALEASE_ABANDONED_PLAN_MINUTES=60`
+
+用户完成版本化持久化告知后，对话历史默认长期保留，`expires_at = NULL`，不会被
+Trace/Protocol 的定时 cleanup 删除。用于模型输入的 Working Context 是有 token 上限的
+可重建投影，不等于完整历史；对话历史也不会自动成为长期 Agent Memory。
 
 cleanup job 会删除：
 
@@ -40,6 +45,12 @@ cleanup job 会删除：
 - `intervention_plans`
 - `user_memory_settings`
 
+用户主动删除单个 Conversation 时，会在一个数据库事务中删除该 Conversation 的事件、
+模块 Proposal/Run、Compact Summary、领域 Session，以及以 Conversation Event 或领域
+Session 为来源的 Pending Memory Proposal 和长期 Memory。短期 Redis Context 通过对应
+Adapter 同步清理。系统仅保留不含正文的 owner-scoped 删除回执，用于保证重复删除幂等；
+删除账号时回执也会删除。
+
 三类删除路径的语义不同：
 
 - Memory Delete：删除用户拥有的练习记录、Trace、Protocol、Intervention Plan、长期设置以及 Redis Task State，但保留账号本身；
@@ -52,6 +63,8 @@ cleanup job 会删除：
 
 - 查看轻量 profile summary；
 - 导出本人练习记录；
+- 查看、继续、重命名、归档和导出完整对话历史；
+- 删除单个或全部对话历史；
 - 删除本人练习记录；
 - 删除账号并撤销现有会话；
 - 关闭长期练习偏好；

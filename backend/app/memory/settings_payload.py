@@ -98,6 +98,9 @@ def _sanitize_consent_state(value: Any) -> UserConsentState:
     if not isinstance(value, dict):
         return UserConsentState()
     return UserConsentState(
+        store_conversation_history=_bool_or_default(
+            value.get("store_conversation_history"), True
+        ),
         consent_to_practice_summary=_bool_or_default(
             value.get("consent_to_practice_summary"), False
         ),

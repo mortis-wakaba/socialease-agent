@@ -301,6 +301,11 @@ class ModuleCoordinator:
             response="已结束全部模块，返回普通对话。",
         )
 
+    async def delete_runtime_contexts(self, runs: list[ModuleRun]) -> None:
+        """Delete short-lived adapter state before durable conversation deletion."""
+        for run in runs:
+            await self._adapter(run.module_type).delete_runtime_context(run)
+
     def _adapter(self, module_type: ModuleType) -> ModuleAdapter:
         adapter = self._adapters.get(module_type)
         if adapter is None:

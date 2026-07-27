@@ -567,6 +567,24 @@ async def test_delete_account_revokes_session_and_removes_login(
             "context": {},
         },
     )
+    with connect() as connection:
+        connection.execute(
+            """INSERT INTO conversations
+            (conversation_id, user_id, title, status, active_module_depth,
+             version, history_notice_version, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                f"account-delete-{uuid4().hex}",
+                user_id,
+                "Account delete conversation",
+                "active",
+                0,
+                1,
+                "test-notice",
+                "2026-07-27T00:00:00+00:00",
+                "2026-07-27T00:00:00+00:00",
+            ),
+        )
 
     delete_response = await client.delete("/api/auth/account", headers=headers)
     profile_after_delete = await client.get(
@@ -583,6 +601,7 @@ async def test_delete_account_revokes_session_and_removes_login(
     assert payload["deleted"] is True
     assert payload["revoked_sessions"] >= 1
     assert payload["deleted_memory_counts"]["runs"] >= 1
+    assert payload["deleted_memory_counts"]["conversations"] == 1
     assert profile_after_delete.status_code == 401
     assert login_after_delete.status_code == 401
 

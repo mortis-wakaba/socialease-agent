@@ -34,6 +34,7 @@ from app.models_conversation import (
     ConversationEvent,
     ConversationEventRole,
     ConversationEventType,
+    ConversationStatus,
     CrisisEscalatedEventPayload,
     ExposureParameters,
     ModuleProposal,
@@ -47,6 +48,11 @@ from app.models_conversation import (
 )
 from app.models_conversation_api import ConversationMessageResponse
 from app.models_conversation_api import ModuleControlResponse
+from app.models_conversation_api import (
+    ConversationDeleteResponse,
+    ConversationExportCollectionResponse,
+    ConversationExportResponse,
+)
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
 from app.workflow.engine import AgentHarness
@@ -189,6 +195,166 @@ class ConversationService:
         return self._repository.list_module_stack(
             conversation_id=conversation_id,
             user_id=user_id,
+        )
+
+    def update_conversation(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        expected_version: int,
+        title: str | None,
+        status,
+    ) -> Conversation | None:
+        """Rename or archive/unarchive one conversation optimistically."""
+        current = self._repository.get_for_user(conversation_id, user_id)
+        if current is None:
+            return None
+        if title is None and status is None:
+            raise ValueError("title or status update is required")
+        if status == ConversationStatus.DELETED:
+            raise ValueError("use the confirmed delete endpoint")
+        if (
+            status == ConversationStatus.ARCHIVED
+            and self._repository.list_module_stack(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+        ):
+            raise ValueError("end active modules before archiving")
+        if status is not None:
+            ModuleStackPolicy.validate_conversation_transition(
+                current.status,
+                status,
+            )
+        return self._repository.update_metadata(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            expected_version=expected_version,
+            title=title,
+            status=status,
+        )
+
+    def export_conversation(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationExportResponse | None:
+        """Export a complete decrypted timeline only to its owner."""
+        conversation = self._repository.get_for_user(
+            conversation_id,
+            user_id,
+        )
+        if conversation is None:
+            return None
+        events: list[ConversationEvent] = []
+        cursor = None
+        while True:
+            page = self._repository.list_events(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                cursor=cursor,
+                limit=200,
+            )
+            events.extend(page.items)
+            if page.next_cursor is None:
+                break
+            cursor = page.next_cursor
+        return ConversationExportResponse(
+            conversation=conversation,
+            events=events,
+            module_runs=self._repository.list_all_module_runs(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            ),
+            module_proposals=self._repository.list_proposals(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            ),
+            exported_at=datetime.now(UTC),
+        )
+
+    def export_all_conversations(
+        self,
+        *,
+        user_id: str,
+    ) -> ConversationExportCollectionResponse:
+        """Export every owner conversation without mixing user scopes."""
+        exports: list[ConversationExportResponse] = []
+        cursor = None
+        while True:
+            page = self._repository.list_for_user(
+                user_id,
+                cursor=cursor,
+                limit=100,
+            )
+            for conversation in page.items:
+                exported = self.export_conversation(
+                    conversation_id=conversation.conversation_id,
+                    user_id=user_id,
+                )
+                if exported is not None:
+                    exports.append(exported)
+            if page.next_cursor is None:
+                break
+            cursor = page.next_cursor
+        return ConversationExportCollectionResponse(
+            user_id=user_id,
+            conversations=exports,
+            exported_at=datetime.now(UTC),
+        )
+
+    async def delete_conversation(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationDeleteResponse:
+        """Delete durable and runtime data attributable to one conversation."""
+        runs = self._repository.list_all_module_runs(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        await self._module_coordinator.delete_runtime_contexts(runs)
+        counts = self._repository.delete_for_user(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        if counts is None:
+            raise LookupError("conversation not found")
+        return ConversationDeleteResponse(
+            conversation_id=conversation_id,
+            deleted=True,
+            deleted_counts=counts,
+        )
+
+    async def delete_all_conversations(
+        self,
+        *,
+        user_id: str,
+    ) -> ConversationDeleteResponse:
+        """Delete every owner conversation and its short-lived contexts."""
+        page = self._repository.list_for_user(user_id, limit=100)
+        while True:
+            for conversation in page.items:
+                runs = self._repository.list_all_module_runs(
+                    conversation_id=conversation.conversation_id,
+                    user_id=user_id,
+                )
+                await self._module_coordinator.delete_runtime_contexts(runs)
+            if page.next_cursor is None:
+                break
+            page = self._repository.list_for_user(
+                user_id,
+                cursor=page.next_cursor,
+                limit=100,
+            )
+        counts = self._repository.delete_all_for_user(user_id=user_id)
+        return ConversationDeleteResponse(
+            conversation_id="all",
+            deleted=True,
+            deleted_counts=counts,
         )
 
     async def send_message(
@@ -345,7 +511,10 @@ class ConversationService:
                 ChatRequest(
                     user_id=user_id,
                     message=message,
-                    context=_workflow_context(context),
+                    context=_workflow_context(
+                        context,
+                        source_event_id=user_event.event_id,
+                    ),
                 ),
                 trusted_safety_result=safety_result,
                 trusted_intent_result=intent_result,
@@ -602,10 +771,15 @@ def _proposal_request_hash(
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _workflow_context(context) -> dict[str, object]:
+def _workflow_context(
+    context,
+    *,
+    source_event_id: str,
+) -> dict[str, object]:
     """Project bounded conversation context into the existing harness."""
     return {
         "session_id": context.conversation_id,
+        "request_id": source_event_id,
         "conversation_id": context.conversation_id,
         "recent_conversation_events": [
             {

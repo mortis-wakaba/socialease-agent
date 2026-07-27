@@ -1,5 +1,7 @@
 """API contracts for unified conversation and module control endpoints."""
 
+from datetime import datetime
+
 from pydantic import Field
 
 from app.models import ChatResponse, SafetyResult
@@ -10,6 +12,7 @@ from app.models_conversation import (
     ModuleProposal,
     ModuleRun,
     StrictConversationModel,
+    ConversationStatus,
 )
 from app.models_conversation_context import ConversationContextDiagnostics
 
@@ -72,3 +75,45 @@ class ModuleControlResponse(StrictConversationModel):
     active_module_stack: list[ModuleRun] = Field(default_factory=list)
     appended_events: list[ConversationEvent] = Field(default_factory=list)
     response: str
+
+
+class ConversationUpdateRequest(StrictConversationModel):
+    """Optimistic owner update for title or archive state."""
+
+    user_id: str = Field(min_length=1)
+    expected_version: int = Field(ge=1)
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    status: ConversationStatus | None = None
+
+
+class ConversationDeleteRequest(StrictConversationModel):
+    """Explicit confirmation for destructive conversation deletion."""
+
+    user_id: str = Field(min_length=1)
+    confirm_delete: bool
+
+
+class ConversationExportResponse(StrictConversationModel):
+    """Complete decrypted owner export for one conversation."""
+
+    conversation: Conversation
+    events: list[ConversationEvent] = Field(default_factory=list)
+    module_runs: list[ModuleRun] = Field(default_factory=list)
+    module_proposals: list[ModuleProposal] = Field(default_factory=list)
+    exported_at: datetime
+
+
+class ConversationDeleteResponse(StrictConversationModel):
+    """Content-free deletion result safe for audit and UI."""
+
+    conversation_id: str
+    deleted: bool
+    deleted_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class ConversationExportCollectionResponse(StrictConversationModel):
+    """Complete owner export across all conversations."""
+
+    user_id: str = Field(min_length=1)
+    conversations: list[ConversationExportResponse] = Field(default_factory=list)
+    exported_at: datetime
