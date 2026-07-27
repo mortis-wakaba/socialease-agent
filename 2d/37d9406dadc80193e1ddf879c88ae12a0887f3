@@ -1,0 +1,32 @@
+backend/tests/test_postgres_conversation_repository.py
+  s_60c357d9985c3c::t_bad27063075b9d 4,19-21,137-181
+docs/production_readiness.md
+  s_60c357d9985c3c::t_69fd34d1af6404 10
+backend/app/db/postgres/conversation_repository.py
+  s_60c357d9985c3c::t_bad27063075b9d 623-629,633-636
+docs/benchmark_report.md
+  s_60c357d9985c3c::t_69fd34d1af6404 3,86
+backend/tests/test_postgres_runtime_smoke.py
+  s_60c357d9985c3c::t_24d7bfde945844 17-19,39-40,73-74,213-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "2d37d9406dadc80193e1ddf879c88ae12a0887f3",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
