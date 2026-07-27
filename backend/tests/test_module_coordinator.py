@@ -86,7 +86,13 @@ def repository(
     return SQLiteConversationRepository()
 
 
-@pytest.mark.asyncio
+@pytest.fixture
+def anyio_backend() -> str:
+    """Run async module coordinator tests on asyncio only."""
+    return "asyncio"
+
+
+@pytest.mark.anyio
 async def test_roleplay_exposure_nested_push_pop_and_resume(
     repository: SQLiteConversationRepository,
 ) -> None:
@@ -150,7 +156,7 @@ async def test_roleplay_exposure_nested_push_pop_and_resume(
     assert finished.conversation.active_module_depth == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
     repository: SQLiteConversationRepository,
 ) -> None:
@@ -197,7 +203,7 @@ async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
     assert stored.status is ModuleProposalStatus.PENDING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_active_module_receives_messages_on_same_timeline(
     repository: SQLiteConversationRepository,
 ) -> None:
@@ -226,7 +232,7 @@ async def test_active_module_receives_messages_on_same_timeline(
     assert event.sequence_no == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_crisis_preemption_stops_nested_stack_even_if_runtime_fails(
     repository: SQLiteConversationRepository,
 ) -> None:

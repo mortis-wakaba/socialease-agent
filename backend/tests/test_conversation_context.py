@@ -39,7 +39,13 @@ def repository(
     return SQLiteConversationRepository()
 
 
-@pytest.mark.asyncio
+@pytest.fixture
+def anyio_backend() -> str:
+    """Run async conversation tests on the supported asyncio backend."""
+    return "asyncio"
+
+
+@pytest.mark.anyio
 async def test_context_is_bounded_compacted_and_restored_across_instances(
     repository: SQLiteConversationRepository,
 ) -> None:
@@ -87,7 +93,7 @@ async def test_context_is_bounded_compacted_and_restored_across_instances(
     assert restored == context.compact_summary
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_compactor_excludes_crisis_injection_and_model_inference() -> None:
     now = datetime.now(UTC)
     events = [
@@ -132,7 +138,7 @@ async def test_compactor_excludes_crisis_injection_and_model_inference() -> None
     assert summary.compacted_through_sequence == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_current_request_is_retained_before_older_events(
     repository: SQLiteConversationRepository,
 ) -> None:

@@ -116,6 +116,12 @@ def repository(
     return SQLiteConversationRepository()
 
 
+@pytest.fixture
+def anyio_backend() -> str:
+    """Run async conversation service tests on asyncio only."""
+    return "asyncio"
+
+
 def _service(
     repository: SQLiteConversationRepository,
     *,
@@ -149,7 +155,7 @@ def test_current_history_notice_is_required(
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_module_intent_only_creates_an_option_until_user_confirms(
     repository: SQLiteConversationRepository,
 ) -> None:
@@ -206,7 +212,7 @@ async def test_module_intent_only_creates_an_option_until_user_confirms(
     assert proposal_count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_crisis_preempts_proposal_and_module_routing(
     repository: SQLiteConversationRepository,
 ) -> None:
@@ -232,7 +238,7 @@ async def test_crisis_preempts_proposal_and_module_routing(
     assert response.appended_events[-1].event_type.value == "crisis_escalated"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_proposal_reject_checks_hash_state_and_owner(
     repository: SQLiteConversationRepository,
 ) -> None:
@@ -282,7 +288,7 @@ async def test_proposal_reject_checks_hash_state_and_owner(
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_general_support_abstains_from_module_proposal(
     repository: SQLiteConversationRepository,
 ) -> None:
