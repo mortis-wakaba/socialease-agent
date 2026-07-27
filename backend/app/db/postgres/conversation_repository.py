@@ -620,13 +620,20 @@ class PostgresConversationRepository:
                     (proposal_id, conversation_id, user_id, proposed_module,
                      reason_code, status, request_hash, payload, expires_at,
                      created_at)
-                    SELECT :proposal_id, :conversation_id, :user_id,
-                     :proposed_module, :reason_code, :status, :request_hash,
+                    SELECT CAST(:proposal_id AS VARCHAR(64)),
+                     CAST(:conversation_id AS VARCHAR(64)),
+                     CAST(:user_id AS VARCHAR(128)),
+                     CAST(:proposed_module AS VARCHAR(16)),
+                     CAST(:reason_code AS VARCHAR(64)),
+                     CAST(:status AS VARCHAR(16)),
+                     CAST(:request_hash AS VARCHAR(128)),
                      CAST(:payload AS jsonb), :expires_at, :created_at
                     WHERE EXISTS (
                         SELECT 1 FROM conversations
-                        WHERE conversation_id = :conversation_id
-                          AND user_id = :user_id AND status = :active
+                        WHERE conversation_id =
+                              CAST(:conversation_id AS VARCHAR(64))
+                          AND user_id = CAST(:user_id AS VARCHAR(128))
+                          AND status = CAST(:active AS VARCHAR(16))
                     )
                     ON CONFLICT (conversation_id, request_hash) DO NOTHING
                     RETURNING payload"""

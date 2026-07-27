@@ -1,6 +1,7 @@
 """Integration tests for PostgreSQL unified conversation persistence."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 import os
 from uuid import uuid4
 
@@ -15,6 +16,9 @@ from app.db.postgres.conversation_repository import (
 from app.models_conversation import (
     ConversationEventRole,
     ConversationEventType,
+    ModuleProposal,
+    ModuleProposalReason,
+    ModuleProposalStatus,
     ModuleRun,
     ModuleType,
     RoleplayParameters,
@@ -130,3 +134,48 @@ def test_postgres_concurrent_append_sequence_is_contiguous(
         sequences = list(executor.map(append, range(16)))
 
     assert sorted(sequences) == list(range(1, 17))
+
+
+def test_postgres_proposal_is_owner_scoped_and_deduplicated(
+    repository: PostgresConversationRepository,
+) -> None:
+    """Exercise proposal persistence through PostgreSQL's typed bind path."""
+    user_id = f"pg_proposal_user_{uuid4().hex}"
+    conversation = repository.create(user_id=user_id, title="Proposal")
+    now = datetime.now(UTC)
+    proposal = ModuleProposal(
+        proposal_id=uuid4().hex,
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        proposed_module=ModuleType.ROLEPLAY,
+        reason_code=ModuleProposalReason.EXPLICIT_PRACTICE_REQUEST,
+        bounded_parameters=RoleplayParameters(
+            scenario_description="课堂发言练习",
+        ),
+        request_hash=uuid4().hex,
+        expires_at=now + timedelta(minutes=10),
+        created_at=now,
+    )
+
+    assert repository.save_proposal(proposal) == proposal
+    replay = repository.save_proposal(
+        proposal.model_copy(update={"proposal_id": uuid4().hex})
+    )
+    assert replay.proposal_id == proposal.proposal_id
+    accepted = repository.transition_proposal(
+        proposal_id=proposal.proposal_id,
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        expected_status=ModuleProposalStatus.PENDING,
+        target_status=ModuleProposalStatus.ACCEPTED,
+    )
+    assert accepted is not None
+    assert accepted.status is ModuleProposalStatus.ACCEPTED
+    assert (
+        repository.get_proposal_for_user(
+            proposal_id=proposal.proposal_id,
+            conversation_id=conversation.conversation_id,
+            user_id="other",
+        )
+        is None
+    )

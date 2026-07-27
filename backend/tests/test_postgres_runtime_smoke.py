@@ -14,6 +14,9 @@ from alembic.config import Config
 
 
 TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
+TEST_CONVERSATION_CONTENT_KEY = (
+    "c3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3M="
+)
 
 pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
@@ -33,6 +36,8 @@ def test_postgres_runtime_smoke_covers_auth_chat_consent_memory_delete() -> None
         "SOCIALEASE_DATABASE_URL": TEST_DATABASE_URL,
         "SOCIALEASE_AUTH_MODE": "production",
         "SOCIALEASE_AUTH_TOKEN_SECRET": "test-postgres-runtime-smoke-secret",
+        "SOCIALEASE_CONVERSATION_CONTENT_KEY": TEST_CONVERSATION_CONTENT_KEY,
+        "SOCIALEASE_CONVERSATION_CONTENT_KEY_VERSION": "postgres-smoke-v1",
         "SOCIALEASE_ENABLE_SIGNUP": "true",
         "SOCIALEASE_AUTH_COOKIE_ENABLED": "false",
         "SOCIALEASE_AUTH_RATE_LIMIT_PER_MINUTE": "1000",
@@ -65,6 +70,8 @@ def test_postgres_runtime_state_survives_fresh_application_process() -> None:
         "SOCIALEASE_DATABASE_URL": TEST_DATABASE_URL,
         "SOCIALEASE_AUTH_MODE": "production",
         "SOCIALEASE_AUTH_TOKEN_SECRET": "test-postgres-restart-secret",
+        "SOCIALEASE_CONVERSATION_CONTENT_KEY": TEST_CONVERSATION_CONTENT_KEY,
+        "SOCIALEASE_CONVERSATION_CONTENT_KEY_VERSION": "postgres-smoke-v1",
         "SOCIALEASE_ENABLE_SIGNUP": "true",
         "SOCIALEASE_AUTH_COOKIE_ENABLED": "false",
         "SOCIALEASE_AUTH_RATE_LIMIT_PER_MINUTE": "1000",
@@ -106,10 +113,6 @@ _SMOKE_CODE = textwrap.dedent(
     from uuid import uuid4
 
     from app.main import app
-    from app.models_worksheet import WorksheetCreateRequest
-    from app.services.worksheet_service import worksheet_service
-
-
     async def main():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -207,6 +210,8 @@ _RESTART_WRITER_CODE = textwrap.dedent(
     from uuid import uuid4
 
     from app.main import app
+    from app.models_worksheet import WorksheetCreateRequest
+    from app.services.worksheet_service import worksheet_service
 
 
     async def main():
