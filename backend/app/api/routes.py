@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.auth import router as auth_router
 from app.api.calendar import router as calendar_router
+from app.api.conversations import router as conversations_router
 from app.api.exposure import router as exposure_router
 from app.api.harness import router as harness_router
 from app.api.intervention_plans import router as intervention_plans_router
@@ -39,6 +40,7 @@ router = APIRouter(prefix="/api")
 workflow = AgentHarness(trace_logger=trace_logger, hooks=create_default_hooks())
 router.include_router(auth_router)
 router.include_router(calendar_router)
+router.include_router(conversations_router)
 router.include_router(exposure_router)
 router.include_router(harness_router)
 router.include_router(intervention_plans_router)

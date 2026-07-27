@@ -98,6 +98,14 @@ class ConversationRepository(Protocol):
         limit: int = 64,
     ) -> list[ConversationEvent]: ...
 
+    def get_event_by_idempotency(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationEvent | None: ...
+
     def get_compact_summary(
         self,
         *,
@@ -425,6 +433,32 @@ class SQLiteConversationRepository:
                 ),
             ).fetchall()
         return [self._event_from_row(row) for row in reversed(rows)]
+
+    def get_event_by_idempotency(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationEvent | None:
+        """Return one idempotent event inside its complete owner scope."""
+        with connect() as connection:
+            row = connection.execute(
+                """SELECT events.* FROM conversation_events AS events
+                JOIN conversations AS conversations
+                  ON conversations.conversation_id = events.conversation_id
+                WHERE events.conversation_id = ? AND events.user_id = ?
+                  AND events.idempotency_key = ?
+                  AND conversations.user_id = ? AND conversations.status != ?""",
+                (
+                    conversation_id,
+                    user_id,
+                    idempotency_key,
+                    user_id,
+                    ConversationStatus.DELETED.value,
+                ),
+            ).fetchone()
+        return self._event_from_row(row) if row else None
 
     def get_compact_summary(
         self,

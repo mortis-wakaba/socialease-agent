@@ -403,6 +403,35 @@ class PostgresConversationRepository:
             ).mappings().all()
         return [self._event_from_row(row) for row in reversed(rows)]
 
+    def get_event_by_idempotency(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationEvent | None:
+        """Return one event inside its complete owner scope."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT events.* FROM conversation_events AS events
+                    JOIN conversations AS conversations
+                      ON conversations.conversation_id = events.conversation_id
+                    WHERE events.conversation_id = :conversation_id
+                      AND events.user_id = :user_id
+                      AND events.idempotency_key = :idempotency_key
+                      AND conversations.user_id = :user_id
+                      AND conversations.status != :deleted"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                    "deleted": ConversationStatus.DELETED.value,
+                },
+            ).mappings().first()
+        return self._event_from_row(row) if row else None
+
     def get_compact_summary(
         self,
         *,

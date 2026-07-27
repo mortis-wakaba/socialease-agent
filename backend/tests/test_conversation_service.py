@@ -1,0 +1,221 @@
+"""Tests for consent-gated module proposals in unified conversations."""
+
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+from app.conversation.compactor import ConversationCompactor
+from app.conversation.context_manager import ConversationContextManager
+from app.conversation.repository import SQLiteConversationRepository
+from app.models import Intent, IntentResult, RiskLevel, SafetyResult
+from app.models_conversation import (
+    HISTORY_NOTICE_VERSION,
+    ModuleProposalStatus,
+    ModuleType,
+)
+from app.services.conversation_service import (
+    ConversationNoticeError,
+    ConversationProposalError,
+    ConversationService,
+)
+
+
+class StubHarness:
+    """Fail if a proposal test accidentally executes a domain skill."""
+
+    async def run(self, *args: object, **kwargs: object):
+        del args, kwargs
+        raise AssertionError("the harness must not run before module confirmation")
+
+
+class LowSafety:
+    async def classify(self, message: str) -> SafetyResult:
+        del message
+        return SafetyResult(risk_level=RiskLevel.LOW, reason="test")
+
+
+class CrisisSafety:
+    async def classify(self, message: str) -> SafetyResult:
+        del message
+        return SafetyResult(risk_level=RiskLevel.CRISIS, reason="test")
+
+
+class RoleplayIntent:
+    async def route(
+        self,
+        message: str,
+        safety_result: SafetyResult,
+    ) -> IntentResult:
+        del message, safety_result
+        return IntentResult(
+            intent=Intent.ROLEPLAY_PRACTICE,
+            confidence=0.95,
+            reason="test",
+        )
+
+
+@pytest.fixture
+def repository(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> SQLiteConversationRepository:
+    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "service.db"))
+    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
+    monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
+    return SQLiteConversationRepository()
+
+
+def _service(
+    repository: SQLiteConversationRepository,
+    *,
+    crisis: bool = False,
+) -> ConversationService:
+    context_manager = ConversationContextManager(
+        repository=repository,
+        compactor=ConversationCompactor(),
+    )
+    return ConversationService(
+        harness=StubHarness(),  # type: ignore[arg-type]
+        repository=repository,
+        safety_classifier=CrisisSafety() if crisis else LowSafety(),
+        intent_router=RoleplayIntent(),
+        context_manager=context_manager,
+        proposal_ttl=timedelta(minutes=10),
+    )
+
+
+def test_current_history_notice_is_required(
+    repository: SQLiteConversationRepository,
+) -> None:
+    service = _service(repository)
+
+    with pytest.raises(ConversationNoticeError):
+        service.create_conversation(
+            user_id="owner",
+            title="Conversation",
+            history_notice_version=HISTORY_NOTICE_VERSION,
+            history_notice_acknowledged=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_module_intent_only_creates_an_option_until_user_confirms(
+    repository: SQLiteConversationRepository,
+) -> None:
+    service = _service(repository)
+    conversation = service.create_conversation(
+        user_id="owner",
+        title="Practice",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+
+    response = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="我想做角色扮演，练习小组讨论",
+        idempotency_key="request-001",
+    )
+
+    assert response.pending_module_proposal is not None
+    assert (
+        response.pending_module_proposal.proposed_module
+        is ModuleType.ROLEPLAY
+    )
+    assert response.active_module_stack == []
+    assert response.workflow_response is None
+    assert "确认前不会启动" in response.response
+
+    replay = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="我想做角色扮演，练习小组讨论",
+        idempotency_key="request-001",
+    )
+    assert (
+        replay.pending_module_proposal.proposal_id
+        == response.pending_module_proposal.proposal_id
+    )
+    assert len(service.list_events(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        cursor=None,
+        limit=20,
+    ).items) == 2
+
+
+@pytest.mark.asyncio
+async def test_crisis_preempts_proposal_and_module_routing(
+    repository: SQLiteConversationRepository,
+) -> None:
+    service = _service(repository, crisis=True)
+    conversation = service.create_conversation(
+        user_id="owner",
+        title="Safety",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+
+    response = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="crisis test input",
+        idempotency_key="request-002",
+    )
+
+    assert response.pending_module_proposal is None
+    assert response.safety_result.risk_level is RiskLevel.CRISIS
+    assert "现实" not in response.response
+    assert "紧急服务" in response.response
+    assert response.appended_events[-1].event_type.value == "crisis_escalated"
+
+
+@pytest.mark.asyncio
+async def test_proposal_reject_checks_hash_state_and_owner(
+    repository: SQLiteConversationRepository,
+) -> None:
+    service = _service(repository)
+    conversation = service.create_conversation(
+        user_id="owner",
+        title="Decision",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+    response = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="角色扮演练习",
+        idempotency_key="request-003",
+    )
+    proposal = response.pending_module_proposal
+    assert proposal is not None
+
+    with pytest.raises(ConversationProposalError, match="hash"):
+        service.reject_proposal(
+            conversation_id=conversation.conversation_id,
+            proposal_id=proposal.proposal_id,
+            user_id="owner",
+            request_hash="b" * 64,
+        )
+    with pytest.raises(ConversationProposalError, match="not found"):
+        service.reject_proposal(
+            conversation_id=conversation.conversation_id,
+            proposal_id=proposal.proposal_id,
+            user_id="other",
+            request_hash=proposal.request_hash,
+        )
+    rejected = service.reject_proposal(
+        conversation_id=conversation.conversation_id,
+        proposal_id=proposal.proposal_id,
+        user_id="owner",
+        request_hash=proposal.request_hash,
+    )
+    assert rejected.status is ModuleProposalStatus.REJECTED
+    with pytest.raises(ConversationProposalError, match="no longer pending"):
+        service.reject_proposal(
+            conversation_id=conversation.conversation_id,
+            proposal_id=proposal.proposal_id,
+            user_id="owner",
+            request_hash=proposal.request_hash,
+        )

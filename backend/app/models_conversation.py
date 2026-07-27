@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+
 HISTORY_NOTICE_VERSION = "2026-07-01"
 MAX_MODULE_DEPTH = 3
 

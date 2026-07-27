@@ -115,8 +115,11 @@ class AgentHarness:
         self,
         request: ChatRequest,
         event_sink: WorkflowEventSink | None = None,
+        *,
+        trusted_safety_result: SafetyResult | None = None,
+        trusted_intent_result: IntentResult | None = None,
     ) -> ChatResponse:
-        """Execute one full harness run and store a trace."""
+        """Execute one run, optionally reusing application-owned routing results."""
         started = perf_counter()
         run_id = str(uuid4())
         _emit_progress(
@@ -149,17 +152,25 @@ class AgentHarness:
             if method is not None:
                 method(request)
 
-        try:
-            safety_result = await self.safety_classifier.classify(request.message)
-        except Exception as exc:
-            safety_result = SafetyResult(
-                risk_level=RiskLevel.HIGH,
-                reason=(
-                    "Safety classifier failed; using conservative high-risk fallback "
-                    "instead of ordinary low-risk handling."
-                ),
-            )
-            errors.append(format_trace_error(ErrorCategory.SAFETY_CLASSIFIER_FAILURE, exc))
+        if trusted_safety_result is not None:
+            safety_result = trusted_safety_result
+        else:
+            try:
+                safety_result = await self.safety_classifier.classify(request.message)
+            except Exception as exc:
+                safety_result = SafetyResult(
+                    risk_level=RiskLevel.HIGH,
+                    reason=(
+                        "Safety classifier failed; using conservative high-risk "
+                        "fallback instead of ordinary low-risk handling."
+                    ),
+                )
+                errors.append(
+                    format_trace_error(
+                        ErrorCategory.SAFETY_CLASSIFIER_FAILURE,
+                        exc,
+                    )
+                )
         run_context.safety_result = safety_result
         for hook in self.hooks:
             method = getattr(hook, "after_safety", None)
@@ -184,6 +195,8 @@ class AgentHarness:
                 confidence=1.0,
                 reason="Safety permission gate required crisis escalation.",
             )
+        elif trusted_intent_result is not None:
+            intent_result = trusted_intent_result
         else:
             intent_result = await self.intent_router.route(request.message, safety_result)
         run_context.intent_result = intent_result
