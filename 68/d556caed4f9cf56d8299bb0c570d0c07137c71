@@ -1,0 +1,137 @@
+backend/app/skills/exposure.py
+  s_60c357d9985c3c::t_74c5141257ea66 1,7,11,15,18,23-25
+backend/tests/test_harness_architecture.py
+  s_60c357d9985c3c::t_a5eda4dde10b28 462,492-495
+Makefile
+  s_60c357d9985c3c::t_f74de5150d9684 23
+frontend/lib/types.ts
+  s_60c357d9985c3c::t_a5eda4dde10b28 752
+  s_60c357d9985c3c::t_0d17f83ea5fd40 123
+.env.staging.example
+  s_60c357d9985c3c::t_48635bfb6841dc 55-57
+backend/app/models_exposure.py
+  s_60c357d9985c3c::t_4d3c037c482938 97
+backend/tests/test_privacy_persistence_gate.py
+  s_60c357d9985c3c::t_9745b1257f94d9 10-15,22-23,371-375,378-381,389-392,399,402-406,479-485,487-499,502-503,506,509,512-514,523-528,531-533,537
+docs/architecture_diagram.md
+  s_60c357d9985c3c::t_b36a4ad2960ec5 3,7-65,68-89
+docs/deployment_runbook.md
+  s_60c357d9985c3c::t_79a6a0266fa449 93
+backend/tests/test_module_overlay_store.py
+  s_60c357d9985c3c::t_77e3a7a8e073f3 14-15,17-18,85-103
+  s_60c357d9985c3c::t_f74de5150d9684 4-5,16,104-137
+  s_60c357d9985c3c::t_b72b48ebb2d803 138-139
+backend/app/conversation/adapters/exposure.py
+  s_60c357d9985c3c::t_4d3c037c482938 18-22,63,122-126,195-257,268-296
+backend/app/models_conversation.py
+  s_60c357d9985c3c::t_4d3c037c482938 178-180
+docker-compose.yml
+  s_60c357d9985c3c::t_48635bfb6841dc 55-57
+backend/app/skills/support_rag.py
+  s_60c357d9985c3c::t_74c5141257ea66 1,7,11,16,21,27-29
+backend/tests/test_profile_api.py
+  s_60c357d9985c3c::t_a0e85767467ccb 12-16,18,91-96,98-108
+docs/data_retention_and_privacy.md
+  s_60c357d9985c3c::t_79a6a0266fa449 31-35
+docs/adr/0008-unified-conversation-timeline-and-module-stack.md
+  s_60c357d9985c3c::t_b36a4ad2960ec5 34-44,58-60
+backend/app/api/worksheet.py
+  s_60c357d9985c3c::t_0f1fd5e1102ead 6
+docs/environment_config.md
+  s_60c357d9985c3c::t_3707f1a639bc17 117,120-124,128-134
+README.md
+  s_60c357d9985c3c::t_99a0dc1d5900c6 28-29,44-47,60
+frontend/components/pause-practice-panel.tsx
+  s_60c357d9985c3c::t_2ffbfca333973c 94
+backend/app/skills/roleplay.py
+  s_60c357d9985c3c::t_74c5141257ea66 7,25
+frontend/app/support/page.tsx
+  s_60c357d9985c3c::t_167cd9dbe361f1 1,4
+.env.production.example
+  s_60c357d9985c3c::t_48635bfb6841dc 57-59
+.env.example
+  s_60c357d9985c3c::t_48635bfb6841dc 61-63
+docs/benchmark_report.md
+  s_60c357d9985c3c::t_42383ac82a799d 3,86
+docs/production_readiness.md
+  s_60c357d9985c3c::t_42383ac82a799d 10
+  s_60c357d9985c3c::t_e95740f109ed1b 148-149,185
+backend/tests/test_module_domain_services.py
+  s_60c357d9985c3c::t_64a06577afcfaa 4,8,14-18,119-156,159-163
+  s_60c357d9985c3c::t_f3f6122eb1bd91 84
+  s_60c357d9985c3c::t_59d434e6909443 1-3,9-13,19-26,34-42,46-52,54-61,64-66,70-76,78-79,82-83,85-86,90-97,99-110,113-115,167-176,178-179,182-184
+frontend/app/practice/page.tsx
+  s_60c357d9985c3c::t_33dccfb41a9e63 1,4
+docs/agent_harness_design.md
+  s_60c357d9985c3c::t_79a6a0266fa449 17-18,46-47,295-299,319-321
+backend/app/skills/worksheet.py
+  s_60c357d9985c3c::t_74c5141257ea66 1,7,11,15,18,23-25
+docs/adr/0005-chat-harness-executable-skill-dispatch.md
+  s_60c357d9985c3c::t_81b8a879e8de47 48-51,54
+  s_60c357d9985c3c::t_a5eda4dde10b28 44-45,52-53
+frontend/app/history/page.tsx
+  s_60c357d9985c3c::t_d89320bad95ae6 236
+  s_60c357d9985c3c::t_33dccfb41a9e63 92,95,179,182
+frontend/app/dashboard/page.tsx
+  s_60c357d9985c3c::t_33dccfb41a9e63 255,330
+frontend/app/onboarding/page.tsx
+  s_60c357d9985c3c::t_33dccfb41a9e63 285
+  s_60c357d9985c3c::t_2ffbfca333973c 286
+frontend/app/progress/page.tsx
+  s_60c357d9985c3c::t_bd860218d7c4c3 4,6,78-83
+  s_60c357d9985c3c::t_167cd9dbe361f1 3,7-9,20-23,25,27-28,30-31,33,38-39,41-47,49-53,55-63,65-69,71-77,84-85
+backend/app/services/exposure_service.py
+  s_60c357d9985c3c::t_4d3c037c482938 146
+backend/app/agents/exposure.py
+  s_60c357d9985c3c::t_4d3c037c482938 135-139,141,144
+  s_60c357d9985c3c::t_082a3d440e8628 118
+frontend/app/page.tsx
+  s_60c357d9985c3c::t_33dccfb41a9e63 21
+backend/tests/test_auth_boundaries.py
+  s_60c357d9985c3c::t_a0e85767467ccb 10,12-13,15,115-119,121-123,134,174-179,181-182,185,189,193,367,386
+frontend/e2e/product-flows.spec.ts
+  s_60c357d9985c3c::t_87b314e63a58a8 1,10-14,33,39,58,67,69-72,75,84-85,87-88,95-98,100,107,111-113,119-120,127,130-133,141,143,161,174,176,186,193,198,200,204-210,213,218-219,222,226,230,233-234,241-245,247,255-256,258-263
+frontend/app/worksheet/page.tsx
+  s_60c357d9985c3c::t_167cd9dbe361f1 1,4
+backend/tests/test_chat_api.py
+  s_60c357d9985c3c::t_94edd24b0f917d 606
+  s_60c357d9985c3c::t_a5eda4dde10b28 470,474-475,478,488-492,581-584
+backend/app/api/exposure.py
+  s_60c357d9985c3c::t_0f1fd5e1102ead 3
+backend/app/conversation/context_provider.py
+  s_60c357d9985c3c::t_68c9d5da84df8f 5,164,172-185
+  s_60c357d9985c3c::t_b51f003baae462 186-190
+backend/tests/test_postgres_runtime_smoke.py
+  s_60c357d9985c3c::t_39bd5ac165dd37 134-135,139-141,144-145,147-148,150-154,156-164,168,171-174,176-177,179,181-182
+  s_60c357d9985c3c::t_251d2cdb0abdb6 109-110,224-228,230,235
+backend/tests/test_conversation_context_cache.py
+  s_60c357d9985c3c::t_77e3a7a8e073f3 24,159-177
+  s_60c357d9985c3c::t_d752e5845d0f89 4,123-158
+  s_60c357d9985c3c::t_7c2a94cbc151b5 178-179
+docs/load_tests.md
+  s_60c357d9985c3c::t_f014d00274ec80 54,73-76
+  s_60c357d9985c3c::t_f4c361093cff41 77
+backend/app/skills/unified_conversation.py
+  s_60c357d9985c3c::t_74c5141257ea66 1,3,6-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "68d556caed4f9cf56d8299bb0c570d0c07137c71",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
