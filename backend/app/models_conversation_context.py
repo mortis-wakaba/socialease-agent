@@ -99,6 +99,8 @@ class ConversationContextDiagnostics(StrictConversationModel):
     budget_profile: ConversationContextProfile = ConversationContextProfile.ORDINARY
     dropped_sections: list[str] = Field(default_factory=list)
     tokenizer_backend: str = Field(min_length=1, max_length=64)
+    context_backend: str = Field(default="database", min_length=1, max_length=64)
+    cache_status: str = Field(default="database", min_length=1, max_length=32)
 
 
 class ConversationWorkingContext(StrictConversationModel):

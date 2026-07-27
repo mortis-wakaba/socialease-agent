@@ -116,6 +116,8 @@ class ConversationContextManager:
             budget_profile=profile,
             dropped_sections=allocated.dropped_sections,
             tokenizer_backend=self._token_estimator.backend_name,
+            context_backend=self._provider.backend_name,
+            cache_status=snapshot.cache_status,
         )
         return ConversationWorkingContext(
             conversation_id=conversation_id,
@@ -126,6 +128,33 @@ class ConversationContextManager:
             selected_agent_memory=allocated.selected_memory,
             diagnostics=diagnostics,
         )
+
+    async def invalidate(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> None:
+        """Invalidate one cached projection after deletion or same-version writes."""
+        await self._provider.invalidate(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+
+    async def delete_user_cache(self, *, user_id: str) -> int:
+        """Delete every cached projection when supported by the provider."""
+        delete_user = getattr(self._provider, "delete_user", None)
+        if delete_user is None:
+            return 0
+        return int(await delete_user(user_id=user_id))
+
+    async def close(self) -> None:
+        """Close the context provider's optional Redis client."""
+        await self._provider.close()
+
+    async def health(self) -> bool:
+        """Return whether the configured context provider is ready."""
+        return await self._provider.health()
 
     async def _compact_older_events(
         self,

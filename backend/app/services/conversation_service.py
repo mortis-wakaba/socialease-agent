@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.conversation.compactor import ConversationCompactor
 from app.conversation.context_manager import ConversationContextManager
+from app.conversation.context_provider import create_conversation_context_provider
 from app.conversation.legacy_importer import LegacyConversationImporter
 from app.conversation.adapters import (
     ExposureModuleAdapter,
@@ -121,6 +122,7 @@ class ConversationService:
                 token_estimator=estimator,
             ),
             token_estimator=estimator,
+            provider=create_conversation_context_provider(self._repository),
         )
         self._module_coordinator = module_coordinator or ModuleCoordinator(
             repository=self._repository,
@@ -362,6 +364,10 @@ class ConversationService:
             user_id=user_id,
         )
         await self._module_coordinator.delete_runtime_contexts(runs)
+        await self._context_manager.invalidate(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
         counts = self._repository.delete_for_user(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -396,11 +402,20 @@ class ConversationService:
                 limit=100,
             )
         counts = self._repository.delete_all_for_user(user_id=user_id)
+        await self._context_manager.delete_user_cache(user_id=user_id)
         return ConversationDeleteResponse(
             conversation_id="all",
             deleted=True,
             deleted_counts=counts,
         )
+
+    async def close(self) -> None:
+        """Close the optional shared conversation-context cache client."""
+        await self._context_manager.close()
+
+    async def context_health(self) -> bool:
+        """Return whether the unified context provider is ready."""
+        return await self._context_manager.health()
 
     async def send_message(
         self,

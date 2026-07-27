@@ -55,6 +55,12 @@ def conversation_service() -> ConversationService:
     )
 
 
+async def close_cached_conversation_service() -> None:
+    """Close context-cache resources only when the service was instantiated."""
+    if conversation_service.cache_info().currsize:
+        await conversation_service().close()
+
+
 @router.post("", response_model=Conversation)
 async def create_conversation(
     request: ConversationCreateRequest,

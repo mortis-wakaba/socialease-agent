@@ -28,6 +28,10 @@ validate_runtime_database_support()
 validate_task_state_runtime()
 
 from app.api.routes import router as api_router
+from app.api.conversations import (
+    close_cached_conversation_service,
+    conversation_service,
+)
 from app.services.roleplay_service import roleplay_service
 from app.services.support_resource_service import support_resource_service
 from app.services.worksheet_service import worksheet_service
@@ -40,6 +44,7 @@ async def lifespan(_app: FastAPI):
     await roleplay_service.close()
     await worksheet_service.close()
     await support_resource_service.close()
+    await close_cached_conversation_service()
 
 app = FastAPI(
     title="SocialEase Agent API",
@@ -130,12 +135,14 @@ async def readiness_check() -> JSONResponse:
         "roleplay": False,
         "worksheet": False,
         "support_search": False,
+        "conversation_context": False,
     }
     if task_state.configured:
         results = await asyncio.gather(
             roleplay_service.context_health(),
             worksheet_service.context_health(),
             support_resource_service.context_health(),
+            conversation_service().context_health(),
             return_exceptions=True,
         )
         component_health = {
