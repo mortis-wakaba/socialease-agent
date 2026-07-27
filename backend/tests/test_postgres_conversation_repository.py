@@ -15,6 +15,9 @@ from app.db.postgres.conversation_repository import (
 from app.models_conversation import (
     ConversationEventRole,
     ConversationEventType,
+    ModuleRun,
+    ModuleType,
+    RoleplayParameters,
 )
 
 
@@ -73,6 +76,37 @@ def test_postgres_conversation_owner_scope_and_idempotency(
         conversation_id=conversation.conversation_id,
         user_id="other",
     ).items
+
+    domain_session_id = f"roleplay_{uuid4().hex}"
+    repository.create_module_run(
+        ModuleRun(
+            module_run_id=f"module_{uuid4().hex}",
+            conversation_id=conversation.conversation_id,
+            user_id=user_id,
+            module_type=ModuleType.ROLEPLAY,
+            depth=1,
+            module_parameters=RoleplayParameters(
+                scenario_description="Integration role-play",
+            ),
+            domain_session_id=domain_session_id,
+            started_at=conversation.created_at,
+        )
+    )
+    linked = repository.get_conversation_for_domain_session(
+        user_id=user_id,
+        module_type=ModuleType.ROLEPLAY,
+        domain_session_id=domain_session_id,
+    )
+    assert linked is not None
+    assert linked.conversation_id == conversation.conversation_id
+    assert (
+        repository.get_conversation_for_domain_session(
+            user_id="other",
+            module_type=ModuleType.ROLEPLAY,
+            domain_session_id=domain_session_id,
+        )
+        is None
+    )
 
 
 def test_postgres_concurrent_append_sequence_is_contiguous(

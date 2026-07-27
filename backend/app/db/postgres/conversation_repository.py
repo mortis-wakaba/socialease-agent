@@ -39,6 +39,7 @@ from app.models_conversation import (
     ModuleProposalStatus,
     ModuleRun,
     ModuleRunStatus,
+    ModuleType,
 )
 from app.models_conversation_context import ConversationCompactSummary
 
@@ -755,14 +756,17 @@ class PostgresConversationRepository:
                     (module_run_id, conversation_id, user_id, module_type,
                      parent_module_run_id, depth, status, domain_session_id,
                      version, payload, started_at, ended_at)
-                    SELECT :module_run_id, :conversation_id, :user_id,
+                    SELECT :module_run_id, CAST(:conversation_id AS VARCHAR(64)),
+                     CAST(:user_id AS VARCHAR(128)),
                      :module_type, :parent_module_run_id, :depth, :status,
                      :domain_session_id, :version, CAST(:payload AS jsonb),
                      :started_at, :ended_at
                     WHERE EXISTS (
                         SELECT 1 FROM conversations
-                        WHERE conversation_id = :conversation_id
-                          AND user_id = :user_id AND status = :active
+                        WHERE conversation_id =
+                              CAST(:conversation_id AS VARCHAR(64))
+                          AND user_id = CAST(:user_id AS VARCHAR(128))
+                          AND status = :active
                     )"""
                 ),
                 {**_run_params(run), "active": ConversationStatus.ACTIVE.value},
@@ -841,6 +845,33 @@ class PostgresConversationRepository:
                 },
             ).mappings().all()
         return [ModuleRun.model_validate(row["payload"]) for row in rows]
+
+    def get_conversation_for_domain_session(
+        self,
+        *,
+        user_id: str,
+        module_type: ModuleType,
+        domain_session_id: str,
+    ) -> Conversation | None:
+        """Return the conversation already owning one domain session."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT c.* FROM conversations AS c
+                    JOIN conversation_module_runs AS r
+                      ON r.conversation_id = c.conversation_id
+                    WHERE r.user_id = :user_id
+                      AND r.module_type = :module_type
+                      AND r.domain_session_id = :domain_session_id
+                    LIMIT 1"""
+                ),
+                {
+                    "user_id": user_id,
+                    "module_type": module_type.value,
+                    "domain_session_id": domain_session_id,
+                },
+            ).mappings().first()
+        return _conversation_from_row(row) if row else None
 
     def list_proposals(
         self,

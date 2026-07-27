@@ -31,6 +31,7 @@ from app.models_conversation import (
     ModuleProposalStatus,
     ModuleRun,
     ModuleRunStatus,
+    ModuleType,
 )
 from app.models_conversation_context import ConversationCompactSummary
 
@@ -147,6 +148,14 @@ class ConversationRepository(Protocol):
         conversation_id: str,
         user_id: str,
     ) -> list[ModuleRun]: ...
+
+    def get_conversation_for_domain_session(
+        self,
+        *,
+        user_id: str,
+        module_type: ModuleType,
+        domain_session_id: str,
+    ) -> Conversation | None: ...
 
     def list_proposals(
         self,
@@ -854,6 +863,26 @@ class SQLiteConversationRepository:
                 (conversation_id, user_id),
             ).fetchall()
         return [ModuleRun.model_validate_json(row["payload"]) for row in rows]
+
+    def get_conversation_for_domain_session(
+        self,
+        *,
+        user_id: str,
+        module_type: ModuleType,
+        domain_session_id: str,
+    ) -> Conversation | None:
+        """Return the conversation already owning one domain session."""
+        with connect() as connection:
+            row = connection.execute(
+                """SELECT c.* FROM conversations AS c
+                JOIN conversation_module_runs AS r
+                  ON r.conversation_id = c.conversation_id
+                WHERE r.user_id = ? AND r.module_type = ?
+                  AND r.domain_session_id = ?
+                LIMIT 1""",
+                (user_id, module_type.value, domain_session_id),
+            ).fetchone()
+        return _conversation_from_row(row) if row else None
 
     def list_proposals(
         self,

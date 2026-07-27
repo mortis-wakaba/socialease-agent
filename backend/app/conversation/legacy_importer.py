@@ -40,6 +40,20 @@ class LegacyConversationImporter:
         imported: list[Conversation] = []
         created_count = 0
         for session in sessions:
+            linked_conversation = (
+                self._repository.get_conversation_for_domain_session(
+                    user_id=session.user_id,
+                    module_type=ModuleType.ROLEPLAY,
+                    domain_session_id=session.session_id,
+                )
+            )
+            if linked_conversation is not None:
+                if (
+                    linked_conversation.history_notice_version
+                    == LEGACY_HISTORY_NOTICE_VERSION
+                ):
+                    imported.append(linked_conversation)
+                continue
             snapshot = _roleplay_snapshot(session)
             existing = self._repository.get_for_user(
                 snapshot.conversation.conversation_id,

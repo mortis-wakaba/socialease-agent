@@ -12,6 +12,9 @@ from app.models_conversation import (
     ConversationEventRole,
     ConversationEventType,
     ConversationStatus,
+    ModuleRun,
+    ModuleType,
+    RoleplayParameters,
 )
 from app.models_roleplay import (
     RoleplayGuidance,
@@ -102,6 +105,43 @@ def test_legacy_roleplay_source_supports_complete_batched_scans(
         "legacy-session-1",
     ]
     assert [session.session_id for session in second] == ["legacy-session-0"]
+
+
+def test_import_skips_roleplay_session_linked_to_unified_module(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "linked.db"))
+    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
+    monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
+    repository = SQLiteConversationRepository()
+    conversation = repository.create(user_id="owner", title="统一会话")
+    session = _roleplay_session()
+    repository.create_module_run(
+        ModuleRun(
+            module_run_id="unified-module-run",
+            conversation_id=conversation.conversation_id,
+            user_id=session.user_id,
+            module_type=ModuleType.ROLEPLAY,
+            depth=1,
+            module_parameters=RoleplayParameters(
+                scenario_description="小组讨论",
+            ),
+            domain_session_id=session.session_id,
+            started_at=session.created_at,
+        )
+    )
+
+    imported, imported_count = LegacyConversationImporter(
+        repository
+    ).import_roleplay_sessions([session])
+
+    assert imported == []
+    assert imported_count == 0
+    conversations = repository.list_for_user("owner", limit=20).items
+    assert [item.conversation_id for item in conversations] == [
+        conversation.conversation_id
+    ]
 
 
 def _roleplay_session() -> RoleplaySession:
