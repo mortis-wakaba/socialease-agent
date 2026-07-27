@@ -1,0 +1,24 @@
+frontend/e2e/product-flows.spec.ts
+  s_b1a568f0ed8744::t_c0012cfe1bef68 323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "f59bc7240ec5b0cac2932943f59d8773eebff8d8",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_b1a568f0ed8744": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9860-1f9a-7a53-9121-919c0b2b9a7b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
