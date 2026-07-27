@@ -127,7 +127,10 @@ class RoleplayModuleAdapter:
         )
 
     async def terminate(self, run: ModuleRun) -> None:
-        await self.suspend(run)
+        self._service.complete_conversation_session(
+            session_id=_session_id(run),
+            user_id=run.user_id,
+        )
 
     async def delete_runtime_context(self, run: ModuleRun) -> None:
         del run

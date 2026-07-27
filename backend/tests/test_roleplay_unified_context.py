@@ -75,9 +75,7 @@ async def test_unified_roleplay_uses_timeline_and_stores_only_features() -> None
             repository=InMemoryRoleplaySessionRepository()
         ),
         safety_classifier=LowSafety(),  # type: ignore[arg-type]
-        context_manager=object(),  # type: ignore[arg-type]
         checkpoint_service=RecordingCheckpoint(),  # type: ignore[arg-type]
-        memory_retriever=object(),  # type: ignore[arg-type]
     )
     adapter = RoleplayModuleAdapter(service)
     run = ModuleRun(

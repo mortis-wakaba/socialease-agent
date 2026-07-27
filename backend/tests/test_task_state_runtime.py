@@ -12,7 +12,6 @@ from app.memory.runtime_requirements import (
     task_state_runtime_report,
     validate_task_state_runtime,
 )
-from app.services.roleplay_service import roleplay_service
 from app.services.support_resource_service import support_resource_service
 from app.services.worksheet_service import worksheet_service
 
@@ -75,7 +74,6 @@ async def test_readiness_fails_when_any_required_task_state_probe_fails(
     async def unhealthy() -> bool:
         return False
 
-    monkeypatch.setattr(roleplay_service, "context_health", healthy)
     monkeypatch.setattr(worksheet_service, "context_health", unhealthy)
     monkeypatch.setattr(support_resource_service, "context_health", healthy)
     monkeypatch.setattr(
@@ -93,7 +91,6 @@ async def test_readiness_fails_when_any_required_task_state_probe_fails(
     assert task_state["required"] is True
     assert task_state["configured"] is True
     assert task_state["components"] == {
-        "roleplay": True,
         "worksheet": False,
         "support_search": True,
         "conversation_context": True,
@@ -111,7 +108,6 @@ async def test_readiness_accepts_all_required_task_state_probes(
     async def healthy() -> bool:
         return True
 
-    monkeypatch.setattr(roleplay_service, "context_health", healthy)
     monkeypatch.setattr(worksheet_service, "context_health", healthy)
     monkeypatch.setattr(support_resource_service, "context_health", healthy)
     monkeypatch.setattr(

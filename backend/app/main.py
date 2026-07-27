@@ -15,14 +15,13 @@ from app.memory.runtime_requirements import (
     task_state_runtime_report,
     validate_task_state_runtime,
 )
-from app.memory.session_context_store import SessionContextStoreUnavailable
 from app.memory.task_state_store import TaskStateStoreUnavailable
 from app.middleware import RequestIdMiddleware
 from app.observability.readiness import readiness_snapshot
 from app.observability.request_logging import StructuredRequestLoggingMiddleware
 from app.rate_limit import RateLimitMiddleware
 from app.request_context import REQUEST_ID_HEADER, get_request_id
-from app.memory.session_context_settings import roleplay_session_context_settings
+from app.memory.redis_settings import redis_task_state_settings
 
 validate_runtime_database_support()
 validate_task_state_runtime()
@@ -32,7 +31,6 @@ from app.api.conversations import (
     close_cached_conversation_service,
     conversation_service,
 )
-from app.services.roleplay_service import roleplay_service
 from app.services.support_resource_service import support_resource_service
 from app.services.worksheet_service import worksheet_service
 
@@ -41,7 +39,6 @@ from app.services.worksheet_service import worksheet_service
 async def lifespan(_app: FastAPI):
     """Release the shared async Redis client on application shutdown."""
     yield
-    await roleplay_service.close()
     await worksheet_service.close()
     await support_resource_service.close()
     await close_cached_conversation_service()
@@ -100,7 +97,6 @@ async def http_exception_handler(
 
 
 @app.exception_handler(TaskStateStoreUnavailable)
-@app.exception_handler(SessionContextStoreUnavailable)
 async def task_state_unavailable_handler(
     request: Request,
     _exc: Exception,
@@ -129,17 +125,15 @@ async def health_check() -> dict[str, str]:
 async def readiness_check() -> JSONResponse:
     """Return deployment readiness checks without exposing secrets."""
     status_code, payload = readiness_snapshot()
-    context_settings = roleplay_session_context_settings()
+    context_settings = redis_task_state_settings()
     task_state = task_state_runtime_report()
     component_health = {
-        "roleplay": False,
         "worksheet": False,
         "support_search": False,
         "conversation_context": False,
     }
     if task_state.configured:
         results = await asyncio.gather(
-            roleplay_service.context_health(),
             worksheet_service.context_health(),
             support_resource_service.context_health(),
             _conversation_context_health(),

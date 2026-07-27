@@ -7,14 +7,12 @@ import pytest
 
 from app.auth.tokens import create_auth_token
 from app.main import app
-from app.models_llm import LLMUsage
 from app.privacy.persistence_gate import PersistenceGate
 from app.privacy.policy import PersistenceKind
 from app.privacy.redaction import (
     detect_sensitive_categories,
     redact_sensitive_identifiers,
 )
-from app.services.roleplay_service import roleplay_service
 
 TEST_AUTH_SECRET = "privacy-test-secret"
 
@@ -421,103 +419,6 @@ async def test_worksheet_fields_are_redacted_before_persistence(
     assert "[redacted:phone]" in serialized_export
     assert "[redacted:email]" in serialized_export
     assert "[redacted:address]" in serialized_export
-
-
-@pytest.mark.anyio
-async def test_roleplay_user_message_is_minimized_before_persistence(
-    client: httpx.AsyncClient,
-) -> None:
-    user_id = f"privacy_roleplay_user_{uuid4().hex}"
-    start_response = await client.post(
-        "/api/roleplay/start",
-        json={
-            "user_id": user_id,
-            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
-            "difficulty": 3,
-        },
-    )
-    session_id = start_response.json()["session"]["session_id"]
-
-    response = await client.post(
-        "/api/roleplay/message",
-        json={
-            "session_id": session_id,
-            "user_id": user_id,
-            "message": "我想说观点，也可以联系我 phone 13912345678。",
-        },
-    )
-
-    messages = response.json()["session"]["messages"]
-    user_messages = [message for message in messages if message["role"] == "user"]
-    assert user_messages[-1]["content"] == "[raw roleplay message minimized by privacy policy]"
-    assert "13912345678" not in user_messages[-1]["content"]
-
-
-@pytest.mark.anyio
-async def test_roleplay_agent_message_is_redacted_before_persistence(
-    client: httpx.AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user_id = f"privacy_roleplay_agent_{uuid4().hex}"
-
-    async def fake_next_turn(*args, **kwargs):
-        return (
-            (
-                "我会避免复述姓名：王五、手机号 13912345678、"
-                "邮箱 agent@example.com 和地址：北京市海淀区中关村大街27号。"
-            ),
-            LLMUsage(),
-        )
-
-    monkeypatch.setattr(roleplay_service.agent, "next_turn", fake_next_turn)
-    start_response = await client.post(
-        "/api/roleplay/start",
-        json={
-            "user_id": user_id,
-            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
-            "difficulty": 3,
-        },
-    )
-    session_id = start_response.json()["session"]["session_id"]
-
-    response = await client.post(
-        "/api/roleplay/message",
-        json={
-            "session_id": session_id,
-            "user_id": user_id,
-            "message": "我想练习课堂发言。",
-        },
-    )
-
-    payload = response.json()
-    assert "[redacted:phone]" in payload["response"]
-    assert "[redacted:email]" in payload["response"]
-    assert "[redacted:person_name]" in payload["response"]
-    assert "[redacted:address]" in payload["response"]
-    assert "13912345678" not in payload["response"]
-    assert "agent@example.com" not in payload["response"]
-    assert "王五" not in payload["response"]
-    assert "北京市海淀区中关村大街27号" not in payload["response"]
-    agent_message = payload["session"]["messages"][-1]
-    assert agent_message["role"] == "agent"
-    assert agent_message["content"] == payload["response"]
-
-    detail_response = await client.get(
-        f"/api/roleplay/{session_id}",
-        params={"user_id": user_id},
-    )
-    export_response = await client.get(f"/api/users/{user_id}/memory/export")
-    serialized_detail = str(detail_response.json()["session"]["messages"])
-    serialized_export = str(export_response.json()["records"]["roleplay_sessions"])
-    for serialized in [serialized_detail, serialized_export]:
-        assert "13912345678" not in serialized
-        assert "agent@example.com" not in serialized
-        assert "王五" not in serialized
-        assert "北京市海淀区中关村大街27号" not in serialized
-        assert "[redacted:phone]" in serialized
-        assert "[redacted:email]" in serialized
-        assert "[redacted:person_name]" in serialized
-        assert "[redacted:address]" in serialized
 
 
 @pytest.mark.anyio

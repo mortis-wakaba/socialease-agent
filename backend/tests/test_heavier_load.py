@@ -14,9 +14,11 @@ from alembic import command
 from alembic.config import Config
 
 from app.main import app
+from app.models_roleplay import RoleplayStartRequest
 from app.protocols.service import ProtocolService
 from app.safety.actions import HarnessAction
 from app.services.retention_service import retention_service
+from app.services.roleplay_service import roleplay_service
 
 
 pytestmark = pytest.mark.load
@@ -143,15 +145,13 @@ async def test_memory_export_delete_with_active_sessions_and_cleanup(
 ) -> None:
     user_id = f"load_memory_user_{uuid4().hex}"
     for difficulty in range(1, 6):
-        response = await client.post(
-            "/api/roleplay/start",
-            json={
-                "user_id": user_id,
-                "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
-                "difficulty": difficulty,
-            },
+        await roleplay_service.start_conversation_session(
+            RoleplayStartRequest(
+                user_id=user_id,
+                scenario_description="课堂上轮到我发言时练习清楚表达观点",
+                difficulty=difficulty,
+            )
         )
-        assert response.status_code == 200
     await client.put(
         f"/api/users/{user_id}/memory/preferences",
         json={

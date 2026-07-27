@@ -303,7 +303,7 @@ async def test_intervention_plan_timeline_api_rejects_cross_user_access(
 
 
 @pytest.mark.anyio
-async def test_chat_executes_roleplay_after_approved_consent_protocol(
+async def test_legacy_chat_does_not_start_roleplay_after_approved_consent_protocol(
     client: httpx.AsyncClient,
 ) -> None:
     initial_response = await client.post(
@@ -341,12 +341,12 @@ async def test_chat_executes_roleplay_after_approved_consent_protocol(
 
     assert followup_response.status_code == 200
     payload = followup_response.json()
-    assert payload["structured_data"]["agent"] == "roleplay_agent"
-    assert payload["structured_data"]["action"] == "roleplay_started"
+    assert payload["structured_data"]["agent"] == "lead_harness"
+    assert payload["structured_data"]["action"] == "use_unified_conversation"
+    assert payload["structured_data"]["next_ui"] == "chat"
+    assert payload["structured_data"]["deprecated_entrypoint"] is True
     assert payload["structured_data"]["protocol_status"] == "consumed"
-    assert payload["structured_data"]["session_id"]
     assert payload["structured_data"]["intervention_plan_id"]
-    assert payload["structured_data"]["intervention_plan"]["session_id"] == payload["structured_data"]["session_id"]
     assert payload["structured_data"]["intervention_plan"]["status"] == "completed"
     assert payload["trace"]["selected_skill"] == "roleplay_skill"
     assert payload["trace"]["permission_action"] == "allow"

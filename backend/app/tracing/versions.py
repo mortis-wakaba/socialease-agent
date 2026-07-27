@@ -24,7 +24,6 @@ PROMPT_VERSIONS: dict[str, str] = {
     "resource_agent_loop": "resource-loop-v2",
     "output_guardrail": "output-guardrail-v6",
     "output_repair": "output-repair-v4",
-    "roleplay_compaction": "roleplay-compaction-v1",
     "conversation_compaction": "conversation-compaction-v1",
     "memory_extraction": "memory-extraction-v3",
 }

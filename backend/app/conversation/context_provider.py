@@ -16,7 +16,7 @@ from app.conversation.content_protector import (
 )
 from app.conversation.repository import ConversationRepository
 from app.memory.runtime_requirements import task_state_runtime_report
-from app.memory.session_context_settings import roleplay_session_context_settings
+from app.memory.redis_settings import redis_task_state_settings
 from app.memory.task_state_store import (
     RedisTaskStateStore,
     TaskStateStore,
@@ -343,14 +343,14 @@ def create_conversation_context_provider(
     report = task_state_runtime_report()
     if report.redis_url is None:
         return DatabaseConversationContextProvider(repository)
-    settings = roleplay_session_context_settings()
+    settings = redis_task_state_settings()
     return CachedConversationContextProvider(
         repository=repository,
         store=RedisTaskStateStore(
             redis_url=report.redis_url,
             namespace="conversation-context",
             model_type=ProtectedConversationProjection,
-            socket_timeout_seconds=settings.redis_socket_timeout_seconds,
+            socket_timeout_seconds=settings.socket_timeout_seconds,
         ),
         protector=configured_content_protector(),
         ttl_seconds=_context_cache_ttl_seconds(),

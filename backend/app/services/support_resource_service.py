@@ -10,7 +10,7 @@ from app.models import RiskLevel
 from app.models_knowledge import Citation, KnowledgeBaseType
 from app.models_support import SupportQueryRequest, SupportQueryResponse
 from app.models_support import SupportSearchContext
-from app.memory.session_context_settings import roleplay_session_context_settings
+from app.memory.redis_settings import redis_task_state_settings
 from app.memory.task_session_settings import support_search_ttl_seconds
 from app.memory.task_state_store import (
     DisabledTaskStateStore,
@@ -37,13 +37,13 @@ class SupportResourceService:
     ) -> None:
         self.knowledge = knowledge or KnowledgeService()
         self.safety_classifier = safety_classifier or create_safety_classifier()
-        settings = roleplay_session_context_settings()
+        settings = redis_task_state_settings()
         self.search_store = search_store or (
             RedisTaskStateStore(
                 redis_url=settings.redis_url,
                 namespace="support-search",
                 model_type=SupportSearchContext,
-                socket_timeout_seconds=settings.redis_socket_timeout_seconds,
+                socket_timeout_seconds=settings.socket_timeout_seconds,
             )
             if settings.redis_url
             else DisabledTaskStateStore()

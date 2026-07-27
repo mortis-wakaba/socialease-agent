@@ -9,6 +9,8 @@ import pytest
 
 from app.db.engine import connect
 from app.main import app
+from app.models_roleplay import RoleplayStartRequest
+from app.services.roleplay_service import roleplay_service
 
 
 @pytest.fixture
@@ -26,6 +28,16 @@ async def client() -> httpx.AsyncClient:
         base_url="http://testserver",
     ) as async_client:
         yield async_client
+
+
+async def _seed_roleplay(user_id: str, difficulty: int) -> None:
+    await roleplay_service.start_conversation_session(
+        RoleplayStartRequest(
+            user_id=user_id,
+            scenario_description="课堂上轮到我发言时练习清楚表达观点",
+            difficulty=difficulty,
+        )
+    )
 
 
 @pytest.mark.anyio
@@ -69,14 +81,7 @@ async def test_profile_updates_after_roleplay_and_exposure(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = f"profile_practice_user_{uuid4().hex}"
-    await client.post(
-        "/api/roleplay/start",
-        json={
-            "user_id": user_id,
-            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
-            "difficulty": 4,
-        },
-    )
+    await _seed_roleplay(user_id, 4)
     plan_response = await client.post(
         "/api/exposure/plan",
         json={
@@ -217,14 +222,7 @@ async def test_practice_summary_personalization_consent_is_reversible(
 ) -> None:
     """Consent controls future use without deleting the underlying product record."""
     user_id = f"memory_summary_consent_{uuid4().hex}"
-    await client.post(
-        "/api/roleplay/start",
-        json={
-            "user_id": user_id,
-            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
-            "difficulty": 3,
-        },
-    )
+    await _seed_roleplay(user_id, 3)
 
     enabled = await client.put(
         f"/api/users/{user_id}/memory/consent/practice-summary",
@@ -700,14 +698,7 @@ async def test_memory_export_and_delete_are_real(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = f"memory_delete_user_{uuid4().hex}"
-    await client.post(
-        "/api/roleplay/start",
-        json={
-            "user_id": user_id,
-            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
-            "difficulty": 4,
-        },
-    )
+    await _seed_roleplay(user_id, 4)
     await client.put(
         f"/api/users/{user_id}/memory/preferences",
         json={
@@ -767,15 +758,7 @@ async def test_memory_export_and_delete_reject_cross_user_access(
 ) -> None:
     owner_id = f"memory_owner_{uuid4().hex}"
     other_id = f"memory_other_{uuid4().hex}"
-    await client.post(
-        "/api/roleplay/start",
-        headers={"X-Demo-User-Id": owner_id},
-        json={
-            "user_id": "ignored_body_user",
-            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
-            "difficulty": 3,
-        },
-    )
+    await _seed_roleplay(owner_id, 3)
 
     export_response = await client.get(
         f"/api/users/{owner_id}/memory/export",

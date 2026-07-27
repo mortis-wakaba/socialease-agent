@@ -13,7 +13,7 @@ from app.conversation.content_protector import (
     configured_content_protector,
 )
 from app.memory.runtime_requirements import task_state_runtime_report
-from app.memory.session_context_settings import roleplay_session_context_settings
+from app.memory.redis_settings import redis_task_state_settings
 from app.memory.task_state_store import (
     DisabledTaskStateStore,
     RedisTaskStateStore,
@@ -154,14 +154,14 @@ class ModuleOverlayStore:
 def create_module_overlay_store() -> ModuleOverlayStore:
     """Create the shared Redis overlay cache, or an explicit disabled store."""
     report = task_state_runtime_report()
-    settings = roleplay_session_context_settings()
+    settings = redis_task_state_settings()
     task_store: TaskStateStore[ProtectedModuleOverlay]
     if report.redis_url:
         task_store = RedisTaskStateStore(
             redis_url=report.redis_url,
             namespace="module-overlay",
             model_type=ProtectedModuleOverlay,
-            socket_timeout_seconds=settings.redis_socket_timeout_seconds,
+            socket_timeout_seconds=settings.socket_timeout_seconds,
         )
     else:
         task_store = DisabledTaskStateStore()

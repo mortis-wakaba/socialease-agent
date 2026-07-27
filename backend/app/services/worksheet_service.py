@@ -8,7 +8,7 @@ from app.db.factory import repository_factory
 from app.knowledge.service import KnowledgeService
 from app.llm.factory import create_llm_client
 from app.memory.worksheet_store import WorksheetStore
-from app.memory.session_context_settings import roleplay_session_context_settings
+from app.memory.redis_settings import redis_task_state_settings
 from app.memory.task_session_settings import worksheet_draft_ttl_seconds
 from app.memory.task_state_store import (
     DisabledTaskStateStore,
@@ -54,13 +54,13 @@ class WorksheetService:
         self.store = store or WorksheetStore(repository=repository_factory().worksheet_repository())
         self.knowledge = knowledge or KnowledgeService()
         self.safety_classifier = safety_classifier or create_safety_classifier()
-        settings = roleplay_session_context_settings()
+        settings = redis_task_state_settings()
         self.draft_store = draft_store or (
             RedisTaskStateStore(
                 redis_url=settings.redis_url,
                 namespace="worksheet-draft",
                 model_type=WorksheetDraftContext,
-                socket_timeout_seconds=settings.redis_socket_timeout_seconds,
+                socket_timeout_seconds=settings.socket_timeout_seconds,
             )
             if settings.redis_url
             else DisabledTaskStateStore()

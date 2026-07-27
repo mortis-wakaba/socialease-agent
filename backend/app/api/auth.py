@@ -38,7 +38,6 @@ from app.services.account_service import (
     account_service,
     signup_enabled,
 )
-from app.services.roleplay_service import roleplay_service
 from app.services.support_resource_service import support_resource_service
 from app.services.worksheet_service import worksheet_service
 
@@ -185,7 +184,6 @@ async def delete_account(
         raise HTTPException(status_code=404, detail=str(error))
     except AccountError as error:
         raise HTTPException(status_code=500, detail=str(error))
-    await roleplay_service.delete_user_context(current_user.user_id)
     await worksheet_service.delete_user_context(current_user.user_id)
     await support_resource_service.delete_user_context(current_user.user_id)
     record_memory_delete()

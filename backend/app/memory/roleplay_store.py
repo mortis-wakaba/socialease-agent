@@ -9,9 +9,7 @@ from app.db.repositories import (
 )
 from app.models_roleplay import (
     RoleplayGuidance,
-    RoleplayMessage,
     RoleplayMessageFeatures,
-    RoleplayMessageRole,
     RoleplaySession,
     RoleplaySessionStatus,
 )
@@ -29,9 +27,7 @@ class RoleplaySessionStore:
         user_id: str,
         scenario_spec: ScenarioSpec,
         difficulty: int,
-        opening_message: str,
         retrieved_guidance: RoleplayGuidance,
-        retain_opening_message: bool = True,
     ) -> RoleplaySession:
         """Create and store a new role-play session."""
         now = datetime.now(timezone.utc)
@@ -42,17 +38,7 @@ class RoleplaySessionStore:
             scenario_spec=scenario_spec,
             difficulty=difficulty,
             retrieved_guidance=retrieved_guidance,
-            messages=(
-                [
-                    RoleplayMessage(
-                        role=RoleplayMessageRole.AGENT,
-                        content=opening_message,
-                        created_at=now,
-                    )
-                ]
-                if retain_opening_message
-                else []
-            ),
+            messages=[],
             created_at=now,
             updated_at=now,
         )
@@ -74,35 +60,6 @@ class RoleplaySessionStore:
             limit=limit,
             offset=offset,
         )
-
-    def append_message(
-        self,
-        session_id: str,
-        user_id: str,
-        role: RoleplayMessageRole,
-        content: str,
-        features: RoleplayMessageFeatures | None = None,
-    ) -> RoleplaySession | None:
-        """Append a message and return the updated session."""
-        now = datetime.now(timezone.utc)
-        session = self.repository.get_for_user(session_id, user_id)
-        if session is None:
-            return None
-        updated = session.model_copy(
-            update={
-                "messages": [
-                    *session.messages,
-                    RoleplayMessage(
-                        role=role,
-                        content=content,
-                        created_at=now,
-                        features=features,
-                    ),
-                ],
-                "updated_at": now,
-            }
-        )
-        return self.repository.save(updated)
 
     def record_features(
         self,

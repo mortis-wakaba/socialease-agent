@@ -383,7 +383,7 @@ def test_memory_context_builder_combines_profile_and_preferences() -> None:
 
 
 @pytest.mark.anyio
-async def test_roleplay_skill_uses_memory_context_after_consent() -> None:
+async def test_legacy_roleplay_skill_redirects_after_consent() -> None:
     user_id = f"memory_context_roleplay_{uuid4().hex}"
     repository_factory().user_memory_settings_repository().save(
         user_id=user_id,
@@ -414,12 +414,9 @@ async def test_roleplay_skill_uses_memory_context_after_consent() -> None:
         )
     )
 
-    assert response.structured_data["action"] == "roleplay_started"
-    assert response.structured_data["difficulty"] == 4
-    scenario = response.structured_data["scenario"]
-    assert scenario["safe_summary"] == "我想做一个角色扮演练习"
-    assert scenario["scenario_id"].startswith("scenario_")
-    assert "dorm_conflict" not in scenario["safe_summary"]
+    assert response.structured_data["action"] == "use_unified_conversation"
+    assert response.structured_data["next_ui"] == "chat"
+    assert response.structured_data["deprecated_entrypoint"] is True
     assert "preferred_difficulty" in response.structured_data["context_selection"][
         "selected_fields"
     ]

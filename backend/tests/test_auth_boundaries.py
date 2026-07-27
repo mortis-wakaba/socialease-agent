@@ -7,6 +7,8 @@ import pytest
 
 from app.auth.tokens import create_auth_token
 from app.main import app
+from app.models_roleplay import RoleplayStartRequest
+from app.services.roleplay_service import roleplay_service
 from app.safety.direct_actions import PROTOCOL_HEADER_NAME
 
 
@@ -137,16 +139,14 @@ async def test_roleplay_session_cannot_be_restored_by_another_authenticated_user
 ) -> None:
     owner_id = f"roleplay_owner_{uuid4().hex}"
     other_id = f"roleplay_other_{uuid4().hex}"
-    start_response = await client.post(
-        "/api/roleplay/start",
-        headers=demo_headers(owner_id),
-        json={
-            "user_id": "ignored_body_user",
-            "scenario_description": "课堂上轮到我发言时练习清楚表达观点",
-            "difficulty": 3,
-        },
+    started = await roleplay_service.start_conversation_session(
+        RoleplayStartRequest(
+            user_id=owner_id,
+            scenario_description="课堂上轮到我发言时练习清楚表达观点",
+            difficulty=3,
+        )
     )
-    session = start_response.json()["session"]
+    session = started.session.model_dump(mode="json")
 
     owner_response = await client.get(
         f"/api/roleplay/{session['session_id']}",
@@ -353,41 +353,13 @@ async def test_production_direct_roleplay_requires_and_consumes_consent(
         "difficulty": 2,
     }
 
-    consent_response = await client.post(
+    response = await client.post(
         "/api/roleplay/start",
         headers=bearer_headers(owner_id),
-        json=body,
-    )
-    protocol_id = consent_response.json()["detail"]["protocol_id"]
-    approve_response = await client.post(
-        f"/api/protocols/{protocol_id}/respond",
-        headers=bearer_headers(owner_id),
-        json={"user_id": "spoofed_body_user", "approved": True},
-    )
-    mismatch_response = await client.post(
-        "/api/roleplay/start",
-        headers={**bearer_headers(owner_id), PROTOCOL_HEADER_NAME: protocol_id},
-        json={**body, "difficulty": 3},
-    )
-    start_response = await client.post(
-        "/api/roleplay/start",
-        headers={**bearer_headers(owner_id), PROTOCOL_HEADER_NAME: protocol_id},
-        json=body,
-    )
-    replay_response = await client.post(
-        "/api/roleplay/start",
-        headers={**bearer_headers(owner_id), PROTOCOL_HEADER_NAME: protocol_id},
         json=body,
     )
 
-    assert consent_response.status_code == 409
-    assert consent_response.json()["detail"]["action"] == "consent_required"
-    assert consent_response.json()["detail"]["harness_action"] == "start_roleplay"
-    assert approve_response.status_code == 200
-    assert mismatch_response.status_code == 403
-    assert start_response.status_code == 200
-    assert start_response.json()["session"]["user_id"] == owner_id
-    assert replay_response.status_code == 403
+    assert response.status_code == 405
 
 
 @pytest.mark.anyio

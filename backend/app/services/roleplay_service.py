@@ -1,6 +1,5 @@
-"""Role-play service shared by API routes and harness skills."""
+"""Role-play domain state driven by the unified conversation timeline."""
 
-import logging
 import re
 from datetime import datetime, timezone
 
@@ -8,29 +7,13 @@ from app.agents.roleplay import RoleplayAgent
 from app.db.factory import repository_factory
 from app.knowledge.service import KnowledgeService
 from app.llm.factory import create_llm_client
-from app.memory.roleplay_compactor import RoleplayCompactor
-from app.memory.active_memory_assembler import (
-    ActiveMemoryAssembler,
-    episodic_types_for_skill,
-)
-from app.memory.context_selector import select_skill_context
-from app.memory.roleplay_context_manager import RoleplayContextManager
 from app.memory.roleplay_store import RoleplaySessionStore
-from app.memory.retriever import EpisodicMemoryRetriever
-from app.memory.session_context_settings import roleplay_session_context_settings
-from app.memory.session_context_store import (
-    DisabledSessionContextStore,
-    RedisSessionContextStore,
-)
 from app.memory.thread_checkpoint_service import ThreadCheckpointService
-from app.memory.token_estimator import create_token_estimator
 from app.models import RiskLevel
+from app.models_conversation_context import ConversationWorkingContext
 from app.models_knowledge import KnowledgeBaseType
-from app.models_long_term_memory import (
-    MemoryRetrievalRequest,
-    MemoryRetrievalStrategy,
-    PracticeThreadStatus,
-)
+from app.models_long_term_memory import PracticeThreadStatus
+from app.models_module_overlay import ModuleOverlay, RoleplayOverlay
 from app.models_roleplay import (
     RoleplayFeedbackRequest,
     RoleplayFeedbackResponse,
@@ -40,43 +23,36 @@ from app.models_roleplay import (
     RoleplayMessageResponse,
     RoleplayMessageRole,
     RoleplayPauseRequest,
-    RoleplayPauseResponse,
     RoleplayResumeRequest,
-    RoleplayResumeResponse,
     RoleplaySession,
     RoleplaySessionListResponse,
+    RoleplaySessionStatus,
     RoleplayStartRequest,
     RoleplayStartResponse,
-    RoleplaySessionStatus,
 )
 from app.models_scenario import ScenarioSpec
-from app.models_conversation_context import ConversationWorkingContext
-from app.models_module_overlay import ModuleOverlay, RoleplayOverlay
 from app.models_session_context import (
     RoleplayCompactState,
-    RoleplayContextDiagnostics,
     RoleplayPromptContext,
-    context_diagnostics_payload,
 )
 from app.privacy.persistence_gate import persistence_gate
-from app.privacy.redaction import detect_sensitive_categories
 from app.privacy.policy import PersistenceKind
+from app.privacy.redaction import detect_sensitive_categories
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
 from app.services.errors import ServiceNotFoundError, ServiceStateError
-from app.services.scenario_interpreter import ScenarioInterpreter
 from app.services.legacy_scenario_migration import project_legacy_scenario
+from app.services.scenario_interpreter import ScenarioInterpreter
 
 
 ROLEPLAY_CRISIS_RESPONSE = (
     "这个输入包含危机风险表达，角色扮演会先暂停。"
     + crisis_escalation_response(paused_activity="角色扮演").split("。", 1)[1]
 )
-logger = logging.getLogger(__name__)
 
 
 class RoleplayService:
-    """Coordinate role-play RAG, safety checks, agent turns, and persistence."""
+    """Own role-play metadata and derived features, never conversation text."""
 
     def __init__(
         self,
@@ -84,10 +60,7 @@ class RoleplayService:
         store: RoleplaySessionStore | None = None,
         knowledge: KnowledgeService | None = None,
         safety_classifier: BaseSafetyClassifier | None = None,
-        context_manager: RoleplayContextManager | None = None,
         checkpoint_service: ThreadCheckpointService | None = None,
-        memory_retriever: EpisodicMemoryRetriever | None = None,
-        active_memory_assembler: ActiveMemoryAssembler | None = None,
         scenario_interpreter: ScenarioInterpreter | None = None,
     ) -> None:
         self.agent = agent or RoleplayAgent(llm_client=create_llm_client())
@@ -96,100 +69,39 @@ class RoleplayService:
         )
         self.knowledge = knowledge or KnowledgeService()
         self.safety_classifier = safety_classifier or create_safety_classifier()
-        settings = roleplay_session_context_settings()
-        token_estimator = create_token_estimator(
-            backend=settings.tokenizer_backend,
-            model_name=settings.tokenizer_model,
-        )
-        if context_manager is None:
-            context_store = (
-                RedisSessionContextStore(
-                    redis_url=settings.redis_url,
-                    socket_timeout_seconds=settings.redis_socket_timeout_seconds,
-                )
-                if settings.redis_url is not None
-                else DisabledSessionContextStore()
-            )
-            context_manager = RoleplayContextManager(
-                store=context_store,
-                settings=settings,
-                compactor=RoleplayCompactor(
-                    llm_client=self.agent.llm_client,
-                    target_tokens=settings.compact_target_tokens,
-                    token_estimator=token_estimator,
-                ),
-                token_estimator=token_estimator,
-            )
-        self.context_manager = context_manager
-        long_term_repository = None
-        memory_settings_repository = None
-        if checkpoint_service is None or memory_retriever is None:
+        if checkpoint_service is None:
             factory = repository_factory()
-            long_term_repository = factory.long_term_memory_repository()
-            memory_settings_repository = (
-                factory.user_memory_settings_repository()
-            )
-        self.checkpoint_service = checkpoint_service or ThreadCheckpointService(
-            repository=long_term_repository,
-            settings_repository=memory_settings_repository,
-            token_estimator=token_estimator,
-            active_memory_token_budget=settings.active_checkpoint_max_tokens,
-        )
-        self.memory_retriever = memory_retriever or EpisodicMemoryRetriever(
-            repository=long_term_repository,
-            settings_repository=memory_settings_repository,
-            token_estimator=token_estimator,
-            context_token_budget=settings.episodic_memory_max_tokens,
-        )
-        self.active_memory_assembler = (
-            active_memory_assembler
-            or ActiveMemoryAssembler(
-                token_estimator=token_estimator,
-                token_budget=(
-                    settings.active_checkpoint_max_tokens
-                    + settings.episodic_memory_max_tokens
+            checkpoint_service = ThreadCheckpointService(
+                repository=factory.long_term_memory_repository(),
+                settings_repository=(
+                    factory.user_memory_settings_repository()
                 ),
             )
+        self.checkpoint_service = checkpoint_service
+        self.scenario_interpreter = (
+            scenario_interpreter or ScenarioInterpreter()
         )
-        self.scenario_interpreter = scenario_interpreter or ScenarioInterpreter()
-
-    async def start_session(
-        self,
-        request: RoleplayStartRequest,
-    ) -> RoleplayStartResponse:
-        """Create a legacy standalone role-play session."""
-        return await self._start_session(request, standalone=True)
 
     async def start_conversation_session(
         self,
         request: RoleplayStartRequest,
     ) -> RoleplayStartResponse:
-        """Create role-play metadata while the conversation owns all messages."""
-        return await self._start_session(request, standalone=False)
-
-    async def _start_session(
-        self,
-        request: RoleplayStartRequest,
-        *,
-        standalone: bool,
-    ) -> RoleplayStartResponse:
-        """Create grounded role-play state for one execution surface."""
-        raw_description = request.scenario_description
-        start_safety = await self.safety_classifier.classify(
-            f"{raw_description}\n{request.practice_goal or ''}"
+        """Create role-play metadata while the timeline owns the opening turn."""
+        safety_result = await self.safety_classifier.classify(
+            f"{request.scenario_description}\n{request.practice_goal or ''}"
         )
-        if start_safety.risk_level == RiskLevel.CRISIS:
+        if safety_result.risk_level == RiskLevel.CRISIS:
             raise ServiceStateError(ROLEPLAY_CRISIS_RESPONSE)
-        scenario_spec = self.scenario_interpreter.interpret(
-            description=raw_description,
+        scenario = self.scenario_interpreter.interpret(
+            description=request.scenario_description,
             practice_goal=request.practice_goal,
         )
-        guidance_query = self.agent.guidance_query(scenario_spec)
+        guidance_query = self.agent.guidance_query(scenario)
         rag_response = self.knowledge.query(
             query=guidance_query,
             kb_type=KnowledgeBaseType.SOCIAL_SKILLS,
         )
-        retrieved_guidance = RoleplayGuidance(
+        guidance = RoleplayGuidance(
             query=guidance_query,
             answer=rag_response.answer,
             citations=rag_response.citations,
@@ -197,33 +109,24 @@ class RoleplayService:
             confidence=rag_response.confidence,
             no_guidance_found=rag_response.unknown,
         )
-        opening_message = self.agent.opening(
-            scenario=scenario_spec,
-            difficulty=request.difficulty,
-            guidance=retrieved_guidance,
-        )
-        persisted_opening_message = _persist_roleplay_agent_message(
+        opening = _persist_roleplay_agent_message(
             request.user_id,
-            opening_message,
+            self.agent.opening(
+                scenario=scenario,
+                difficulty=request.difficulty,
+                guidance=guidance,
+            ),
         )
         session = self.store.create(
             user_id=request.user_id,
-            scenario_spec=scenario_spec,
+            scenario_spec=scenario,
             difficulty=request.difficulty,
-            opening_message=persisted_opening_message,
-            retrieved_guidance=retrieved_guidance,
-            retain_opening_message=standalone,
+            retrieved_guidance=guidance,
         )
-        if standalone:
-            await self.context_manager.initialize(
-                user_id=request.user_id,
-                session_id=session.session_id,
-                opening_message=persisted_opening_message,
-            )
         self.checkpoint_service.record_roleplay(
             user_id=request.user_id,
             thread_id=session.session_id,
-            scenario=scenario_spec,
+            scenario=scenario,
             current_stage="roleplay_started",
             status=PracticeThreadStatus.ACTIVE,
             reason_code="roleplay_started",
@@ -231,7 +134,7 @@ class RoleplayService:
         )
         return RoleplayStartResponse(
             session=session,
-            opening_message=persisted_opening_message,
+            opening_message=opening,
         )
 
     async def send_conversation_message(
@@ -241,18 +144,10 @@ class RoleplayService:
         context: ConversationWorkingContext,
         overlay: ModuleOverlay,
     ) -> RoleplayMessageResponse:
-        """Generate from the shared timeline without a second transcript window."""
-        session = self.store.get_for_user(
-            session_id=request.session_id,
-            user_id=request.user_id,
-        )
-        if session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        if session.status != RoleplaySessionStatus.ACTIVE:
-            raise ServiceStateError("Role-play session is not active.")
+        """Generate from the shared timeline and persist only derived features."""
+        session = self._active_session(request.session_id, request.user_id)
         if not isinstance(overlay.payload, RoleplayOverlay):
             raise ValueError("role-play overlay payload is invalid")
-
         safety_result = await self.safety_classifier.classify(request.message)
         if safety_result.risk_level == RiskLevel.CRISIS:
             return RoleplayMessageResponse(
@@ -262,27 +157,23 @@ class RoleplayService:
                 blocked=True,
             )
 
-        message_features = derive_roleplay_message_features(request.message)
+        features = derive_roleplay_message_features(request.message)
         session = self.store.record_features(
             session_id=request.session_id,
             user_id=request.user_id,
-            features=message_features,
+            features=features,
         )
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
-        prompt_context = _shared_roleplay_prompt_context(
-            context=context,
-            overlay=overlay.payload,
-        )
-        agent_response, llm_usage = await self.agent.next_turn(
+        response, llm_usage = await self.agent.next_turn(
             session=session,
             user_message=request.message,
-            prompt_context=prompt_context,
+            prompt_context=_shared_roleplay_prompt_context(
+                context=context,
+                overlay=overlay.payload,
+            ),
         )
-        persisted_response = _persist_roleplay_agent_message(
-            request.user_id,
-            agent_response,
-        )
+        response = _persist_roleplay_agent_message(request.user_id, response)
         self.checkpoint_service.record_roleplay(
             user_id=request.user_id,
             thread_id=request.session_id,
@@ -290,15 +181,14 @@ class RoleplayService:
             current_stage="practice_turn_completed",
             status=PracticeThreadStatus.ACTIVE,
             reason_code="unified_conversation_timeline",
-            helpful_strategy_codes=_strategy_codes(message_features),
+            helpful_strategy_codes=_strategy_codes(features),
             unresolved_next_step="继续当前练习，或手动结束模块。",
             touch_if_unchanged=True,
         )
         return RoleplayMessageResponse(
             session=session,
-            response=persisted_response,
+            response=response,
             safety_result=safety_result,
-            blocked=False,
             llm_usage=llm_usage,
             context_diagnostics={
                 **context.diagnostics.model_dump(mode="json"),
@@ -306,399 +196,100 @@ class RoleplayService:
             },
         )
 
-    async def send_message(self, request: RoleplayMessageRequest) -> RoleplayMessageResponse:
-        """Append a user message and return the next role-play turn."""
-        session = self.store.get_for_user(
-            session_id=request.session_id,
-            user_id=request.user_id,
-        )
+    async def get_feedback(
+        self,
+        request: RoleplayFeedbackRequest,
+    ) -> RoleplayFeedbackResponse:
+        """Return feature-based feedback for an owned role-play session."""
+        session = self.store.get_for_user(request.session_id, request.user_id)
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
-        if session.status != RoleplaySessionStatus.ACTIVE:
-            raise ServiceStateError("Role-play session is not active.")
-
-        safety_result = await self.safety_classifier.classify(request.message)
-        if safety_result.risk_level == RiskLevel.CRISIS:
-            await self.context_manager.delete(
-                user_id=request.user_id,
-                session_id=request.session_id,
-            )
-            persisted_crisis_response = _persist_roleplay_agent_message(
-                request.user_id,
-                ROLEPLAY_CRISIS_RESPONSE,
-            )
-            updated_session = self.store.append_message(
-                session_id=request.session_id,
-                user_id=request.user_id,
-                role=RoleplayMessageRole.SYSTEM,
-                content=persisted_crisis_response,
-            )
-            if updated_session is None:
-                raise ServiceNotFoundError("Role-play session not found")
-            updated_session = self.store.update_status(
-                session_id=request.session_id,
-                user_id=request.user_id,
-                status=RoleplaySessionStatus.PAUSED,
-            )
-            if updated_session is None:
-                raise ServiceNotFoundError("Role-play session not found")
-            self.checkpoint_service.record_roleplay(
-                user_id=request.user_id,
-                thread_id=request.session_id,
-                scenario=_session_scenario_spec(session),
-                current_stage="paused",
-                status=PracticeThreadStatus.PAUSED,
-                reason_code="safety_pause",
-                unresolved_next_step=None,
-            )
-            return RoleplayMessageResponse(
-                session=updated_session,
-                response=persisted_crisis_response,
-                safety_result=safety_result,
-                blocked=True,
-            )
-
-        message_features = derive_roleplay_message_features(request.message)
-        session = self.store.append_message(
-            session_id=request.session_id,
-            user_id=request.user_id,
-            role=RoleplayMessageRole.USER,
-            content=persistence_gate.persist_text(
-                user_id=request.user_id,
-                kind=PersistenceKind.ROLEPLAY_MESSAGE,
-                text=request.message,
-            ).persisted_text,
-            features=message_features,
-        )
-        if session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        await self.context_manager.append(
-            user_id=request.user_id,
-            session_id=request.session_id,
-            role=RoleplayMessageRole.USER,
-            content=request.message[:8000],
-        )
-
-        guidance = (
-            session.retrieved_guidance.answer
-            if not session.retrieved_guidance.no_guidance_found
-            else "No specific guidance found; use general safe role-play scaffolding."
-        )
-        durable_checkpoint = self.checkpoint_service.restore_roleplay_context(
-            user_id=request.user_id,
-            thread_id=request.session_id,
-            expected_scenario_id=_session_scenario_spec(session).scenario_id,
-        )
-        memory_retrieval = None
-        memory_retrieval_error_category = None
-        try:
-            memory_retrieval = self.memory_retriever.retrieve(
-                MemoryRetrievalRequest(
-                    user_id=request.user_id,
-                    query=request.message,
-                    allowed_memory_types=list(
-                        episodic_types_for_skill("roleplay_skill")
-                    ),
-                    scenario_type=session.scenario,
-                    scenario_id=_session_scenario_spec(session).scenario_id,
-                    practice_thread_id=request.session_id,
-                    skill_codes=_session_scenario_spec(session).skill_codes,
-                    include_archived=False,
-                    strategy=MemoryRetrievalStrategy.SQL_TEXT,
-                )
-            )
-        except Exception as error:
-            memory_retrieval_error_category = error.__class__.__name__
-            logger.warning(
-                "Episodic memory retrieval failed: %s",
-                memory_retrieval_error_category,
-            )
-        active_memory = self.active_memory_assembler.assemble(
-            user_id=request.user_id,
-            skill_context=select_skill_context(
-                skill_name="roleplay_skill",
-                request_context={
-                    "scenario": _session_scenario_spec(session).safe_summary,
-                    "scenario_id": _session_scenario_spec(session).scenario_id,
-                    "skill_codes": [
-                        skill.value
-                        for skill in _session_scenario_spec(session).skill_codes
-                    ],
-                    "difficulty": session.difficulty,
-                },
-                memory_context=None,
-                selected_at=datetime.now(timezone.utc),
-            ),
-            current_request=request.message,
-            durable_checkpoint=durable_checkpoint,
-            memory_retrieval=memory_retrieval,
-            retrieval_user_id=request.user_id,
-        )
-        prompt_context = await self.context_manager.build_prompt_context(
-            user_id=request.user_id,
-            session_id=request.session_id,
-            scenario=_session_scenario_spec(session).safe_summary,
-            difficulty=session.difficulty,
-            guidance=guidance,
-            current_user_message=request.message,
-            fallback_recent_messages=[
-                f"{message.role.value}: {message.content}"
-                for message in session.messages
-            ],
-            durable_checkpoint=durable_checkpoint,
-            memory_retrieval=memory_retrieval,
-            active_memory=active_memory,
-        )
-        agent_response, llm_usage = await self.agent.next_turn(
-            session=session,
-            user_message=request.message,
-            prompt_context=prompt_context,
-        )
-        persisted_agent_response = _persist_roleplay_agent_message(
-            request.user_id,
-            agent_response,
-        )
-        session = self.store.append_message(
-            session_id=request.session_id,
-            user_id=request.user_id,
-            role=RoleplayMessageRole.AGENT,
-            content=persisted_agent_response,
-        )
-        if session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        await self.context_manager.append(
-            user_id=request.user_id,
-            session_id=request.session_id,
-            role=RoleplayMessageRole.AGENT,
-            content=persisted_agent_response[:8000],
-        )
-        self.checkpoint_service.record_roleplay(
-            user_id=request.user_id,
-            thread_id=request.session_id,
-            scenario=_session_scenario_spec(session),
-            current_stage="practice_turn_completed",
-            status=PracticeThreadStatus.ACTIVE,
-            reason_code=(
-                "redis_compaction"
-                if prompt_context.diagnostics.compaction_triggered
-                else "practice_turn_completed"
-            ),
-            helpful_strategy_codes=_strategy_codes(message_features),
-            unresolved_next_step="继续当前练习，或在准备好后获取反馈。",
-            touch_if_unchanged=True,
-        )
-
-        diagnostics_payload = context_diagnostics_payload(
-            prompt_context.diagnostics
-        )
-        if memory_retrieval_error_category is not None:
-            diagnostics_payload["memory_retrieval_error_category"] = (
-                memory_retrieval_error_category
-            )
-        return RoleplayMessageResponse(
-            session=session,
-            response=persisted_agent_response,
-            safety_result=safety_result,
-            blocked=False,
-            llm_usage=llm_usage,
-            context_diagnostics=diagnostics_payload,
-        )
-
-    async def get_feedback(self, request: RoleplayFeedbackRequest) -> RoleplayFeedbackResponse:
-        """Return structured feedback for a role-play session."""
-        session = self.store.get_for_user(
-            session_id=request.session_id,
-            user_id=request.user_id,
-        )
-        if session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        if session.status == RoleplaySessionStatus.PAUSED:
+        if session.status != RoleplaySessionStatus.COMPLETED:
             raise ServiceStateError(
-                "Role-play session is paused; resume with a new active session before requesting feedback."
+                "End the role-play module before requesting feedback."
             )
         if not _has_user_turn(session):
             raise ServiceStateError(
                 "Role-play feedback requires at least one user practice message."
             )
         feedback = self.agent.feedback(session)
-        if session.status == RoleplaySessionStatus.COMPLETED:
-            await self.context_manager.delete(
-                user_id=request.user_id,
-                session_id=request.session_id,
-            )
-            self.checkpoint_service.record_roleplay(
-                user_id=request.user_id,
-                thread_id=request.session_id,
-                scenario=_session_scenario_spec(session),
-                current_stage="feedback_completed",
-                status=PracticeThreadStatus.COMPLETED,
-                reason_code="feedback_completed",
-                unresolved_next_step=None,
-            )
-            return RoleplayFeedbackResponse(session=session, feedback=feedback)
-        updated_session = self.store.update_status(
-            session_id=request.session_id,
-            user_id=request.user_id,
-            status=RoleplaySessionStatus.COMPLETED,
-        )
-        if updated_session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        await self.context_manager.delete(
-            user_id=request.user_id,
-            session_id=request.session_id,
-        )
-        self.checkpoint_service.record_roleplay(
-            user_id=request.user_id,
-            thread_id=request.session_id,
-            scenario=_session_scenario_spec(updated_session),
-            current_stage="feedback_completed",
-            status=PracticeThreadStatus.COMPLETED,
-            reason_code="feedback_completed",
-            unresolved_next_step=None,
-        )
-        return RoleplayFeedbackResponse(session=updated_session, feedback=feedback)
-
-    async def pause_session(self, request: RoleplayPauseRequest) -> RoleplayPauseResponse:
-        """Pause a role-play session without deleting its messages."""
-        session = self.store.get_for_user(
-            session_id=request.session_id,
-            user_id=request.user_id,
-        )
-        if session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        if session.status == RoleplaySessionStatus.COMPLETED:
-            raise ServiceStateError("Completed role-play sessions cannot be paused.")
-        if session.status == RoleplaySessionStatus.PAUSED:
-            await self.context_manager.pause(
-                user_id=request.user_id,
-                session_id=request.session_id,
-            )
-            return RoleplayPauseResponse(
-                session=session,
-                message="角色扮演已经处于暂停状态。",
-            )
-        session = self.store.update_status(
-            session_id=request.session_id,
-            user_id=request.user_id,
-            status=RoleplaySessionStatus.PAUSED,
-        )
-        if session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        await self.context_manager.pause(
-            user_id=request.user_id,
-            session_id=request.session_id,
-        )
-        self.checkpoint_service.record_roleplay(
-            user_id=request.user_id,
-            thread_id=request.session_id,
-            scenario=_session_scenario_spec(session),
-            current_stage="paused",
-            status=PracticeThreadStatus.PAUSED,
-            reason_code="practice_paused",
-            unresolved_next_step="恢复后继续当前角色扮演练习。",
-        )
-        return RoleplayPauseResponse(
-            session=session,
-            message="已保存角色扮演暂停状态。你可以稍后从历史记录继续查看。",
-        )
+        return RoleplayFeedbackResponse(session=session, feedback=feedback)
 
     def pause_conversation_session(
         self,
         request: RoleplayPauseRequest,
     ) -> RoleplaySession:
-        """Pause unified role-play metadata without touching a transcript cache."""
-        session = self.store.get_for_user(
-            session_id=request.session_id,
-            user_id=request.user_id,
-        )
+        """Pause role-play metadata without touching conversation context."""
+        session = self.store.get_for_user(request.session_id, request.user_id)
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
         if session.status == RoleplaySessionStatus.COMPLETED:
             raise ServiceStateError("Completed role-play sessions cannot be paused.")
         if session.status != RoleplaySessionStatus.PAUSED:
-            session = self.store.update_status(
+            updated = self.store.update_status(
                 session_id=request.session_id,
                 user_id=request.user_id,
                 status=RoleplaySessionStatus.PAUSED,
             )
-            if session is None:
+            if updated is None:
                 raise ServiceNotFoundError("Role-play session not found")
+            session = updated
         return session
-
-    async def resume_session(self, request: RoleplayResumeRequest) -> RoleplayResumeResponse:
-        """Resume a paused role-play session so the user can continue practice."""
-        session = self.store.get_for_user(
-            session_id=request.session_id,
-            user_id=request.user_id,
-        )
-        if session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        if session.status == RoleplaySessionStatus.COMPLETED:
-            raise ServiceStateError("Completed role-play sessions cannot be resumed.")
-        if session.status == RoleplaySessionStatus.ACTIVE:
-            await self.context_manager.resume(
-                user_id=request.user_id,
-                session_id=request.session_id,
-            )
-            return RoleplayResumeResponse(
-                session=session,
-                message="角色扮演已经处于可继续练习状态。",
-            )
-        session = self.store.update_status(
-            session_id=request.session_id,
-            user_id=request.user_id,
-            status=RoleplaySessionStatus.ACTIVE,
-        )
-        if session is None:
-            raise ServiceNotFoundError("Role-play session not found")
-        await self.context_manager.resume(
-            user_id=request.user_id,
-            session_id=request.session_id,
-        )
-        self.checkpoint_service.record_roleplay(
-            user_id=request.user_id,
-            thread_id=request.session_id,
-            scenario=_session_scenario_spec(session),
-            current_stage="resumed",
-            status=PracticeThreadStatus.ACTIVE,
-            reason_code="practice_resumed",
-            unresolved_next_step="发送一轮练习回复。",
-        )
-        return RoleplayResumeResponse(
-            session=session,
-            message="已恢复角色扮演。请先发送一轮练习回复，再获取反馈。",
-        )
 
     def resume_conversation_session(
         self,
         request: RoleplayResumeRequest,
     ) -> RoleplaySession:
-        """Resume unified role-play metadata without a second context store."""
-        session = self.store.get_for_user(
-            session_id=request.session_id,
-            user_id=request.user_id,
-        )
+        """Resume role-play metadata without a second context store."""
+        session = self.store.get_for_user(request.session_id, request.user_id)
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
         if session.status == RoleplaySessionStatus.COMPLETED:
             raise ServiceStateError("Completed role-play sessions cannot be resumed.")
         if session.status != RoleplaySessionStatus.ACTIVE:
-            session = self.store.update_status(
+            updated = self.store.update_status(
                 session_id=request.session_id,
                 user_id=request.user_id,
                 status=RoleplaySessionStatus.ACTIVE,
             )
-            if session is None:
+            if updated is None:
                 raise ServiceNotFoundError("Role-play session not found")
+            session = updated
         return session
 
-    def get_session(self, session_id: str, user_id: str) -> RoleplayStartResponse:
-        """Return an existing role-play session for page restoration."""
-        session = self.store.get_for_user(session_id=session_id, user_id=user_id)
+    def complete_conversation_session(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+    ) -> RoleplaySession:
+        """Mark domain metadata complete when the user ends the module."""
+        session = self.store.get_for_user(session_id, user_id)
         if session is None:
             raise ServiceNotFoundError("Role-play session not found")
-        opening_message = session.messages[0].content if session.messages else ""
-        return RoleplayStartResponse(session=session, opening_message=opening_message)
+        if session.status != RoleplaySessionStatus.COMPLETED:
+            updated = self.store.update_status(
+                session_id=session_id,
+                user_id=user_id,
+                status=RoleplaySessionStatus.COMPLETED,
+            )
+            if updated is None:
+                raise ServiceNotFoundError("Role-play session not found")
+            session = updated
+        self._record_terminal_checkpoint(session)
+        return session
+
+    def get_session(
+        self,
+        session_id: str,
+        user_id: str,
+    ) -> RoleplayStartResponse:
+        """Return owner-scoped domain metadata for history views."""
+        session = self.store.get_for_user(session_id, user_id)
+        if session is None:
+            raise ServiceNotFoundError("Role-play session not found")
+        opening = session.messages[0].content if session.messages else ""
+        return RoleplayStartResponse(session=session, opening_message=opening)
 
     def list_sessions(
         self,
@@ -706,7 +297,7 @@ class RoleplayService:
         limit: int = 20,
         offset: int = 0,
     ) -> RoleplaySessionListResponse:
-        """Return recent role-play sessions for history views."""
+        """Return recent owner-scoped domain sessions."""
         return RoleplaySessionListResponse(
             user_id=user_id,
             sessions=self.store.list_for_user(
@@ -716,17 +307,28 @@ class RoleplayService:
             ),
         )
 
-    async def delete_user_context(self, user_id: str) -> int:
-        """Delete all TTL-bound role-play context for one user."""
-        return await self.context_manager.delete_user(user_id=user_id)
+    def _active_session(
+        self,
+        session_id: str,
+        user_id: str,
+    ) -> RoleplaySession:
+        session = self.store.get_for_user(session_id, user_id)
+        if session is None:
+            raise ServiceNotFoundError("Role-play session not found")
+        if session.status != RoleplaySessionStatus.ACTIVE:
+            raise ServiceStateError("Role-play session is not active.")
+        return session
 
-    async def context_health(self) -> bool:
-        """Return whether the configured session-context backend responds."""
-        return await self.context_manager.ping()
-
-    async def close(self) -> None:
-        """Close the shared Redis client during application shutdown."""
-        await self.context_manager.close()
+    def _record_terminal_checkpoint(self, session: RoleplaySession) -> None:
+        self.checkpoint_service.record_roleplay(
+            user_id=session.user_id,
+            thread_id=session.session_id,
+            scenario=_session_scenario_spec(session),
+            current_stage="feedback_completed",
+            status=PracticeThreadStatus.COMPLETED,
+            reason_code="feedback_completed",
+            unresolved_next_step=None,
+        )
 
 
 roleplay_service = RoleplayService()
@@ -737,8 +339,7 @@ def _shared_roleplay_prompt_context(
     context: ConversationWorkingContext,
     overlay: RoleplayOverlay,
 ) -> RoleplayPromptContext:
-    """Project the one shared allocator result into the role-play prompt contract."""
-    diagnostics = context.diagnostics
+    """Project the one shared allocator result into the role-play prompt."""
     return RoleplayPromptContext(
         recent_messages=[
             f"{event.role.value}: {event.content}"
@@ -754,28 +355,12 @@ def _shared_roleplay_prompt_context(
         ),
         shared_summary=context.compact_summary,
         retrieved_memories=context.selected_agent_memory[:3],
-        diagnostics=RoleplayContextDiagnostics(
-            backend=diagnostics.context_backend,
-            available=True,
-            fallback_used=diagnostics.cache_status == "degraded",
-            recent_message_count=len(context.recent_events),
-            compact_state_used=True,
-            active_memory_estimated_tokens=0,
-            active_memory_token_budget=0,
-            retrieved_memory_count=len(context.selected_agent_memory[:3]),
-            estimated_input_tokens=diagnostics.estimated_tokens,
-            input_token_budget=diagnostics.total_token_budget,
-            budget_utilization=(
-                diagnostics.estimated_tokens
-                / diagnostics.total_token_budget
-            ),
-            token_estimator_backend=diagnostics.tokenizer_backend,
-        ),
+        diagnostics=context.diagnostics,
     )
 
 
 def _persist_roleplay_agent_message(user_id: str, message: str) -> str:
-    """Redact sensitive identifiers from persisted role-play agent/system turns."""
+    """Redact sensitive identifiers from a generated role-play turn."""
     return persistence_gate.persist_text(
         user_id=user_id,
         kind=PersistenceKind.ROLEPLAY_AGENT_MESSAGE,
@@ -783,8 +368,7 @@ def _persist_roleplay_agent_message(user_id: str, message: str) -> str:
     ).persisted_text
 
 
-def _has_user_turn(session) -> bool:
-    """Return whether a session has at least one user practice message."""
+def _has_user_turn(session: RoleplaySession) -> bool:
     return bool(session.practice_features) or any(
         message.role == RoleplayMessageRole.USER
         for message in session.messages
@@ -792,7 +376,6 @@ def _has_user_turn(session) -> bool:
 
 
 def _strategy_codes(features: RoleplayMessageFeatures) -> list[str]:
-    """Map derived non-verbatim practice signals to controlled checkpoint codes."""
     candidates = (
         ("reason_given", features.has_reason),
         ("clear_request", features.has_request),
@@ -846,7 +429,6 @@ def derive_roleplay_message_features(message: str) -> RoleplayMessageFeatures:
     )
     collaborative_terms = ("一起", "我们", "下次", "再", "换个", "商量", "讨论", "约")
     repair_terms = ("我理解", "我知道", "我意识到", "刚才", "抱歉", "不好意思")
-
     return RoleplayMessageFeatures(
         char_count=len(message),
         sentence_count=_count_sentences(message),
@@ -862,18 +444,27 @@ def derive_roleplay_message_features(message: str) -> RoleplayMessageFeatures:
         repair_marker_count=_count_terms(normalized, repair_terms),
         has_reason=any(term in normalized for term in reason_terms),
         has_request=any(term in normalized for term in request_terms),
-        has_boundary_statement=any(term in normalized for term in boundary_terms),
+        has_boundary_statement=any(
+            term in normalized for term in boundary_terms
+        ),
         has_empathy_marker=any(term in normalized for term in empathy_terms),
-        has_specific_time_or_place=any(term in normalized for term in specificity_terms),
-        has_polite_opening=normalized.startswith(("请", "谢谢", "不好意思", "抱歉", "麻烦")),
-        has_collaborative_offer=any(term in normalized for term in collaborative_terms),
-        has_repair_or_acknowledgement=any(term in normalized for term in repair_terms),
+        has_specific_time_or_place=any(
+            term in normalized for term in specificity_terms
+        ),
+        has_polite_opening=normalized.startswith(
+            ("请", "谢谢", "不好意思", "抱歉", "麻烦")
+        ),
+        has_collaborative_offer=any(
+            term in normalized for term in collaborative_terms
+        ),
+        has_repair_or_acknowledgement=any(
+            term in normalized for term in repair_terms
+        ),
         sensitive_detected=detect_sensitive_categories(message),
     )
 
 
 def _session_scenario_spec(session: RoleplaySession) -> ScenarioSpec:
-    """Return the open contract, projecting legacy persisted rows when needed."""
     if session.scenario_spec is not None:
         return session.scenario_spec
     if session.scenario is None:
@@ -884,11 +475,13 @@ def _session_scenario_spec(session: RoleplaySession) -> ScenarioSpec:
 
 
 def _count_terms(text: str, terms: tuple[str, ...]) -> int:
-    """Count non-verbatim marker hits without exposing the underlying text."""
     return sum(text.count(term) for term in terms)
 
 
 def _count_sentences(text: str) -> int:
-    """Estimate sentence count from punctuation for rubric-level features."""
-    parts = [part for part in re.split(r"[。！？!?；;\n]+", text) if part.strip()]
+    parts = [
+        part
+        for part in re.split(r"[。！？!?；;\n]+", text)
+        if part.strip()
+    ]
     return len(parts)

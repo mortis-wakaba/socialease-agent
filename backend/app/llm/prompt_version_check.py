@@ -115,12 +115,6 @@ PROMPT_SOURCES: dict[str, tuple[PromptSource, ...]] = {
             ),
         ),
     ),
-    "roleplay_compaction": (
-        PromptSource(
-            "app/memory/roleplay_compactor.py",
-            ("_compact_system_prompt", "_compact_user_prompt"),
-        ),
-    ),
     "conversation_compaction": (
         PromptSource(
             "app/conversation/compactor.py",

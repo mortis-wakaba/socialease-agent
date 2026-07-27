@@ -28,10 +28,6 @@
       "fingerprint": "sha256:c2b972fc2e6912c6",
       "version": "roleplay-v6"
     },
-    "roleplay_compaction": {
-      "fingerprint": "sha256:a222dd9c1f0de91d",
-      "version": "roleplay-compaction-v1"
-    },
     "safety_classifier": {
       "fingerprint": "sha256:f435a6bfd261fa68",
       "version": "safety-v1"
