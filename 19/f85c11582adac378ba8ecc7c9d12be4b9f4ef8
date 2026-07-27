@@ -1,0 +1,47 @@
+backend/app/api/conversations.py
+  s_60c357d9985c3c::t_45dcf0adab5ce3 1-163
+backend/app/db/postgres/conversation_repository.py
+  s_60c357d9985c3c::t_68e217dc3a9a9c 406-434
+backend/app/conversation/repository.py
+  s_60c357d9985c3c::t_68e217dc3a9a9c 101-108,437-461
+  s_60c357d9985c3c::t_e318cdb84b964d 462
+backend/app/workflow/engine.py
+  s_60c357d9985c3c::t_7b4e61e76bbe37 118-120,122,155-173,198-199
+backend/app/models_conversation_api.py
+  s_60c357d9985c3c::t_4b8620733f614e 1-8,10-51
+  s_60c357d9985c3c::t_45dcf0adab5ce3 9,52-59
+backend/tests/test_conversation_api.py
+  s_60c357d9985c3c::t_39eead9ab22aa5 1-4,6-13,20-21,23-25,27,33-36,40-41,43-54,56-72,74-81,83-96,100,102-112,114-119
+  s_60c357d9985c3c::t_987d638428d90c 5,19,22,26,28-32,37-39,42,55,73,82,97-99,101,113
+  s_60c357d9985c3c::t_5c593a7df114e9 14-18
+backend/app/services/conversation_service.py
+  s_60c357d9985c3c::t_0e040886ef10f7 1-23,26-121,173-530
+  s_60c357d9985c3c::t_45dcf0adab5ce3 24-25,122-172
+backend/app/models_conversation.py
+  s_60c357d9985c3c::t_4471fca6ad672f 10
+backend/tests/test_conversation_service.py
+  s_60c357d9985c3c::t_28c72e9760b049 1-221
+backend/app/api/routes.py
+  s_60c357d9985c3c::t_45dcf0adab5ce3 13,43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "19f85c11582adac378ba8ecc7c9d12be4b9f4ef8",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
