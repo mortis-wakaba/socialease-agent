@@ -1,0 +1,32 @@
+backend/app/conversation/__init__.py
+  s_60c357d9985c3c::t_e0dec643af314f 1-5
+backend/app/conversation/module_policy.py
+  s_60c357d9985c3c::t_e0dec643af314f 1-151
+backend/tests/test_conversation_contracts.py
+  s_60c357d9985c3c::t_e0dec643af314f 1-199
+docs/adr/0008-unified-conversation-timeline-and-module-stack.md
+  s_60c357d9985c3c::t_e0dec643af314f 1-48
+backend/app/models_conversation.py
+  s_60c357d9985c3c::t_e0dec643af314f 1-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "1efebfd50caf9c659b4dbe91028f7158dfb73ead",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
