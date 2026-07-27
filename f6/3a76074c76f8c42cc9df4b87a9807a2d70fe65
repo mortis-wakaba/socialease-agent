@@ -1,0 +1,33 @@
+backend/tests/test_migration_discipline.py
+  s_b1a568f0ed8744::t_ab23c18b21256c 15,49-62
+  s_b1a568f0ed8744::t_fe98f6f95cb231 63-64
+backend/migrations/versions/0010_add_open_scenario_checkpoint_metadata.py
+  s_b1a568f0ed8744::t_c3bfe6d186f4c5 3,12
+backend/migrations/versions/0011_add_open_scenario_memory_metadata.py
+  s_b1a568f0ed8744::t_c3bfe6d186f4c5 3-4,12-13
+backend/tests/test_postgres_user_memory_repository.py
+  s_b1a568f0ed8744::t_65d7a28d131483 300
+backend/app/db/migration_check.py
+  s_b1a568f0ed8744::t_ab23c18b21256c 6,13,17,48-59,70-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "f63a76074c76f8c42cc9df4b87a9807a2d70fe65",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_b1a568f0ed8744": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9860-1f9a-7a53-9121-919c0b2b9a7b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
