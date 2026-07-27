@@ -34,7 +34,8 @@ class WorksheetRecord(BaseModel):
 
     worksheet_id: str
     user_id: str = Field(min_length=1)
-    source_message: str
+    source_message: str | None = None
+    source_event_id: str | None = None
     fields: WorksheetFields
     citations: list[Citation] = Field(default_factory=list)
     disclaimer: str
@@ -50,6 +51,7 @@ class WorksheetCreateRequest(BaseModel):
 
     user_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    source_event_id: str | None = Field(default=None, min_length=1)
 
 
 class WorksheetCreateResponse(BaseModel):
@@ -74,13 +76,12 @@ class WorksheetSupplementRequest(BaseModel):
 
 
 class WorksheetDraftContext(BaseModel):
-    """TTL-bound raw clarification state outside durable persistence."""
+    """TTL-bound progress projection without duplicate clarification text."""
 
     user_id: str
     worksheet_id: str
     fields: WorksheetFields
     missing_fields: list[str] = Field(default_factory=list)
     last_question: str | None = None
-    recent_supplements: list[str] = Field(default_factory=list, max_length=8)
     version: int = Field(default=1, ge=1)
     updated_at: datetime

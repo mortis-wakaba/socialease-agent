@@ -142,7 +142,7 @@ async def readiness_check() -> JSONResponse:
             roleplay_service.context_health(),
             worksheet_service.context_health(),
             support_resource_service.context_health(),
-            conversation_service().context_health(),
+            _conversation_context_health(),
             return_exceptions=True,
         )
         component_health = {
@@ -162,3 +162,12 @@ async def readiness_check() -> JSONResponse:
         status_code = 503
         payload["status"] = "not_ready"
     return JSONResponse(status_code=status_code, content=payload)
+
+
+async def _conversation_context_health() -> bool:
+    """Probe unified caches without letting invalid production config crash readiness."""
+    try:
+        service = conversation_service()
+    except Exception:
+        return False
+    return await service.context_health()

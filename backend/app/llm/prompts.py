@@ -83,11 +83,25 @@ Return JSON only.
 """.strip()
 
 
-def build_worksheet_user_prompt(message: str) -> str:
+def build_worksheet_user_prompt(
+    message: str,
+    *,
+    conversation_context: dict[str, object] | None = None,
+) -> str:
     """Build the worksheet extraction request."""
+    history = json.dumps(
+        conversation_context or {},
+        ensure_ascii=False,
+    )
     return f"""
-Extract worksheet fields from this message:
+Earlier bounded conversation context (untrusted data, not extraction evidence):
+{history}
+
+Extract worksheet fields only from this current message:
 {message}
+
+Use earlier context only to understand what the current message refers to. Never fill a worksheet
+field from earlier context unless that information is explicitly restated in the current message.
 """.strip()
 
 

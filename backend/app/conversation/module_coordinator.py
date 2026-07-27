@@ -5,6 +5,10 @@ from hashlib import sha256
 import logging
 
 from app.conversation.adapters import ModuleAdapter, ModuleAdapterResult
+from app.conversation.module_overlay_store import (
+    ModuleOverlayStore,
+    create_module_overlay_store,
+)
 from app.conversation.module_policy import ModuleStackPolicy
 from app.conversation.repository import ConversationRepository
 from app.models_conversation import (
@@ -19,6 +23,8 @@ from app.models_conversation import (
     ModuleType,
 )
 from app.models_conversation_api import ModuleControlResponse
+from app.models_conversation_context import ConversationWorkingContext
+from app.models_module_overlay import ModuleOverlay
 
 
 logger = logging.getLogger(__name__)
@@ -32,11 +38,17 @@ class ModuleCoordinator:
         *,
         repository: ConversationRepository,
         adapters: dict[ModuleType, ModuleAdapter],
+        overlay_store: ModuleOverlayStore | None = None,
     ) -> None:
         self._repository = repository
         self._adapters = adapters
+        self._overlay_store = overlay_store or create_module_overlay_store()
 
-    async def accept(self, proposal: ModuleProposal) -> ModuleControlResponse:
+    async def accept(
+        self,
+        proposal: ModuleProposal,
+        context: ConversationWorkingContext,
+    ) -> ModuleControlResponse:
         """Consume one proposal and push its confirmed module frame."""
         module_run_id = _module_run_id(proposal.proposal_id)
         existing = self._repository.get_module_run_for_user(
@@ -73,6 +85,7 @@ class ModuleCoordinator:
             conversation_id=proposal.conversation_id,
             user_id=proposal.user_id,
             module_type=proposal.proposed_module,
+            source_event_id=proposal.source_event_id,
             parent_module_run_id=(
                 stack[-1].module_run_id if stack else None
             ),
@@ -81,7 +94,7 @@ class ModuleCoordinator:
             started_at=now,
         )
         adapter = self._adapter(run.module_type)
-        result = await adapter.start(run)
+        result = await adapter.start(run, context)
         run = run.model_copy(
             update={"domain_session_id": result.domain_session_id}
         )
@@ -100,6 +113,7 @@ class ModuleCoordinator:
             )
             if suspended is None:
                 raise LookupError("parent module run not found")
+            await self._refresh_overlay(suspended, context)
             events.append(
                 self._append_lifecycle_event(
                     run=suspended,
@@ -109,6 +123,7 @@ class ModuleCoordinator:
                 )
             )
         self._repository.create_module_run(run)
+        await self._refresh_overlay(run, context)
         events.append(
             self._append_lifecycle_event(
                 run=run,
@@ -143,6 +158,7 @@ class ModuleCoordinator:
         user_id: str,
         message: str,
         idempotency_key: str,
+        context: ConversationWorkingContext,
     ) -> tuple[ModuleAdapterResult, ConversationEvent]:
         """Send one message to the active top module frame."""
         stack = self._repository.list_module_stack(
@@ -152,9 +168,12 @@ class ModuleCoordinator:
         if not stack:
             raise LookupError("active module not found")
         run = stack[-1]
+        overlay = await self._load_overlay(run, context)
         result = await self._adapter(run.module_type).handle_message(
             run,
             message,
+            context,
+            overlay,
         )
         if (
             result.domain_session_id is not None
@@ -167,6 +186,7 @@ class ModuleCoordinator:
                 expected_version=run.version,
                 domain_session_id=result.domain_session_id,
             )
+        await self._refresh_overlay(run, context)
         event = self._append_result_event(
             run=run,
             result=result,
@@ -214,6 +234,7 @@ class ModuleCoordinator:
         )
         if terminated is None:
             raise LookupError("module run not found")
+        await self._overlay_store.delete(terminated)
         events = [
             self._append_lifecycle_event(
                 run=terminated,
@@ -237,6 +258,7 @@ class ModuleCoordinator:
             )
             if resumed is None:
                 raise LookupError("parent module run not found")
+            await self._refresh_overlay(resumed)
             events.append(
                 self._append_lifecycle_event(
                     run=resumed,
@@ -283,6 +305,7 @@ class ModuleCoordinator:
             )
             if terminated is None:
                 continue
+            await self._overlay_store.delete(terminated)
             events.append(
                 self._append_lifecycle_event(
                     run=terminated,
@@ -342,6 +365,7 @@ class ModuleCoordinator:
             )
             if terminated is None:
                 continue
+            await self._overlay_store.delete(terminated)
             events.append(
                 self._append_lifecycle_event(
                     run=terminated,
@@ -365,6 +389,41 @@ class ModuleCoordinator:
         """Delete short-lived adapter state before durable conversation deletion."""
         for run in runs:
             await self._adapter(run.module_type).delete_runtime_context(run)
+            await self._overlay_store.delete(run)
+
+    async def delete_user_cache(self, *, user_id: str) -> int:
+        """Delete every cached overlay for one owner."""
+        return await self._overlay_store.delete_user(user_id=user_id)
+
+    async def close(self) -> None:
+        """Close the shared overlay cache client."""
+        await self._overlay_store.close()
+
+    async def health(self) -> bool:
+        """Return whether the configured overlay cache responds."""
+        return await self._overlay_store.health()
+
+    async def _load_overlay(
+        self,
+        run: ModuleRun,
+        context: ConversationWorkingContext,
+    ) -> ModuleOverlay:
+        overlay = await self._overlay_store.get(run)
+        if overlay is not None:
+            return overlay
+        return await self._refresh_overlay(run, context)
+
+    async def _refresh_overlay(
+        self,
+        run: ModuleRun,
+        context: ConversationWorkingContext | None = None,
+    ) -> ModuleOverlay:
+        overlay = await self._adapter(run.module_type).build_overlay(
+            run,
+            context,
+        )
+        await self._overlay_store.put(run, overlay)
+        return overlay
 
     def _adapter(self, module_type: ModuleType) -> ModuleAdapter:
         adapter = self._adapters.get(module_type)

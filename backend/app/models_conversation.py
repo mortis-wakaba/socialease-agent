@@ -182,6 +182,7 @@ class ResourceMessageEventPayload(StrictConversationModel):
     kind: Literal["resource_message"] = "resource_message"
     search_session_id: str | None = None
     citation_count: int = Field(default=0, ge=0, le=20)
+    citation_ids: list[str] = Field(default_factory=list, max_length=10)
     unknown: bool = False
 
 
@@ -266,6 +267,7 @@ class ModuleProposal(StrictConversationModel):
     conversation_id: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
     proposed_module: ModuleType
+    source_event_id: str | None = Field(default=None, min_length=1)
     reason_code: ModuleProposalReason
     bounded_parameters: ModuleParameters
     status: ModuleProposalStatus = ModuleProposalStatus.PENDING
@@ -288,6 +290,7 @@ class ModuleRun(StrictConversationModel):
     conversation_id: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
     module_type: ModuleType
+    source_event_id: str | None = Field(default=None, min_length=1)
     parent_module_run_id: str | None = None
     depth: int = Field(ge=1, le=MAX_MODULE_DEPTH)
     status: ModuleRunStatus = ModuleRunStatus.ACTIVE

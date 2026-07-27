@@ -1,10 +1,10 @@
 """Service layer for local markdown RAG retrieval."""
 
 from app.knowledge.chunker import MarkdownChunker
-from app.knowledge.formatter import CitationFormatter
+from app.knowledge.formatter import CitationFormatter, citation_id_for_chunk
 from app.knowledge.loader import MarkdownKnowledgeLoader
 from app.knowledge.retriever import BM25Retriever
-from app.models_knowledge import KnowledgeBaseType, KnowledgeQueryResponse
+from app.models_knowledge import Citation, KnowledgeBaseType, KnowledgeQueryResponse
 
 
 class KnowledgeService:
@@ -57,6 +57,29 @@ class KnowledgeService:
             confidence=confidence,
             retrieval=retrieval,
         )
+
+    def resolve_citations(
+        self,
+        citation_ids: list[str],
+        *,
+        kb_type: KnowledgeBaseType,
+    ) -> list[Citation | None]:
+        """Resolve stable IDs only against reviewed local knowledge chunks."""
+        wanted = set(citation_ids)
+        resolved: dict[str, Citation] = {}
+        for chunk in self.chunker.chunk(self.loader.load(kb_type)):
+            citation_id = citation_id_for_chunk(chunk)
+            if citation_id not in wanted:
+                continue
+            resolved[citation_id] = Citation(
+                citation_id=citation_id,
+                title=chunk.title,
+                source_name=chunk.source_name,
+                source_type=chunk.source_type,
+                source_url=chunk.source_url,
+                snippet=self.formatter._snippet(chunk.text),
+            )
+        return [resolved.get(citation_id) for citation_id in citation_ids]
 
 
 def _requests_unavailable_campus_resource(query: str) -> bool:

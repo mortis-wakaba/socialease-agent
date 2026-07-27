@@ -21,7 +21,8 @@ class WorksheetStore:
     def create(
         self,
         user_id: str,
-        source_message: str,
+        source_message: str | None,
+        source_event_id: str | None,
         fields: WorksheetFields,
         citations: list[Citation],
         missing_fields: list[str],
@@ -32,6 +33,7 @@ class WorksheetStore:
             worksheet_id=str(uuid4()),
             user_id=user_id,
             source_message=source_message,
+            source_event_id=source_event_id,
             fields=fields,
             citations=citations,
             disclaimer=WORKSHEET_DISCLAIMER,

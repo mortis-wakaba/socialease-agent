@@ -41,8 +41,8 @@
       "version": "support-v4"
     },
     "worksheet_extraction": {
-      "fingerprint": "sha256:92a57f10fef13f4a",
-      "version": "worksheet-v2"
+      "fingerprint": "sha256:df5a65d4df060c09",
+      "version": "worksheet-v3"
     }
   },
   "schema_version": 1

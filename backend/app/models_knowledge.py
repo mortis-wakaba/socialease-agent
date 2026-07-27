@@ -1,6 +1,7 @@
 """Pydantic models for local knowledge-base retrieval."""
 
 from enum import Enum
+from hashlib import sha256
 
 from typing import Any
 
@@ -26,6 +27,7 @@ class KnowledgeQueryRequest(BaseModel):
 class Citation(BaseModel):
     """Citation returned from a markdown knowledge chunk."""
 
+    citation_id: str | None = Field(default=None, min_length=16, max_length=64)
     title: str
     source_name: str
     source_type: str
@@ -48,6 +50,27 @@ class Citation(BaseModel):
                 ),
             }
         return data
+
+    @model_validator(mode="after")
+    def populate_legacy_citation_id(self) -> "Citation":
+        """Give persisted legacy citations a deterministic content identifier."""
+        if self.citation_id is not None:
+            return self
+        canonical = "\x1f".join(
+            [
+                self.title.strip(),
+                self.source_name.strip(),
+                self.source_type.strip(),
+                (self.source_url or "").strip(),
+                self.snippet.strip(),
+            ]
+        )
+        object.__setattr__(
+            self,
+            "citation_id",
+            sha256(canonical.encode("utf-8")).hexdigest()[:24],
+        )
+        return self
 
 
 class RetrievalHit(BaseModel):

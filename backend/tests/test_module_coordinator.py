@@ -23,6 +23,15 @@ from app.models_conversation import (
     RoleplayMessageEventPayload,
     RoleplayParameters,
 )
+from app.models_conversation_context import (
+    ConversationContextDiagnostics,
+    ConversationWorkingContext,
+)
+from app.models_module_overlay import (
+    ExposureOverlay,
+    ModuleOverlay,
+    RoleplayOverlay,
+)
 
 
 class RecordingAdapter:
@@ -32,7 +41,12 @@ class RecordingAdapter:
         self.module_type = module_type
         self.actions: list[str] = []
 
-    async def start(self, run: ModuleRun) -> ModuleAdapterResult:
+    async def start(
+        self,
+        run: ModuleRun,
+        context: ConversationWorkingContext,
+    ) -> ModuleAdapterResult:
+        assert context.conversation_id == run.conversation_id
         self.actions.append(f"start:{run.module_run_id}")
         return self._result(run, "started")
 
@@ -40,9 +54,39 @@ class RecordingAdapter:
         self,
         run: ModuleRun,
         message: str,
+        context: ConversationWorkingContext,
+        overlay: ModuleOverlay,
     ) -> ModuleAdapterResult:
+        assert context.conversation_id == run.conversation_id
+        assert overlay.module_run_id == run.module_run_id
         self.actions.append(f"message:{message}")
         return self._result(run, f"reply:{message}")
+
+    async def build_overlay(
+        self,
+        run: ModuleRun,
+        context: ConversationWorkingContext | None = None,
+    ) -> ModuleOverlay:
+        del context
+        payload = (
+            RoleplayOverlay(
+                scenario_summary="测试场景",
+                difficulty=2,
+            )
+            if self.module_type is ModuleType.ROLEPLAY
+            else ExposureOverlay()
+        )
+        return ModuleOverlay(
+            conversation_id=run.conversation_id,
+            user_id=run.user_id,
+            module_run_id=run.module_run_id,
+            module_type=run.module_type,
+            parent_module_run_id=run.parent_module_run_id,
+            phase="active",
+            payload=payload,
+            version=run.version,
+            updated_at=datetime.now(UTC),
+        )
 
     async def suspend(self, run: ModuleRun) -> None:
         self.actions.append(f"suspend:{run.module_run_id}")
@@ -52,6 +96,9 @@ class RecordingAdapter:
 
     async def terminate(self, run: ModuleRun) -> None:
         self.actions.append(f"terminate:{run.module_run_id}")
+
+    async def delete_runtime_context(self, run: ModuleRun) -> None:
+        self.actions.append(f"delete:{run.module_run_id}")
 
     def _result(self, run: ModuleRun, response: str) -> ModuleAdapterResult:
         session_id = run.domain_session_id or f"domain-{run.module_run_id}"
@@ -121,9 +168,10 @@ async def test_roleplay_exposure_nested_push_pop_and_resume(
         module_type=ModuleType.EXPOSURE,
     )
     repository.save_proposal(roleplay_proposal)
-    first = await coordinator.accept(roleplay_proposal)
+    context = _working_context(conversation.conversation_id)
+    first = await coordinator.accept(roleplay_proposal, context)
     repository.save_proposal(exposure_proposal)
-    nested = await coordinator.accept(exposure_proposal)
+    nested = await coordinator.accept(exposure_proposal, context)
 
     assert [run.module_type for run in nested.active_module_stack] == [
         ModuleType.ROLEPLAY,
@@ -176,9 +224,11 @@ async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
         module_type=ModuleType.ROLEPLAY,
     )
     repository.save_proposal(roleplay)
-    first = await coordinator.accept(roleplay)
+    context = _working_context(conversation.conversation_id)
+    first = await coordinator.accept(roleplay, context)
     replay = await coordinator.accept(
-        roleplay.model_copy(update={"status": ModuleProposalStatus.ACCEPTED})
+        roleplay.model_copy(update={"status": ModuleProposalStatus.ACCEPTED}),
+        context,
     )
     assert len(first.active_module_stack) == 1
     assert len(replay.active_module_stack) == 1
@@ -193,7 +243,7 @@ async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
     )
     repository.save_proposal(resource)
     with pytest.raises(ConversationStateError):
-        await coordinator.accept(resource)
+        await coordinator.accept(resource, context)
     stored = repository.get_proposal_for_user(
         proposal_id=resource.proposal_id,
         conversation_id=conversation.conversation_id,
@@ -219,12 +269,16 @@ async def test_active_module_receives_messages_on_same_timeline(
         module_type=ModuleType.ROLEPLAY,
     )
     repository.save_proposal(proposal)
-    started = await coordinator.accept(proposal)
+    started = await coordinator.accept(
+        proposal,
+        _working_context(conversation.conversation_id),
+    )
     result, event = await coordinator.handle_message(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         message="我的练习回复",
         idempotency_key="turn-001",
+        context=_working_context(conversation.conversation_id),
     )
 
     assert result.response == "reply:我的练习回复"
@@ -257,9 +311,10 @@ async def test_crisis_preemption_stops_nested_stack_even_if_runtime_fails(
         module_type=ModuleType.EXPOSURE,
     )
     repository.save_proposal(roleplay)
-    await coordinator.accept(roleplay)
+    context = _working_context(conversation.conversation_id)
+    await coordinator.accept(roleplay, context)
     repository.save_proposal(exposure)
-    await coordinator.accept(exposure)
+    await coordinator.accept(exposure, context)
 
     events = await coordinator.preempt_for_crisis(
         conversation_id=conversation.conversation_id,
@@ -308,4 +363,20 @@ def _proposal(
         request_hash=(proposal_id + ("x" * 64))[:64],
         expires_at=now + timedelta(minutes=10),
         created_at=now,
+    )
+
+
+def _working_context(conversation_id: str) -> ConversationWorkingContext:
+    return ConversationWorkingContext(
+        conversation_id=conversation_id,
+        current_user_message="我的练习回复",
+        diagnostics=ConversationContextDiagnostics(
+            conversation_id_hash="0" * 16,
+            recent_event_count=0,
+            active_module_count=1,
+            selected_memory_count=0,
+            estimated_tokens=0,
+            total_token_budget=7000,
+            tokenizer_backend="test",
+        ),
     )

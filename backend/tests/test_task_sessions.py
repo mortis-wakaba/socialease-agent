@@ -71,14 +71,14 @@ async def test_shared_task_store_enforces_owner_ttl_and_cas() -> None:
     state = SupportSearchContext(
         user_id="owner",
         search_session_id="search",
-        last_query="资料",
+        query_fingerprint="0" * 16,
         version=1,
         updated_at=clock.now(),
     )
     await store.put(user_id="owner", task_id="search", state=state, ttl_seconds=60)
 
     assert await store.get(user_id="other", task_id="search") is None
-    updated = state.model_copy(update={"version": 2, "last_query": "新资料"})
+    updated = state.model_copy(update={"version": 2, "query_fingerprint": "1" * 16})
     assert await store.compare_and_set(
         user_id="owner", task_id="search", state=updated,
         expected_version=1, ttl_seconds=60
@@ -161,7 +161,7 @@ async def test_worksheet_draft_retries_one_cas_conflict() -> None:
 
     assert stored is not None
     assert stored.version == 3
-    assert stored.recent_supplements[-1] == "情绪：焦虑。"
+    assert not hasattr(stored, "recent_supplements")
     assert drafts.compare_calls == 2
 
 
@@ -234,7 +234,8 @@ async def test_support_search_session_resolves_ordinals_and_isolates_users() -> 
 
     assert followup.unknown is False
     assert followup.resolved_reference_index == 1
-    assert followup.citations == [first.citations[1]]
+    assert followup.citations[0].citation_id == first.citations[1].citation_id
+    assert followup.citations[0].title == first.citations[1].title
     assert cross_user.unknown is True
     assert cross_user.citations == []
 
@@ -263,7 +264,8 @@ async def test_support_search_session_retries_one_cas_conflict() -> None:
 
     assert stored is not None
     assert stored.version == 3
-    assert stored.last_query == "第二个主要讲什么？"
+    assert stored.query_fingerprint
+    assert "社交焦虑" not in stored.model_dump_json()
     assert stored.selected_citation_index == 1
     assert searches.compare_calls == 2
 
@@ -286,7 +288,7 @@ async def test_shared_task_store_real_redis_round_trip_when_configured() -> None
     state = SupportSearchContext(
         user_id=user_id,
         search_session_id=task_id,
-        last_query="公开资源",
+        query_fingerprint="0" * 16,
         version=1,
         updated_at=datetime.now(timezone.utc),
     )
@@ -294,7 +296,9 @@ async def test_shared_task_store_real_redis_round_trip_when_configured() -> None
         await store.put(user_id=user_id, task_id=task_id, state=state, ttl_seconds=60)
         loaded = await store.get(user_id=user_id, task_id=task_id)
         assert loaded is not None
-        updated = loaded.model_copy(update={"version": 2, "last_query": "第二次查询"})
+        updated = loaded.model_copy(
+            update={"version": 2, "query_fingerprint": "1" * 16}
+        )
         assert await store.compare_and_set(
             user_id=user_id,
             task_id=task_id,
@@ -302,7 +306,9 @@ async def test_shared_task_store_real_redis_round_trip_when_configured() -> None
             expected_version=1,
             ttl_seconds=60,
         )
-        assert (await store.get(user_id=user_id, task_id=task_id)).last_query == "第二次查询"
+        assert (
+            await store.get(user_id=user_id, task_id=task_id)
+        ).query_fingerprint == "1" * 16
     finally:
         await store.delete(user_id=user_id, task_id=task_id)
         await store.close()

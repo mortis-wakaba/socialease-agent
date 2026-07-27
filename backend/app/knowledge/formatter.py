@@ -1,6 +1,7 @@
 """Citation, answer, and retrieval diagnostics formatter."""
 
 import re
+from hashlib import sha256
 
 from app.models_knowledge import Citation, KnowledgeChunk, RetrievalDiagnostics, RetrievalHit
 
@@ -40,6 +41,7 @@ class CitationFormatter:
 
         citations = [
             Citation(
+                citation_id=citation_id_for_chunk(chunk),
                 title=chunk.title,
                 source_name=chunk.source_name,
                 source_type=chunk.source_type,
@@ -82,3 +84,9 @@ class CitationFormatter:
             if any(term in sentence.casefold() for term in terms):
                 return sentence.strip() or text
         return text
+
+
+def citation_id_for_chunk(chunk: KnowledgeChunk) -> str:
+    """Return a stable identifier for one reviewed knowledge chunk."""
+    canonical = f"{chunk.path}\x1f{chunk.text}"
+    return sha256(canonical.encode("utf-8")).hexdigest()[:24]

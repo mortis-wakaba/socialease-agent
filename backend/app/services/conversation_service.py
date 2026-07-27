@@ -403,6 +403,7 @@ class ConversationService:
             )
         counts = self._repository.delete_all_for_user(user_id=user_id)
         await self._context_manager.delete_user_cache(user_id=user_id)
+        await self._module_coordinator.delete_user_cache(user_id=user_id)
         return ConversationDeleteResponse(
             conversation_id="all",
             deleted=True,
@@ -412,10 +413,13 @@ class ConversationService:
     async def close(self) -> None:
         """Close the optional shared conversation-context cache client."""
         await self._context_manager.close()
+        await self._module_coordinator.close()
 
     async def context_health(self) -> bool:
         """Return whether the unified context provider is ready."""
-        return await self._context_manager.health()
+        context_ready = await self._context_manager.health()
+        overlay_ready = await self._module_coordinator.health()
+        return context_ready and overlay_ready
 
     async def send_message(
         self,
@@ -554,6 +558,7 @@ class ConversationService:
                 user_id=user_id,
                 message=message,
                 idempotency_key=idempotency_key,
+                context=context,
             )
             return self._response(
                 conversation_id=conversation_id,
@@ -647,8 +652,14 @@ class ConversationService:
             raise ConversationProposalError("proposal not found")
         if proposal.request_hash != request_hash:
             raise ConversationProposalError("proposal request hash mismatch")
+        context = await self._context_manager.assemble(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            current_user_message=_module_start_message(proposal),
+            current_event_id=proposal.source_event_id,
+        )
         if proposal.status == ModuleProposalStatus.ACCEPTED:
-            return await self._module_coordinator.accept(proposal)
+            return await self._module_coordinator.accept(proposal, context)
         proposal = self._validated_pending_proposal(
             conversation_id=conversation_id,
             proposal_id=proposal_id,
@@ -656,7 +667,7 @@ class ConversationService:
             request_hash=request_hash,
         )
         try:
-            return await self._module_coordinator.accept(proposal)
+            return await self._module_coordinator.accept(proposal, context)
         except ConversationStateError as exc:
             raise ConversationProposalError(str(exc)) from exc
 
@@ -738,6 +749,7 @@ class ConversationService:
             conversation_id=conversation_id,
             user_id=user_id,
             proposed_module=module_type,
+            source_event_id=source_event.event_id,
             reason_code=_proposal_reason(module_type),
             bounded_parameters=parameters,
             request_hash=request_hash,
@@ -787,6 +799,17 @@ def _module_parameters(module_type: ModuleType, message: str):
     if module_type == ModuleType.EXPOSURE:
         return ExposureParameters(goal=message)
     return ResourceParameters(query=message)
+
+
+def _module_start_message(proposal: ModuleProposal) -> str:
+    parameters = proposal.bounded_parameters
+    if isinstance(parameters, RoleplayParameters):
+        return parameters.scenario_description
+    if isinstance(parameters, WorksheetParameters):
+        return parameters.situation
+    if isinstance(parameters, ExposureParameters):
+        return parameters.goal
+    return parameters.query
 
 
 def _proposal_reason(module_type: ModuleType) -> ModuleProposalReason:

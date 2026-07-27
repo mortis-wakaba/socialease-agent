@@ -13,6 +13,7 @@ from app.llm.prompts import (
 )
 from app.models_worksheet import WorksheetFields
 from app.models_llm import LLMUsage
+from app.models_conversation_context import ConversationPromptContext
 
 
 class WorksheetAgent:
@@ -55,9 +56,14 @@ class WorksheetAgent:
     async def create_fields(
         self,
         message: str,
+        *,
+        conversation_context: ConversationPromptContext | None = None,
     ) -> tuple[WorksheetFields, list[str], list[str], LLMUsage]:
         """Extract worksheet fields and return missing field guidance."""
-        fields, llm_usage = await self._extract_fields(message)
+        fields, llm_usage = await self._extract_fields(
+            message,
+            conversation_context=conversation_context,
+        )
         missing = [
             field
             for field in self.required_fields
@@ -66,11 +72,19 @@ class WorksheetAgent:
         questions = [self.followup_questions[field] for field in missing[:4]]
         return fields, missing, questions, llm_usage
 
-    async def _extract_fields(self, message: str) -> tuple[WorksheetFields, LLMUsage]:
+    async def _extract_fields(
+        self,
+        message: str,
+        *,
+        conversation_context: ConversationPromptContext | None,
+    ) -> tuple[WorksheetFields, LLMUsage]:
         """Prefer validated LLM extraction and fallback on any provider issue."""
         if self.llm_client is not None:
             try:
-                return await self._llm_extract_fields(message), LLMUsage(
+                return await self._llm_extract_fields(
+                    message,
+                    conversation_context=conversation_context,
+                ), LLMUsage(
                     used=True,
                     fallback_used=False,
                 )
@@ -93,11 +107,23 @@ class WorksheetAgent:
                 )
         return self._rule_based_fields(message), LLMUsage()
 
-    async def _llm_extract_fields(self, message: str) -> WorksheetFields:
+    async def _llm_extract_fields(
+        self,
+        message: str,
+        *,
+        conversation_context: ConversationPromptContext | None,
+    ) -> WorksheetFields:
         """Extract fields through a strict JSON-only LLM prompt."""
         response = await self.llm_client.generate_text(
             system_prompt=build_worksheet_system_prompt(),
-            user_prompt=build_worksheet_user_prompt(message),
+            user_prompt=build_worksheet_user_prompt(
+                message,
+                conversation_context=(
+                    conversation_context.model_dump(mode="json")
+                    if conversation_context is not None
+                    else None
+                ),
+            ),
             temperature=0.0,
         )
         payload = json.loads(response)

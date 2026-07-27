@@ -1,12 +1,13 @@
 """Support-resource service shared by API routes and harness skills."""
 
 from datetime import datetime, timezone
+from hashlib import sha256
 import re
 from uuid import uuid4
 
 from app.knowledge.service import KnowledgeService
 from app.models import RiskLevel
-from app.models_knowledge import KnowledgeBaseType
+from app.models_knowledge import Citation, KnowledgeBaseType
 from app.models_support import SupportQueryRequest, SupportQueryResponse
 from app.models_support import SupportSearchContext
 from app.memory.session_context_settings import roleplay_session_context_settings
@@ -73,7 +74,11 @@ class SupportResourceService:
             previous,
         )
         if reference_index is not None:
-            if previous is None or reference_index >= len(previous.ordered_citations):
+            citation = self._resolve_cached_citation(
+                previous,
+                reference_index,
+            )
+            if citation is None:
                 return SupportQueryResponse(
                     answer="当前检索会话中找不到你指向的那条来源，请重新描述资料标题或重新查询。",
                     citations=[],
@@ -85,12 +90,9 @@ class SupportResourceService:
                     search_session_id=session_id,
                     resolved_reference_index=reference_index,
                 )
-            citation = previous.ordered_citations[reference_index]
             await self._save(
                 previous.model_copy(
                     update={
-                        "last_query": request.query,
-                        "recent_queries": [*previous.recent_queries, request.query][-4:],
                         "selected_citation_index": reference_index,
                         "version": previous.version + 1,
                         "updated_at": datetime.now(timezone.utc),
@@ -118,10 +120,14 @@ class SupportResourceService:
             SupportSearchContext(
                 user_id=user_id,
                 search_session_id=session_id,
-                last_query=request.query,
-                recent_queries=[*(previous.recent_queries if previous else []), request.query][-4:],
-                ordered_citations=response.citations[:10],
+                query_fingerprint=_query_fingerprint(request.query),
+                ordered_citation_ids=[
+                    citation.citation_id
+                    for citation in response.citations[:10]
+                    if citation.citation_id is not None
+                ],
                 selected_citation_index=None,
+                retrieval_unknown=response.unknown,
                 version=(previous.version + 1 if previous else 1),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -147,6 +153,35 @@ class SupportResourceService:
         """Return whether the configured support-search backend responds."""
         return await self.search_store.ping()
 
+    async def get_search_context(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+    ) -> SupportSearchContext | None:
+        """Return bounded citation-reference state for an owned search session."""
+        return await self._load(user_id, session_id)
+
+    async def rebuild_search_context(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        citation_ids: list[str],
+        retrieval_unknown: bool,
+    ) -> SupportSearchContext:
+        """Rebuild citation references from the reviewed knowledge base."""
+        state = SupportSearchContext(
+            user_id=user_id,
+            search_session_id=session_id,
+            query_fingerprint="0" * 16,
+            ordered_citation_ids=citation_ids[:10],
+            retrieval_unknown=retrieval_unknown,
+            updated_at=datetime.now(timezone.utc),
+        )
+        await self._save(state)
+        return state
+
     async def _load(self, user_id: str, session_id: str) -> SupportSearchContext | None:
         try:
             return await self.search_store.get(user_id=user_id, task_id=session_id)
@@ -168,19 +203,15 @@ class SupportResourceService:
                         ttl_seconds=self.search_ttl_seconds,
                     )
                     return None
-                recent_queries = list(current.recent_queries)
-                if not recent_queries or recent_queries[-1] != state.last_query:
-                    recent_queries.append(state.last_query)
                 selected_index = state.selected_citation_index
-                ordered_citations = state.ordered_citations
+                ordered_citation_ids = state.ordered_citation_ids
                 if selected_index is not None:
-                    ordered_citations = current.ordered_citations
-                    if selected_index >= len(ordered_citations):
+                    ordered_citation_ids = current.ordered_citation_ids
+                    if selected_index >= len(ordered_citation_ids):
                         selected_index = None
                 candidate = state.model_copy(
                     update={
-                        "recent_queries": recent_queries[-4:],
-                        "ordered_citations": ordered_citations,
+                        "ordered_citation_ids": ordered_citation_ids,
                         "selected_citation_index": selected_index,
                         "version": current.version + 1,
                         "updated_at": datetime.now(timezone.utc),
@@ -200,8 +231,30 @@ class SupportResourceService:
                 return None
         return None
 
+    def _resolve_cached_citation(
+        self,
+        state: SupportSearchContext | None,
+        index: int,
+    ) -> Citation | None:
+        """Rehydrate one reviewed citation without trusting cached body text."""
+        if (
+            state is None
+            or index < 0
+            or index >= len(state.ordered_citation_ids)
+        ):
+            return None
+        resolved = self.knowledge.resolve_citations(
+            [state.ordered_citation_ids[index]],
+            kb_type=KnowledgeBaseType.SUPPORT_RESOURCES,
+        )
+        return resolved[0] if resolved else None
+
 
 support_resource_service = SupportResourceService()
+
+
+def _query_fingerprint(query: str) -> str:
+    return sha256(query.encode("utf-8")).hexdigest()[:16]
 
 
 def _resolve_citation_reference(
@@ -216,7 +269,11 @@ def _resolve_citation_reference(
         value = match.group(1)
         return words[value] if value in words else int(value) - 1
     if any(term in normalized for term in ("最后一个", "最后一条", "最后一篇", "最后的来源")):
-        return len(state.ordered_citations) - 1 if state and state.ordered_citations else 0
+        return (
+            len(state.ordered_citation_ids) - 1
+            if state and state.ordered_citation_ids
+            else 0
+        )
     if any(term in normalized for term in ("上一个", "刚才那个", "刚刚那个")):
         if state and state.selected_citation_index is not None:
             return state.selected_citation_index

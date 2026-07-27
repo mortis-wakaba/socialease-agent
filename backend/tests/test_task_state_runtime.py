@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+import app.main as main_module
 from app.main import app
 from app.memory.runtime_requirements import (
     TaskStateConfigurationError,
@@ -77,6 +78,11 @@ async def test_readiness_fails_when_any_required_task_state_probe_fails(
     monkeypatch.setattr(roleplay_service, "context_health", healthy)
     monkeypatch.setattr(worksheet_service, "context_health", unhealthy)
     monkeypatch.setattr(support_resource_service, "context_health", healthy)
+    monkeypatch.setattr(
+        main_module,
+        "_conversation_context_health",
+        healthy,
+    )
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -90,6 +96,7 @@ async def test_readiness_fails_when_any_required_task_state_probe_fails(
         "roleplay": True,
         "worksheet": False,
         "support_search": True,
+        "conversation_context": True,
     }
 
 
@@ -107,6 +114,11 @@ async def test_readiness_accepts_all_required_task_state_probes(
     monkeypatch.setattr(roleplay_service, "context_health", healthy)
     monkeypatch.setattr(worksheet_service, "context_health", healthy)
     monkeypatch.setattr(support_resource_service, "context_health", healthy)
+    monkeypatch.setattr(
+        main_module,
+        "_conversation_context_health",
+        healthy,
+    )
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:

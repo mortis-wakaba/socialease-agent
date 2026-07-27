@@ -1,11 +1,15 @@
 """Role-play domain adapter for unified conversations."""
 
+from datetime import UTC, datetime
+
 from app.conversation.adapters.base import ModuleAdapterResult
 from app.models_conversation import (
     ModuleRun,
     RoleplayMessageEventPayload,
     RoleplayParameters,
 )
+from app.models_conversation_context import ConversationWorkingContext
+from app.models_module_overlay import ModuleOverlay, RoleplayOverlay
 from app.models_roleplay import (
     RoleplayMessageRequest,
     RoleplayPauseRequest,
@@ -21,7 +25,12 @@ class RoleplayModuleAdapter:
     def __init__(self, service: RoleplayService | None = None) -> None:
         self._service = service or roleplay_service
 
-    async def start(self, run: ModuleRun) -> ModuleAdapterResult:
+    async def start(
+        self,
+        run: ModuleRun,
+        context: ConversationWorkingContext,
+    ) -> ModuleAdapterResult:
+        del context
         parameters = _parameters(run)
         result = await self._service.start_session(
             RoleplayStartRequest(
@@ -43,7 +52,12 @@ class RoleplayModuleAdapter:
         self,
         run: ModuleRun,
         message: str,
+        context: ConversationWorkingContext,
+        overlay: ModuleOverlay,
     ) -> ModuleAdapterResult:
+        del context
+        if not isinstance(overlay.payload, RoleplayOverlay):
+            raise ValueError("role-play overlay payload is invalid")
         session_id = _session_id(run)
         result = await self._service.send_message(
             RoleplayMessageRequest(
@@ -51,6 +65,41 @@ class RoleplayModuleAdapter:
                 user_id=run.user_id,
                 message=message,
             )
+        )
+
+    async def build_overlay(
+        self,
+        run: ModuleRun,
+        context: ConversationWorkingContext | None = None,
+    ) -> ModuleOverlay:
+        """Project role-play domain state without copying its transcript."""
+        del context
+        session = self._service.store.get_for_user(
+            _session_id(run),
+            run.user_id,
+        )
+        if session is None:
+            raise LookupError("role-play session not found")
+        scenario = session.scenario_spec
+        if scenario is None:
+            raise ValueError("role-play scenario is unavailable")
+        payload = RoleplayOverlay(
+            scenario_summary=scenario.safe_summary,
+            practice_goal=scenario.practice_goal,
+            difficulty=session.difficulty,
+            current_role="user",
+            counterpart_position=scenario.counterpart_role.value,
+        )
+        return ModuleOverlay(
+            conversation_id=run.conversation_id,
+            user_id=run.user_id,
+            module_run_id=run.module_run_id,
+            module_type=run.module_type,
+            parent_module_run_id=run.parent_module_run_id,
+            phase=session.status.value,
+            payload=payload,
+            version=run.version,
+            updated_at=session.updated_at or datetime.now(UTC),
         )
         return ModuleAdapterResult(
             response=result.response,

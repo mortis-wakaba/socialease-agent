@@ -27,6 +27,7 @@ from app.models_worksheet import (
     WorksheetRecord,
     WorksheetSupplementRequest,
 )
+from app.models_conversation_context import ConversationPromptContext
 from app.privacy.persistence_gate import persistence_gate
 from app.privacy.policy import PersistenceKind
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
@@ -66,7 +67,12 @@ class WorksheetService:
         )
         self.draft_ttl_seconds = draft_ttl_seconds or worksheet_draft_ttl_seconds()
 
-    async def create_worksheet(self, request: WorksheetCreateRequest) -> WorksheetCreateResponse:
+    async def create_worksheet(
+        self,
+        request: WorksheetCreateRequest,
+        *,
+        conversation_context: ConversationPromptContext | None = None,
+    ) -> WorksheetCreateResponse:
         """Create a non-medical self-reflection worksheet from a message."""
         safety_result = await self.safety_classifier.classify(request.message)
         if safety_result.risk_level == RiskLevel.CRISIS:
@@ -81,7 +87,8 @@ class WorksheetService:
             )
 
         fields, missing_fields, followup_questions, llm_usage = await self.agent.create_fields(
-            request.message
+            request.message,
+            conversation_context=conversation_context,
         )
         rag_response = self.knowledge.query(
             query="CBT 风格反思 情境 自动想法 情绪 强度 证据 替代想法 下一步",
@@ -89,18 +96,23 @@ class WorksheetService:
         )
         worksheet = self.store.create(
             user_id=request.user_id,
-            source_message=persistence_gate.persist_text(
-                user_id=request.user_id,
-                kind=PersistenceKind.WORKSHEET_SOURCE_MESSAGE,
-                text=request.message,
-            ).persisted_text,
+            source_message=(
+                None
+                if request.source_event_id
+                else persistence_gate.persist_text(
+                    user_id=request.user_id,
+                    kind=PersistenceKind.WORKSHEET_SOURCE_MESSAGE,
+                    text=request.message,
+                ).persisted_text
+            ),
+            source_event_id=request.source_event_id,
             fields=_persist_worksheet_fields(request.user_id, fields),
             citations=rag_response.citations,
             missing_fields=missing_fields,
             gentle_followup_questions=followup_questions,
         )
         if not worksheet.completed:
-            await self._save_draft(worksheet, recent_supplements=[])
+            await self._save_draft(worksheet)
         response = "已生成 CBT 风格自助反思练习。你可以把它当作整理社交压力想法的结构化草稿。"
         if missing_fields:
             response = "已先保存草稿，但还有一些信息可以继续补充。"
@@ -126,6 +138,8 @@ class WorksheetService:
     async def supplement_worksheet(
         self,
         request: WorksheetSupplementRequest,
+        *,
+        conversation_context: ConversationPromptContext | None = None,
     ) -> WorksheetCreateResponse:
         """Merge one bounded clarification into a user-owned worksheet draft."""
         worksheet = self.store.get_for_user(request.worksheet_id, request.user_id)
@@ -141,7 +155,10 @@ class WorksheetService:
                 response=WORKSHEET_CRISIS_RESPONSE,
             )
 
-        patch, _, _, llm_usage = await self.agent.create_fields(request.message)
+        patch, _, _, llm_usage = await self.agent.create_fields(
+            request.message,
+            conversation_context=conversation_context,
+        )
         correction_fields = (
             _explicit_worksheet_fields(request.message, self.agent.field_labels)
             if re.search(r"(?:更正|改成|写错|不是.+是|纠正)", request.message)
@@ -169,14 +186,10 @@ class WorksheetService:
             deep=True,
         )
         updated = self.store.save(updated)
-        recent = await self._recent_supplements(request.user_id, request.worksheet_id)
         if updated.completed:
             await self.draft_store.delete(user_id=request.user_id, task_id=request.worksheet_id)
         else:
-            await self._save_draft(
-                updated,
-                recent_supplements=[*recent, request.message[:2000]][-8:],
-            )
+            await self._save_draft(updated)
         return WorksheetCreateResponse(
             worksheet=updated,
             safety_result=safety_result,
@@ -204,8 +217,6 @@ class WorksheetService:
     async def _save_draft(
         self,
         worksheet: WorksheetRecord,
-        *,
-        recent_supplements: list[str],
     ) -> None:
         for attempt in range(3):
             try:
@@ -215,12 +226,6 @@ class WorksheetService:
                 )
             except TaskStateStoreUnavailable:
                 return None
-            effective_supplements = recent_supplements
-            if attempt > 0 and current is not None and recent_supplements:
-                effective_supplements = [
-                    *current.recent_supplements,
-                    recent_supplements[-1],
-                ][-8:]
             state = WorksheetDraftContext(
                 user_id=worksheet.user_id,
                 worksheet_id=worksheet.worksheet_id,
@@ -231,7 +236,6 @@ class WorksheetService:
                     if worksheet.gentle_followup_questions
                     else None
                 ),
-                recent_supplements=effective_supplements,
                 version=(current.version + 1 if current else 1),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -256,14 +260,6 @@ class WorksheetService:
             except TaskStateStoreUnavailable:
                 return None
         return None
-
-    async def _recent_supplements(self, user_id: str, worksheet_id: str) -> list[str]:
-        try:
-            state = await self.draft_store.get(user_id=user_id, task_id=worksheet_id)
-        except TaskStateStoreUnavailable:
-            return []
-        return state.recent_supplements if state is not None else []
-
 
 worksheet_service = WorksheetService()
 
