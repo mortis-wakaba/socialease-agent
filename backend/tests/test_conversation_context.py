@@ -14,7 +14,11 @@ from app.models_conversation import (
     ConversationEventRole,
     ConversationEventType,
 )
-from app.models_conversation_context import ConversationContextBudgets
+from app.models_conversation_context import (
+    ConversationContextBudgets,
+    ConversationContextProfile,
+    context_budgets_for_profile,
+)
 
 
 class UnsafeSummaryLLM:
@@ -91,6 +95,66 @@ async def test_context_is_bounded_compacted_and_restored_across_instances(
         user_id="owner",
     )
     assert restored == context.compact_summary
+
+
+@pytest.mark.anyio
+async def test_recent_history_selects_complete_turns_without_orphaned_replies(
+    repository: SQLiteConversationRepository,
+) -> None:
+    conversation = repository.create(user_id="owner", title="Turn selection")
+    messages = [
+        (ConversationEventRole.USER, "u" * 1200),
+        (ConversationEventRole.ASSISTANT, "a" * 1200),
+        (ConversationEventRole.USER, "最近的问题"),
+        (ConversationEventRole.ASSISTANT, "最近的回答"),
+    ]
+    for index, (role, content) in enumerate(messages):
+        repository.append_event(
+            conversation_id=conversation.conversation_id,
+            user_id="owner",
+            event_type=(
+                ConversationEventType.USER_MESSAGE
+                if role is ConversationEventRole.USER
+                else ConversationEventType.ASSISTANT_MESSAGE
+            ),
+            role=role,
+            content=content,
+            idempotency_key=f"turn-{index}",
+        )
+    manager = ConversationContextManager(
+        repository=repository,
+        compactor=ConversationCompactor(),
+        budgets=ConversationContextBudgets(
+            total_tokens=512,
+            current_request_tokens=128,
+            recent_events_tokens=128,
+            summary_tokens=128,
+            module_stack_tokens=64,
+            active_memory_tokens=0,
+        ),
+        recent_window_size=8,
+    )
+
+    context = await manager.assemble(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        current_user_message="继续",
+    )
+
+    assert [event.content for event in context.recent_events] == [
+        "最近的问题",
+        "最近的回答",
+    ]
+
+
+def test_context_profiles_share_one_contract_with_module_specific_budgets() -> None:
+    ordinary = context_budgets_for_profile(ConversationContextProfile.ORDINARY)
+    roleplay = context_budgets_for_profile(ConversationContextProfile.ROLEPLAY)
+    worksheet = context_budgets_for_profile(ConversationContextProfile.WORKSHEET)
+
+    assert ordinary.total_tokens == 6000
+    assert roleplay.total_tokens == 10_000
+    assert worksheet.total_tokens == 7000
 
 
 @pytest.mark.anyio

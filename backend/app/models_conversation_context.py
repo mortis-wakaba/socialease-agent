@@ -1,6 +1,7 @@
 """Bounded context and durable summary contracts for conversations."""
 
 from datetime import datetime
+from enum import Enum
 from hashlib import sha256
 
 from pydantic import Field
@@ -45,6 +46,44 @@ class ConversationContextBudgets(StrictConversationModel):
     active_memory_tokens: int = Field(default=800, ge=0, le=4000)
 
 
+class ConversationContextProfile(str, Enum):
+    """Budget profiles served by one shared context-selection algorithm."""
+
+    ORDINARY = "ordinary"
+    ROLEPLAY = "roleplay"
+    WORKSHEET = "worksheet"
+    EXPOSURE = "exposure"
+    RESOURCE = "resource"
+
+
+def context_budgets_for_profile(
+    profile: ConversationContextProfile,
+) -> ConversationContextBudgets:
+    """Return the initial migration-safe budget for one active mode."""
+    if profile is ConversationContextProfile.ROLEPLAY:
+        return ConversationContextBudgets(
+            total_tokens=10_000,
+            current_request_tokens=1200,
+            recent_events_tokens=4200,
+            summary_tokens=1000,
+            module_stack_tokens=600,
+            active_memory_tokens=1000,
+        )
+    if profile in {
+        ConversationContextProfile.WORKSHEET,
+        ConversationContextProfile.EXPOSURE,
+    }:
+        return ConversationContextBudgets(
+            total_tokens=7000,
+            current_request_tokens=1200,
+            recent_events_tokens=2800,
+            summary_tokens=1000,
+            module_stack_tokens=800,
+            active_memory_tokens=800,
+        )
+    return ConversationContextBudgets()
+
+
 class ConversationContextDiagnostics(StrictConversationModel):
     """Content-free diagnostics safe for product traces."""
 
@@ -57,6 +96,7 @@ class ConversationContextDiagnostics(StrictConversationModel):
     selected_memory_count: int = Field(ge=0)
     estimated_tokens: int = Field(ge=0)
     total_token_budget: int = Field(ge=1)
+    budget_profile: ConversationContextProfile = ConversationContextProfile.ORDINARY
     dropped_sections: list[str] = Field(default_factory=list)
     tokenizer_backend: str = Field(min_length=1, max_length=64)
 
