@@ -1,7 +1,7 @@
 """Add open-scenario metadata to episodic memories and proposals.
 
-Revision ID: 0011_add_open_scenario_memory_metadata
-Revises: 0010_add_open_scenario_checkpoint_metadata
+Revision ID: 0011_open_scenario_memory
+Revises: 0010_open_scenario_checkpoint
 Create Date: 2026-07-26
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0011_add_open_scenario_memory_metadata"
-down_revision = "0010_add_open_scenario_checkpoint_metadata"
+revision = "0011_open_scenario_memory"
+down_revision = "0010_open_scenario_checkpoint"
 branch_labels = None
 depends_on = None
 

@@ -1,6 +1,6 @@
 """Add open-scenario metadata to durable practice checkpoints.
 
-Revision ID: 0010_add_open_scenario_checkpoint_metadata
+Revision ID: 0010_open_scenario_checkpoint
 Revises: 0009_add_memory_retrieval_index
 Create Date: 2026-07-26
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0010_add_open_scenario_checkpoint_metadata"
+revision = "0010_open_scenario_checkpoint"
 down_revision = "0009_add_memory_retrieval_index"
 branch_labels = None
 depends_on = None
@@ -50,4 +50,3 @@ def downgrade() -> None:
     op.drop_column("thread_checkpoints", "scenario_skill_codes")
     op.drop_column("thread_checkpoints", "current_scenario_summary")
     op.drop_column("thread_checkpoints", "current_scenario_id")
-

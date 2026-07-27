@@ -12,6 +12,7 @@ from app.db.migration_check import (
     migration_versions_dir,
     validate_revision_chain,
     validate_revision_filenames,
+    validate_revision_identifiers,
 )
 
 
@@ -43,6 +44,22 @@ def test_duplicate_migration_prefix_is_reported(tmp_path: Path) -> None:
     errors = validate_revision_filenames([first, second])
 
     assert errors == ["0002_add_protocols.py: duplicate numeric migration prefix 0002"]
+
+
+def test_revision_identifier_must_fit_default_alembic_version_table() -> None:
+    errors = validate_revision_identifiers(
+        [
+            "0010_open_scenario_checkpoint",
+            "0010_add_open_scenario_checkpoint_metadata",
+        ]
+    )
+
+    assert errors == [
+        (
+            "0010_add_open_scenario_checkpoint_metadata: revision identifier "
+            "exceeds 32 characters"
+        )
+    ]
 
 
 def test_long_term_memory_migration_round_trip(

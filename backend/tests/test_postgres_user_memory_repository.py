@@ -297,7 +297,7 @@ def test_postgres_memory_export_and_delete_cover_user_owned_records(
             {
                 "session_id": roleplay.session_id,
                 "user_id": user_id,
-                "scenario": roleplay.scenario.value,
+                "scenario": roleplay.scenario,
                 "difficulty": roleplay.difficulty,
                 "payload": roleplay.model_dump_json(),
                 "created_at": roleplay.created_at,

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable
 import os
 import re
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 
 MIGRATION_FILENAME_PATTERN = re.compile(r"^\d{4}_[a-z0-9_]+\.py$")
+ALEMBIC_VERSION_NUM_MAX_LENGTH = 32
 
 
 def migration_versions_dir(root: Path | None = None) -> Path:
@@ -42,6 +45,18 @@ def validate_revision_filenames(revision_files: list[Path]) -> list[str]:
     return errors
 
 
+def validate_revision_identifiers(revision_ids: Iterable[str]) -> list[str]:
+    """Return identifiers that exceed Alembic's default version-table width."""
+    return [
+        (
+            f"{revision_id}: revision identifier exceeds "
+            f"{ALEMBIC_VERSION_NUM_MAX_LENGTH} characters"
+        )
+        for revision_id in revision_ids
+        if len(revision_id) > ALEMBIC_VERSION_NUM_MAX_LENGTH
+    ]
+
+
 def validate_revision_chain(backend_root: Path) -> None:
     """Validate migration naming and revision graph without connecting to a database."""
     backend_root = _resolve_backend_root(backend_root)
@@ -52,6 +67,13 @@ def validate_revision_chain(backend_root: Path) -> None:
         joined = "\n".join(f"- {error}" for error in errors)
         raise RuntimeError(f"Migration filename validation failed:\n{joined}")
     config = _alembic_config(backend_root)
+    script = ScriptDirectory.from_config(config)
+    identifier_errors = validate_revision_identifiers(
+        revision.revision for revision in script.walk_revisions()
+    )
+    if identifier_errors:
+        joined = "\n".join(f"- {error}" for error in identifier_errors)
+        raise RuntimeError(f"Migration revision validation failed:\n{joined}")
     command.heads(config)
 
 
