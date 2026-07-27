@@ -27,6 +27,7 @@ from app.models_conversation_api import (
     ConversationModuleDecisionRequest,
     ConversationModuleTerminateRequest,
     ConversationUpdateRequest,
+    LegacyRoleplayImportResponse,
     ModuleControlResponse,
 )
 from app.services.conversation_service import (
@@ -34,6 +35,7 @@ from app.services.conversation_service import (
     ConversationProposalError,
     ConversationService,
 )
+from app.services.roleplay_service import roleplay_service
 from app.tracing.logger import trace_logger
 from app.workflow.default_hooks import create_default_hooks
 from app.workflow.engine import AgentHarness
@@ -85,6 +87,30 @@ async def list_conversations(
             user_id=effective_user_id,
             cursor=cursor,
             limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/imports/legacy-roleplay",
+    response_model=LegacyRoleplayImportResponse,
+)
+async def import_legacy_roleplay(
+    user_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: AuthContext = Depends(get_current_user),
+) -> LegacyRoleplayImportResponse:
+    """Idempotently expose legacy role-play sessions as archived timelines."""
+    effective_user_id = resolve_optional_user_id(user_id, current_user)
+    legacy = roleplay_service.list_sessions(
+        user_id=effective_user_id,
+        limit=limit,
+    )
+    try:
+        return conversation_service().import_legacy_roleplay_sessions(
+            user_id=effective_user_id,
+            sessions=legacy.sessions,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

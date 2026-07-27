@@ -32,6 +32,7 @@ from app.models_conversation import (
     ConversationEventPayload,
     ConversationEventRole,
     ConversationEventType,
+    ConversationImportSnapshot,
     ConversationPage,
     ConversationStatus,
     ModuleProposal,
@@ -87,6 +88,95 @@ class PostgresConversationRepository:
                 ),
                 _conversation_params(conversation),
             )
+        return conversation
+
+    def import_snapshot(
+        self,
+        snapshot: ConversationImportSnapshot,
+    ) -> Conversation:
+        """Atomically insert one deterministic, read-only legacy timeline."""
+        conversation = snapshot.conversation
+        protected_events = [
+            (
+                event,
+                self._protector.protect(
+                    event.content,
+                    associated_data=_event_associated_data(
+                        event.event_id,
+                        event.conversation_id,
+                        event.user_id,
+                        event.sequence_no,
+                    ),
+                ),
+            )
+            for event in snapshot.events
+        ]
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """INSERT INTO conversations
+                    (conversation_id, user_id, title, status,
+                     active_module_depth, version, history_notice_version,
+                     created_at, updated_at)
+                    VALUES
+                    (:conversation_id, :user_id, :title, :status,
+                     :active_module_depth, :version, :history_notice_version,
+                     :created_at, :updated_at)
+                    ON CONFLICT (conversation_id) DO NOTHING"""
+                ),
+                _conversation_params(conversation),
+            )
+            if result.rowcount == 0:
+                row = connection.execute(
+                    text(
+                        """SELECT * FROM conversations
+                        WHERE conversation_id = :conversation_id
+                          AND user_id = :user_id"""
+                    ),
+                    {
+                        "conversation_id": conversation.conversation_id,
+                        "user_id": conversation.user_id,
+                    },
+                ).mappings().first()
+                if row is None:
+                    raise ConversationConcurrencyError(
+                        "legacy import id belongs to another owner"
+                    )
+                return _conversation_from_row(row)
+            for event, protected in protected_events:
+                connection.execute(
+                    text(
+                        """INSERT INTO conversation_events
+                        (event_id, conversation_id, user_id, sequence_no,
+                         event_type, role, content_plaintext,
+                         content_ciphertext, content_nonce, content_key_version,
+                         structured_payload, module_run_id,
+                         parent_module_run_id, idempotency_key, created_at)
+                        VALUES
+                        (:event_id, :conversation_id, :user_id, :sequence_no,
+                         :event_type, :role, :content_plaintext,
+                         :content_ciphertext, :content_nonce,
+                         :content_key_version,
+                         CAST(:structured_payload AS jsonb), :module_run_id,
+                         :parent_module_run_id, :idempotency_key, :created_at)"""
+                    ),
+                    _event_params(event, protected),
+                )
+            for run in snapshot.module_runs:
+                connection.execute(
+                    text(
+                        """INSERT INTO conversation_module_runs
+                        (module_run_id, conversation_id, user_id, module_type,
+                         parent_module_run_id, depth, status, domain_session_id,
+                         version, payload, started_at, ended_at)
+                        VALUES
+                        (:module_run_id, :conversation_id, :user_id,
+                         :module_type, :parent_module_run_id, :depth, :status,
+                         :domain_session_id, :version, CAST(:payload AS jsonb),
+                         :started_at, :ended_at)"""
+                    ),
+                    _run_params(run),
+                )
         return conversation
 
     def get_for_user(

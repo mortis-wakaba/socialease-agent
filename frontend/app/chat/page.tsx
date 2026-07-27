@@ -51,6 +51,7 @@ export default function ChatPage() {
     setLoading(true);
     setError(null);
     try {
+      await api.importLegacyRoleplay(effectiveUserId);
       const result = await api.listConversations(effectiveUserId);
       setConversations(result.items);
       if (result.items.length > 0) {

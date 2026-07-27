@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
 from app.api.auth import router as auth_router
@@ -54,19 +54,21 @@ router.include_router(support_router)
 router.include_router(worksheet_router)
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, deprecated=True)
 async def chat(
     request: ChatRequest,
+    response: Response,
     current_user: AuthContext = Depends(get_current_user),
 ) -> ChatResponse:
-    """Run the safety, routing, agent, and trace workflow for one message."""
+    """Run the legacy stateless workflow during the conversation migration."""
+    _set_legacy_chat_headers(response.headers)
     effective_request = request.model_copy(
         update={"user_id": resolve_request_user_id(request.user_id, current_user)}
     )
     return await workflow.run(effective_request)
 
 
-@router.post("/chat/stream")
+@router.post("/chat/stream", deprecated=True)
 async def chat_stream(
     request: ChatRequest,
     current_user: AuthContext = Depends(get_current_user),
@@ -112,7 +114,7 @@ async def chat_stream(
                 with suppress(asyncio.CancelledError):
                     await task
 
-    return StreamingResponse(
+    response = StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={
@@ -120,6 +122,14 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+    _set_legacy_chat_headers(response.headers)
+    return response
+
+
+def _set_legacy_chat_headers(headers) -> None:
+    """Advertise the stateful successor without silently dual-writing."""
+    headers["Deprecation"] = "true"
+    headers["Link"] = '</api/conversations>; rel="successor-version"'
 
 
 def _format_sse(event_name: str, payload: object) -> str:

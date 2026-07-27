@@ -321,3 +321,40 @@ class ConversationEventPage(StrictConversationModel):
 
     items: list[ConversationEvent] = Field(default_factory=list)
     next_cursor: str | None = None
+
+
+class ConversationImportSnapshot(StrictConversationModel):
+    """Complete immutable timeline used for idempotent legacy backfills."""
+
+    source_type: Literal["roleplay"]
+    source_id: str = Field(min_length=1)
+    conversation: Conversation
+    events: list[ConversationEvent] = Field(min_length=1)
+    module_runs: list[ModuleRun] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_snapshot_scope(self) -> "ConversationImportSnapshot":
+        """Require one archived owner scope and a contiguous event timeline."""
+        conversation = self.conversation
+        if conversation.status != ConversationStatus.ARCHIVED:
+            raise ValueError("imported conversations must be read-only")
+        if conversation.active_module_depth != 0:
+            raise ValueError("imported conversations cannot have active modules")
+        expected_sequences = list(range(1, len(self.events) + 1))
+        if [event.sequence_no for event in self.events] != expected_sequences:
+            raise ValueError("imported event sequence must be contiguous")
+        for item in [*self.events, *self.module_runs]:
+            if (
+                item.conversation_id != conversation.conversation_id
+                or item.user_id != conversation.user_id
+            ):
+                raise ValueError("imported records must share owner scope")
+        if any(
+            run.status not in {
+                ModuleRunStatus.COMPLETED,
+                ModuleRunStatus.TERMINATED,
+            }
+            for run in self.module_runs
+        ):
+            raise ValueError("imported module runs must be terminal")
+        return self

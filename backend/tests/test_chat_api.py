@@ -84,6 +84,8 @@ async def test_chat_trace_preserves_incoming_request_id(
     )
 
     assert response.status_code == 200
+    assert response.headers["deprecation"] == "true"
+    assert 'rel="successor-version"' in response.headers["link"]
     payload = response.json()
     assert response.headers["x-request-id"] == request_id
     assert payload["trace"]["request_id"] == request_id
@@ -107,6 +109,8 @@ async def test_chat_stream_emits_progress_before_one_guarded_final_response(
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["deprecation"] == "true"
+    assert 'rel="successor-version"' in response.headers["link"]
     body = response.text
     assert body.count("event: final\n") == 1
     assert body.index("event: progress\n") < body.index("event: final\n")

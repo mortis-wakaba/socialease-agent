@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.conversation.compactor import ConversationCompactor
 from app.conversation.context_manager import ConversationContextManager
+from app.conversation.legacy_importer import LegacyConversationImporter
 from app.conversation.adapters import (
     ExposureModuleAdapter,
     ResourceModuleAdapter,
@@ -52,7 +53,9 @@ from app.models_conversation_api import (
     ConversationDeleteResponse,
     ConversationExportCollectionResponse,
     ConversationExportResponse,
+    LegacyRoleplayImportResponse,
 )
+from app.models_roleplay import RoleplaySession
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
 from app.workflow.engine import AgentHarness
@@ -93,6 +96,7 @@ class ConversationService:
         self._repository = (
             repository or repository_factory().conversation_repository()
         )
+        self._legacy_importer = LegacyConversationImporter(self._repository)
         self._safety_classifier = (
             safety_classifier or create_safety_classifier()
         )
@@ -167,6 +171,25 @@ class ConversationService:
             user_id,
             cursor=cursor,
             limit=limit,
+        )
+
+    def import_legacy_roleplay_sessions(
+        self,
+        *,
+        user_id: str,
+        sessions: list[RoleplaySession],
+    ) -> LegacyRoleplayImportResponse:
+        """Backfill owned legacy sessions as archived unified timelines."""
+        if any(session.user_id != user_id for session in sessions):
+            raise ValueError("legacy import owner scope does not match")
+        conversations, imported_count = (
+            self._legacy_importer.import_roleplay_sessions(sessions)
+        )
+        return LegacyRoleplayImportResponse(
+            user_id=user_id,
+            scanned_count=len(sessions),
+            imported_count=imported_count,
+            conversations=conversations,
         )
 
     def list_events(

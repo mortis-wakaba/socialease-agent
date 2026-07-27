@@ -11,6 +11,7 @@ import type {
   ConversationMessageResponse,
   ConversationPage,
   ConversationStatus,
+  LegacyRoleplayImportResponse,
   ModuleControlResponse,
   ConsentRequiredDetail,
   ExposureCompleteResponse,
@@ -381,6 +382,14 @@ export const api = {
     });
     return request<ConversationPage>(
       `/api/conversations?${params.toString()}`
+    );
+  },
+
+  importLegacyRoleplay(userId: string) {
+    const params = new URLSearchParams({ user_id: userId });
+    return request<LegacyRoleplayImportResponse>(
+      `/api/conversations/imports/legacy-roleplay?${params.toString()}`,
+      { method: "POST" }
     );
   },
 

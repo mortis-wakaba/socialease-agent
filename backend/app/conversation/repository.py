@@ -24,6 +24,7 @@ from app.models_conversation import (
     ConversationEventPayload,
     ConversationEventRole,
     ConversationEventType,
+    ConversationImportSnapshot,
     ConversationPage,
     ConversationStatus,
     ModuleProposal,
@@ -51,6 +52,11 @@ class ConversationRepository(Protocol):
         user_id: str,
         title: str,
         history_notice_version: str = HISTORY_NOTICE_VERSION,
+    ) -> Conversation: ...
+
+    def import_snapshot(
+        self,
+        snapshot: ConversationImportSnapshot,
     ) -> Conversation: ...
 
     def get_for_user(
@@ -194,6 +200,76 @@ class SQLiteConversationRepository:
                 _conversation_values(conversation),
             )
         return conversation
+
+    def import_snapshot(
+        self,
+        snapshot: ConversationImportSnapshot,
+    ) -> Conversation:
+        """Atomically insert one deterministic, read-only legacy timeline."""
+        conversation = snapshot.conversation
+        protected_events = [
+            (
+                event,
+                self._protector.protect(
+                    event.content,
+                    associated_data=_event_associated_data(
+                        event.event_id,
+                        event.conversation_id,
+                        event.user_id,
+                        event.sequence_no,
+                    ),
+                ),
+            )
+            for event in snapshot.events
+        ]
+        connection = connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            result = connection.execute(
+                """INSERT OR IGNORE INTO conversations
+                (conversation_id, user_id, title, status, active_module_depth,
+                 version, history_notice_version, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                _conversation_values(conversation),
+            )
+            if result.rowcount == 0:
+                row = connection.execute(
+                    """SELECT * FROM conversations
+                    WHERE conversation_id = ? AND user_id = ?""",
+                    (conversation.conversation_id, conversation.user_id),
+                ).fetchone()
+                connection.commit()
+                if row is None:
+                    raise ConversationConcurrencyError(
+                        "legacy import id belongs to another owner"
+                    )
+                return _conversation_from_row(row)
+            for event, protected in protected_events:
+                connection.execute(
+                    """INSERT INTO conversation_events
+                    (event_id, conversation_id, user_id, sequence_no, event_type,
+                     role, content_plaintext, content_ciphertext, content_nonce,
+                     content_key_version, structured_payload, module_run_id,
+                     parent_module_run_id, idempotency_key, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    _event_values(event, protected),
+                )
+            for run in snapshot.module_runs:
+                connection.execute(
+                    """INSERT INTO conversation_module_runs
+                    (module_run_id, conversation_id, user_id, module_type,
+                     parent_module_run_id, depth, status, domain_session_id,
+                     version, payload, started_at, ended_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    _module_run_values(run),
+                )
+            connection.commit()
+            return conversation
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def get_for_user(
         self,
@@ -1138,6 +1214,23 @@ def _event_values(
         event.parent_module_run_id,
         event.idempotency_key,
         event.created_at.isoformat(),
+    )
+
+
+def _module_run_values(run: ModuleRun) -> tuple[object, ...]:
+    return (
+        run.module_run_id,
+        run.conversation_id,
+        run.user_id,
+        run.module_type.value,
+        run.parent_module_run_id,
+        run.depth,
+        run.status.value,
+        run.domain_session_id,
+        run.version,
+        run.model_dump_json(),
+        run.started_at.isoformat(),
+        run.ended_at.isoformat() if run.ended_at else None,
     )
 
 
