@@ -13,6 +13,7 @@ from app.models_conversation import (
     ModuleRun,
     StrictConversationModel,
 )
+from app.models_module_overlay import ModuleOverlay, ParentResumeProjection
 
 
 class ConversationCompactPayload(StrictConversationModel):
@@ -101,6 +102,9 @@ class ConversationContextDiagnostics(StrictConversationModel):
     tokenizer_backend: str = Field(min_length=1, max_length=64)
     context_backend: str = Field(default="database", min_length=1, max_length=64)
     cache_status: str = Field(default="database", min_length=1, max_length=32)
+    active_overlay_type: str | None = Field(default=None, max_length=32)
+    active_overlay_version: int | None = Field(default=None, ge=1)
+    parent_resume_projection_count: int = Field(default=0, ge=0, le=2)
 
 
 class ConversationWorkingContext(StrictConversationModel):
@@ -111,6 +115,11 @@ class ConversationWorkingContext(StrictConversationModel):
     recent_events: list[ConversationEvent] = Field(default_factory=list)
     compact_summary: ConversationCompactSummary | None = None
     active_module_stack: list[ModuleRun] = Field(default_factory=list)
+    active_module_overlay: ModuleOverlay | None = None
+    parent_resume_projections: list[ParentResumeProjection] = Field(
+        default_factory=list,
+        max_length=2,
+    )
     selected_agent_memory: list[str] = Field(default_factory=list, max_length=8)
     diagnostics: ConversationContextDiagnostics
 
@@ -131,6 +140,11 @@ class ConversationPromptContext(StrictConversationModel):
         max_length=32,
     )
     compact_summary: ConversationCompactPayload | None = None
+    active_module_overlay: ModuleOverlay | None = None
+    parent_resume_projections: list[ParentResumeProjection] = Field(
+        default_factory=list,
+        max_length=2,
+    )
 
 
 def conversation_id_hash(conversation_id: str) -> str:

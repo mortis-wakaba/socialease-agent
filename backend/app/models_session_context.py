@@ -8,6 +8,7 @@ from app.models_conversation_context import (
     ConversationCompactPayload,
     ConversationContextDiagnostics,
 )
+from app.models_module_overlay import ParentResumeProjection
 
 
 class RoleplayCompactState(BaseModel):
@@ -36,6 +37,10 @@ class RoleplayPromptContext(BaseModel):
     recent_messages: list[str] = Field(default_factory=list, max_length=20)
     compact_state: RoleplayCompactState | None = None
     shared_summary: ConversationCompactPayload | None = None
+    parent_resume_projections: list[ParentResumeProjection] = Field(
+        default_factory=list,
+        max_length=2,
+    )
     retrieved_memories: list[str] = Field(default_factory=list, max_length=3)
     diagnostics: ConversationContextDiagnostics
 

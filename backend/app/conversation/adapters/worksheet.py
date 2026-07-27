@@ -13,7 +13,11 @@ from app.models_conversation_context import (
     ConversationPromptEvent,
     ConversationWorkingContext,
 )
-from app.models_module_overlay import ModuleOverlay, WorksheetOverlay
+from app.models_module_overlay import (
+    ModuleOverlay,
+    ParentResumeProjection,
+    WorksheetOverlay,
+)
 from app.models_worksheet import WorksheetCreateRequest, WorksheetSupplementRequest
 from app.services.worksheet_service import WorksheetService, worksheet_service
 
@@ -125,6 +129,20 @@ class WorksheetModuleAdapter:
             updated_at=worksheet.updated_at or datetime.now(UTC),
         )
 
+    def project_for_parent_resume(
+        self,
+        overlay: ModuleOverlay,
+    ) -> ParentResumeProjection:
+        """Expose the next worksheet field without copying draft values."""
+        if not isinstance(overlay.payload, WorksheetOverlay):
+            raise ValueError("worksheet overlay payload is invalid")
+        return ParentResumeProjection(
+            module_type=overlay.module_type,
+            module_run_id=overlay.module_run_id,
+            resume_point=overlay.payload.current_section,
+            version=overlay.version,
+        )
+
     async def suspend(self, run: ModuleRun) -> None:
         del run
 
@@ -167,4 +185,6 @@ def _prompt_context(
             for event in context.recent_events
         ],
         compact_summary=context.compact_summary,
+        active_module_overlay=context.active_module_overlay,
+        parent_resume_projections=context.parent_resume_projections,
     )

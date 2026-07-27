@@ -254,11 +254,17 @@ class CachedConversationContextProvider:
         user_id: str,
     ) -> None:
         """Delete the exact conversation projection after same-version changes."""
-        await self._store.delete(user_id=user_id, task_id=conversation_id)
+        try:
+            await self._store.delete(user_id=user_id, task_id=conversation_id)
+        except TaskStateStoreUnavailable:
+            return None
 
     async def delete_user(self, *, user_id: str) -> int:
         """Remove every cached projection for one user."""
-        return await self._store.delete_user(user_id=user_id)
+        try:
+            return await self._store.delete_user(user_id=user_id)
+        except TaskStateStoreUnavailable:
+            return 0
 
     async def close(self) -> None:
         """Close the owned Redis client."""

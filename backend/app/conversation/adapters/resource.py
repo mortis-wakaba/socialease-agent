@@ -10,7 +10,11 @@ from app.models_conversation import (
     ResourceParameters,
 )
 from app.models_conversation_context import ConversationWorkingContext
-from app.models_module_overlay import ModuleOverlay, ResourceOverlay
+from app.models_module_overlay import (
+    ModuleOverlay,
+    ParentResumeProjection,
+    ResourceOverlay,
+)
 from app.models_support import SupportQueryRequest
 from app.services.support_resource_service import (
     SupportResourceService,
@@ -85,6 +89,20 @@ class ResourceModuleAdapter:
             payload=payload,
             version=run.version,
             updated_at=state.updated_at or datetime.now(UTC),
+        )
+
+    def project_for_parent_resume(
+        self,
+        overlay: ModuleOverlay,
+    ) -> ParentResumeProjection:
+        """Expose only reviewed search scope needed to resume selection."""
+        if not isinstance(overlay.payload, ResourceOverlay):
+            raise ValueError("resource overlay payload is invalid")
+        return ParentResumeProjection(
+            module_type=overlay.module_type,
+            module_run_id=overlay.module_run_id,
+            resume_point=overlay.payload.query_scope,
+            version=overlay.version,
         )
 
     async def suspend(self, run: ModuleRun) -> None:

@@ -10,7 +10,11 @@ from app.models_conversation import (
     ModuleRun,
 )
 from app.models_conversation_context import ConversationWorkingContext
-from app.models_module_overlay import ExposureOverlay, ModuleOverlay
+from app.models_module_overlay import (
+    ExposureOverlay,
+    ModuleOverlay,
+    ParentResumeProjection,
+)
 from app.models_exposure import ExposurePlanRequest
 from app.services.exposure_service import ExposureService, exposure_service
 
@@ -134,6 +138,23 @@ class ExposureModuleAdapter:
             payload=payload,
             version=run.version,
             updated_at=plan.updated_at if plan else datetime.now(UTC),
+        )
+
+    def project_for_parent_resume(
+        self,
+        overlay: ModuleOverlay,
+    ) -> ParentResumeProjection:
+        """Expose the bounded practice step needed after a child module."""
+        if not isinstance(overlay.payload, ExposureOverlay):
+            raise ValueError("exposure overlay payload is invalid")
+        return ParentResumeProjection(
+            module_type=overlay.module_type,
+            module_run_id=overlay.module_run_id,
+            resume_point=(
+                overlay.payload.current_step_summary
+                or overlay.payload.next_decision
+            ),
+            version=overlay.version,
         )
 
     async def suspend(self, run: ModuleRun) -> None:

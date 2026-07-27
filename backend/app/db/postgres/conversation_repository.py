@@ -1161,6 +1161,52 @@ class PostgresConversationRepository:
             )
         return updated
 
+    def advance_module_run_version(
+        self,
+        *,
+        module_run_id: str,
+        conversation_id: str,
+        user_id: str,
+        expected_version: int,
+    ) -> ModuleRun:
+        """Advance the durable overlay watermark after one module action."""
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT payload FROM conversation_module_runs
+                    WHERE module_run_id = :module_run_id
+                      AND conversation_id = :conversation_id
+                      AND user_id = :user_id
+                    FOR UPDATE"""
+                ),
+                {
+                    "module_run_id": module_run_id,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            ).mappings().first()
+            if row is None:
+                raise LookupError("module run not found")
+            current = ModuleRun.model_validate(row["payload"])
+            if current.version != expected_version:
+                raise ConversationConcurrencyError("module run state changed")
+            updated = current.model_copy(
+                update={"version": current.version + 1}
+            )
+            connection.execute(
+                text(
+                    """UPDATE conversation_module_runs
+                    SET version = :version, payload = CAST(:payload AS jsonb)
+                    WHERE module_run_id = :module_run_id"""
+                ),
+                {
+                    "version": updated.version,
+                    "payload": updated.model_dump_json(),
+                    "module_run_id": module_run_id,
+                },
+            )
+        return updated
+
     def transition_module_run(
         self,
         *,

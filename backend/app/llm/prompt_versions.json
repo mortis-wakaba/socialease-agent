@@ -25,8 +25,8 @@
       "version": "resource-loop-v2"
     },
     "roleplay": {
-      "fingerprint": "sha256:c2b972fc2e6912c6",
-      "version": "roleplay-v6"
+      "fingerprint": "sha256:0376830cb461fc0d",
+      "version": "roleplay-v7"
     },
     "safety_classifier": {
       "fingerprint": "sha256:f435a6bfd261fa68",
@@ -38,7 +38,7 @@
     },
     "worksheet_extraction": {
       "fingerprint": "sha256:df5a65d4df060c09",
-      "version": "worksheet-v3"
+      "version": "worksheet-v4"
     }
   },
   "schema_version": 1

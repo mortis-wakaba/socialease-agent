@@ -9,7 +9,11 @@ from app.models_conversation import (
     RoleplayParameters,
 )
 from app.models_conversation_context import ConversationWorkingContext
-from app.models_module_overlay import ModuleOverlay, RoleplayOverlay
+from app.models_module_overlay import (
+    ModuleOverlay,
+    ParentResumeProjection,
+    RoleplayOverlay,
+)
 from app.models_roleplay import (
     RoleplayMessageRequest,
     RoleplayPauseRequest,
@@ -110,6 +114,25 @@ class RoleplayModuleAdapter:
             version=run.version,
             updated_at=session.updated_at or datetime.now(UTC),
         )
+
+    def project_for_parent_resume(
+        self,
+        overlay: ModuleOverlay,
+    ) -> ParentResumeProjection:
+        """Expose only the bounded point needed to resume role-play."""
+        if not isinstance(overlay.payload, RoleplayOverlay):
+            raise ValueError("role-play overlay payload is invalid")
+        return ParentResumeProjection(
+            module_type=overlay.module_type,
+            module_run_id=overlay.module_run_id,
+            resume_point=(
+                overlay.payload.resume_point
+                or overlay.payload.unresolved_question
+                or overlay.payload.scenario_summary
+            ),
+            version=overlay.version,
+        )
+
     async def suspend(self, run: ModuleRun) -> None:
         self._service.pause_conversation_session(
             RoleplayPauseRequest(

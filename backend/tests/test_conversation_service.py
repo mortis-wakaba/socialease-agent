@@ -18,6 +18,7 @@ from app.models import (
     TraceRecord,
 )
 from app.models_conversation import (
+    ConversationEventType,
     HISTORY_NOTICE_VERSION,
     ModuleProposalStatus,
     ModuleType,
@@ -238,6 +239,7 @@ async def test_crisis_preempts_proposal_and_module_routing(
 
     assert response.pending_module_proposal is None
     assert response.safety_result.risk_level is RiskLevel.CRISIS
+    assert response.appended_events[0].event_type is ConversationEventType.CRISIS_INPUT
     assert "现实" not in response.response
     assert "紧急服务" in response.response
     assert response.appended_events[-1].event_type.value == "crisis_escalated"

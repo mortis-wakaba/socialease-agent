@@ -11,6 +11,7 @@ from app.conversation.module_overlay_store import (
 )
 from app.conversation.module_policy import ModuleStackPolicy
 from app.conversation.repository import ConversationRepository
+from app.memory.task_state_store import TaskStateStoreUnavailable
 from app.models_conversation import (
     ConversationEvent,
     ConversationEventRole,
@@ -168,11 +169,33 @@ class ModuleCoordinator:
         if not stack:
             raise LookupError("active module not found")
         run = stack[-1]
-        overlay = await self._load_overlay(run, context)
+        response_key = f"module-response:{idempotency_key}"
+        replay = self._repository.get_event_by_idempotency(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            idempotency_key=response_key,
+        )
+        if replay is not None:
+            if replay.structured_payload is None:
+                raise ValueError("module replay event has no typed payload")
+            return (
+                ModuleAdapterResult(
+                    response=replay.content,
+                    domain_session_id=run.domain_session_id,
+                    event_payload=replay.structured_payload,
+                ),
+                replay,
+            )
+        projected_context = await self.project_context(
+            context.model_copy(update={"active_module_stack": stack})
+        )
+        overlay = projected_context.active_module_overlay
+        if overlay is None or overlay.module_run_id != run.module_run_id:
+            raise LookupError("active module overlay not found")
         result = await self._adapter(run.module_type).handle_message(
             run,
             message,
-            context,
+            projected_context,
             overlay,
         )
         if (
@@ -186,11 +209,18 @@ class ModuleCoordinator:
                 expected_version=run.version,
                 domain_session_id=result.domain_session_id,
             )
-        await self._refresh_overlay(run, context)
+        else:
+            run = self._repository.advance_module_run_version(
+                module_run_id=run.module_run_id,
+                conversation_id=run.conversation_id,
+                user_id=run.user_id,
+                expected_version=run.version,
+            )
+        await self._refresh_overlay(run, projected_context)
         event = self._append_result_event(
             run=run,
             result=result,
-            idempotency_key=f"module-response:{idempotency_key}",
+            idempotency_key=response_key,
         )
         return result, event
 
@@ -200,6 +230,7 @@ class ModuleCoordinator:
         conversation_id: str,
         user_id: str,
         module_run_id: str,
+        context: ConversationWorkingContext | None = None,
     ) -> ModuleControlResponse:
         """Terminate only the top frame and resume its parent."""
         stack = self._repository.list_module_stack(
@@ -258,7 +289,7 @@ class ModuleCoordinator:
             )
             if resumed is None:
                 raise LookupError("parent module run not found")
-            await self._refresh_overlay(resumed)
+            await self._refresh_overlay(resumed, context)
             events.append(
                 self._append_lifecycle_event(
                     run=resumed,
@@ -388,12 +419,50 @@ class ModuleCoordinator:
     async def delete_runtime_contexts(self, runs: list[ModuleRun]) -> None:
         """Delete short-lived adapter state before durable conversation deletion."""
         for run in runs:
-            await self._adapter(run.module_type).delete_runtime_context(run)
+            try:
+                await self._adapter(run.module_type).delete_runtime_context(run)
+            except TaskStateStoreUnavailable:
+                logger.warning(
+                    "Module runtime cache unavailable during durable deletion",
+                    extra={"module_type": run.module_type.value},
+                )
             await self._overlay_store.delete(run)
 
     async def delete_user_cache(self, *, user_id: str) -> int:
         """Delete every cached overlay for one owner."""
         return await self._overlay_store.delete_user(user_id=user_id)
+
+    async def project_context(
+        self,
+        context: ConversationWorkingContext,
+    ) -> ConversationWorkingContext:
+        """Attach one active overlay and bounded suspended-parent projections."""
+        stack = context.active_module_stack
+        if not stack:
+            return context
+        overlays = [
+            await self._load_overlay(run, context)
+            for run in stack
+        ]
+        parents = [
+            self._adapter(run.module_type).project_for_parent_resume(overlay)
+            for run, overlay in zip(stack[:-1], overlays[:-1], strict=True)
+        ]
+        active = overlays[-1]
+        diagnostics = context.diagnostics.model_copy(
+            update={
+                "active_overlay_type": active.module_type.value,
+                "active_overlay_version": active.version,
+                "parent_resume_projection_count": len(parents),
+            }
+        )
+        return context.model_copy(
+            update={
+                "active_module_overlay": active,
+                "parent_resume_projections": parents,
+                "diagnostics": diagnostics,
+            }
+        )
 
     async def close(self) -> None:
         """Close the shared overlay cache client."""

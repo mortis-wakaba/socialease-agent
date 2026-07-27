@@ -88,6 +88,15 @@ class ConversationRepository(Protocol):
         parent_module_run_id: str | None = None,
     ) -> ConversationEvent: ...
 
+    def advance_module_run_version(
+        self,
+        *,
+        module_run_id: str,
+        conversation_id: str,
+        user_id: str,
+        expected_version: int,
+    ) -> ModuleRun: ...
+
     def list_events(
         self,
         *,
@@ -1093,6 +1102,44 @@ class SQLiteConversationRepository:
                   AND version = ?""",
                 (
                     domain_session_id,
+                    updated.version,
+                    updated.model_dump_json(),
+                    module_run_id,
+                    conversation_id,
+                    user_id,
+                    expected_version,
+                ),
+            )
+        if result.rowcount == 0:
+            raise ConversationConcurrencyError("module run state changed")
+        return updated
+
+    def advance_module_run_version(
+        self,
+        *,
+        module_run_id: str,
+        conversation_id: str,
+        user_id: str,
+        expected_version: int,
+    ) -> ModuleRun:
+        """Advance the durable overlay watermark after one module action."""
+        current = self.get_module_run_for_user(
+            module_run_id=module_run_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        if current is None:
+            raise LookupError("module run not found")
+        updated = current.model_copy(
+            update={"version": current.version + 1}
+        )
+        with connect() as connection:
+            result = connection.execute(
+                """UPDATE conversation_module_runs
+                SET version = ?, payload = ?
+                WHERE module_run_id = ? AND conversation_id = ? AND user_id = ?
+                  AND version = ?""",
+                (
                     updated.version,
                     updated.model_dump_json(),
                     module_run_id,

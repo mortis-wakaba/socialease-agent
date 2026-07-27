@@ -161,7 +161,10 @@ def _compact_user_prompt(
 
 
 def _event_is_compactable(event: ConversationEvent) -> bool:
-    if event.event_type == ConversationEventType.CRISIS_ESCALATED:
+    if event.event_type in {
+        ConversationEventType.CRISIS_INPUT,
+        ConversationEventType.CRISIS_ESCALATED,
+    }:
         return False
     if event.role == ConversationEventRole.SYSTEM:
         return False

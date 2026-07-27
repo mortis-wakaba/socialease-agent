@@ -38,6 +38,7 @@ class ConversationEventType(str, Enum):
     MODULE_RESUMED = "module_resumed"
     MODULE_COMPLETED = "module_completed"
     MODULE_TERMINATED = "module_terminated"
+    CRISIS_INPUT = "crisis_input"
     CRISIS_ESCALATED = "crisis_escalated"
 
 

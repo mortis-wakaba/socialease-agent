@@ -30,6 +30,7 @@ from app.models_conversation_context import (
 from app.models_module_overlay import (
     ExposureOverlay,
     ModuleOverlay,
+    ParentResumeProjection,
     RoleplayOverlay,
 )
 
@@ -86,6 +87,17 @@ class RecordingAdapter:
             payload=payload,
             version=run.version,
             updated_at=datetime.now(UTC),
+        )
+
+    def project_for_parent_resume(
+        self,
+        overlay: ModuleOverlay,
+    ) -> ParentResumeProjection:
+        return ParentResumeProjection(
+            module_type=overlay.module_type,
+            module_run_id=overlay.module_run_id,
+            resume_point=f"resume:{overlay.module_type.value}",
+            version=overlay.version,
         )
 
     async def suspend(self, run: ModuleRun) -> None:
@@ -184,6 +196,19 @@ async def test_roleplay_exposure_nested_push_pop_and_resume(
     assert first.conversation.conversation_id == conversation.conversation_id
     assert any(action.startswith("suspend:") for action in roleplay_adapter.actions)
 
+    projected = await coordinator.project_context(
+        context.model_copy(
+            update={"active_module_stack": nested.active_module_stack}
+        )
+    )
+    assert projected.active_module_overlay is not None
+    assert projected.active_module_overlay.module_type is ModuleType.EXPOSURE
+    assert [
+        item.module_type for item in projected.parent_resume_projections
+    ] == [ModuleType.ROLEPLAY]
+    assert projected.parent_resume_projections[0].resume_point == "resume:roleplay"
+    assert projected.diagnostics.parent_resume_projection_count == 1
+
     child = nested.active_module_stack[-1]
     popped = await coordinator.terminate_current(
         conversation_id=conversation.conversation_id,
@@ -280,10 +305,27 @@ async def test_active_module_receives_messages_on_same_timeline(
         idempotency_key="turn-001",
         context=_working_context(conversation.conversation_id),
     )
+    replay_result, replay_event = await coordinator.handle_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="我的练习回复",
+        idempotency_key="turn-001",
+        context=_working_context(conversation.conversation_id),
+    )
 
     assert result.response == "reply:我的练习回复"
     assert event.module_run_id == started.active_module_stack[-1].module_run_id
     assert event.sequence_no == 3
+    assert replay_result.response == result.response
+    assert replay_event.event_id == event.event_id
+    assert adapter.actions.count("message:我的练习回复") == 1
+    refreshed = repository.get_module_run_for_user(
+        module_run_id=event.module_run_id or "",
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+    )
+    assert refreshed is not None
+    assert refreshed.version == 2
 
 
 @pytest.mark.anyio

@@ -68,7 +68,11 @@ class UnifiedContextTokenAllocator:
             [
                 event
                 for event in recent_source
-                if event.event_type != ConversationEventType.CRISIS_ESCALATED
+                if event.event_type
+                not in {
+                    ConversationEventType.CRISIS_INPUT,
+                    ConversationEventType.CRISIS_ESCALATED,
+                }
                 and event.event_id != current_event_id
             ]
         )
@@ -168,7 +172,11 @@ def _select_recent_turns(
     eligible = [
         event
         for event in events
-        if event.event_type != ConversationEventType.CRISIS_ESCALATED
+        if event.event_type
+        not in {
+            ConversationEventType.CRISIS_INPUT,
+            ConversationEventType.CRISIS_ESCALATED,
+        }
         and event.event_id != excluded_event_id
     ]
     groups: list[list[ConversationEvent]] = []

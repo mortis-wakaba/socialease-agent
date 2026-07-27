@@ -106,14 +106,20 @@ class ModuleOverlayStore:
 
     async def delete(self, run: ModuleRun) -> None:
         """Remove one module cache entry."""
-        await self._store.delete(
-            user_id=run.user_id,
-            task_id=run.module_run_id,
-        )
+        try:
+            await self._store.delete(
+                user_id=run.user_id,
+                task_id=run.module_run_id,
+            )
+        except TaskStateStoreUnavailable:
+            return None
 
     async def delete_user(self, *, user_id: str) -> int:
         """Remove every module overlay cached for one owner."""
-        return await self._store.delete_user(user_id=user_id)
+        try:
+            return await self._store.delete_user(user_id=user_id)
+        except TaskStateStoreUnavailable:
+            return 0
 
     async def health(self) -> bool:
         """Return whether the configured cache backend responds."""

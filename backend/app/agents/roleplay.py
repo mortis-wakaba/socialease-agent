@@ -164,6 +164,14 @@ class RoleplayAgent:
                     and prompt_context.shared_summary is not None
                     else None
                 ),
+                parent_resume_projections=(
+                    [
+                        item.model_dump(mode="json")
+                        for item in prompt_context.parent_resume_projections
+                    ]
+                    if prompt_context is not None
+                    else []
+                ),
             ),
         )
 

@@ -354,6 +354,7 @@ def _shared_roleplay_prompt_context(
             updated_at=datetime.now(timezone.utc),
         ),
         shared_summary=context.compact_summary,
+        parent_resume_projections=context.parent_resume_projections,
         retrieved_memories=context.selected_agent_memory[:3],
         diagnostics=context.diagnostics,
     )

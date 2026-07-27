@@ -439,13 +439,18 @@ class ConversationService:
             user_id=user_id,
         )
         active_run = stack[-1] if stack else None
+        safety_result = await self._safety_classifier.classify(message)
         user_event = self._repository.append_event(
             conversation_id=conversation_id,
             user_id=user_id,
             event_type=(
-                ConversationEventType.MODULE_MESSAGE
-                if active_run
-                else ConversationEventType.USER_MESSAGE
+                ConversationEventType.CRISIS_INPUT
+                if safety_result.risk_level == RiskLevel.CRISIS
+                else (
+                    ConversationEventType.MODULE_MESSAGE
+                    if active_run
+                    else ConversationEventType.USER_MESSAGE
+                )
             ),
             role=ConversationEventRole.USER,
             content=message,
@@ -457,7 +462,6 @@ class ConversationService:
             ),
             idempotency_key=f"user:{idempotency_key}",
         )
-        safety_result = await self._safety_classifier.classify(message)
         context = await self._context_manager.assemble(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -553,6 +557,7 @@ class ConversationService:
             )
 
         if stack:
+            context = await self._module_coordinator.project_context(context)
             result, module_event = await self._module_coordinator.handle_message(
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -679,10 +684,16 @@ class ConversationService:
         user_id: str,
     ) -> ModuleControlResponse:
         """Explicitly terminate the active top module."""
+        context = await self._context_manager.assemble(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            current_user_message="结束当前模块",
+        )
         return await self._module_coordinator.terminate_current(
             conversation_id=conversation_id,
             user_id=user_id,
             module_run_id=module_run_id,
+            context=context,
         )
 
     async def terminate_all_modules(
@@ -895,6 +906,8 @@ def _prompt_context(
             for event in context.recent_events
         ],
         compact_summary=context.compact_summary,
+        active_module_overlay=context.active_module_overlay,
+        parent_resume_projections=context.parent_resume_projections,
     )
 
 

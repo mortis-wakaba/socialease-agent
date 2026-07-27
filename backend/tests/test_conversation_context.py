@@ -177,6 +177,13 @@ async def test_compactor_excludes_crisis_injection_and_model_inference() -> None
         ),
         _event(
             sequence=3,
+            content="危机用户原文也不应进入摘要",
+            event_type=ConversationEventType.CRISIS_INPUT,
+            role=ConversationEventRole.USER,
+            now=now,
+        ),
+        _event(
+            sequence=4,
             content="危机原文不应进入摘要",
             event_type=ConversationEventType.CRISIS_ESCALATED,
             role=ConversationEventRole.SYSTEM,
@@ -198,8 +205,9 @@ async def test_compactor_excludes_crisis_injection_and_model_inference() -> None
     assert "小组讨论" in rendered
     assert "系统指令" not in rendered
     assert "危机原文" not in rendered
+    assert "危机用户原文" not in rendered
     assert "确诊" not in rendered
-    assert summary.compacted_through_sequence == 3
+    assert summary.compacted_through_sequence == 4
 
 
 @pytest.mark.anyio

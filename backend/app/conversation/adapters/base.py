@@ -5,7 +5,7 @@ from typing import Protocol
 
 from app.models_conversation import ConversationEventPayload, ModuleRun
 from app.models_conversation_context import ConversationWorkingContext
-from app.models_module_overlay import ModuleOverlay
+from app.models_module_overlay import ModuleOverlay, ParentResumeProjection
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,10 @@ class ModuleAdapter(Protocol):
         run: ModuleRun,
         context: ConversationWorkingContext | None = None,
     ) -> ModuleOverlay: ...
+    def project_for_parent_resume(
+        self,
+        overlay: ModuleOverlay,
+    ) -> ParentResumeProjection: ...
     async def suspend(self, run: ModuleRun) -> None: ...
     async def resume(self, run: ModuleRun) -> None: ...
     async def terminate(self, run: ModuleRun) -> None: ...
