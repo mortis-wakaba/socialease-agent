@@ -36,6 +36,12 @@ def _run(
     parent: str | None,
     status: ModuleRunStatus,
 ) -> ModuleRun:
+    parameters = {
+        ModuleType.ROLEPLAY: {"kind": "roleplay", "scenario_description": "demo"},
+        ModuleType.WORKSHEET: {"kind": "worksheet", "situation": "demo"},
+        ModuleType.EXPOSURE: {"kind": "exposure", "goal": "demo"},
+        ModuleType.RESOURCE: {"kind": "resource", "query": "demo"},
+    }[module_type]
     return ModuleRun(
         module_run_id=run_id,
         conversation_id="conversation-1",
@@ -44,6 +50,7 @@ def _run(
         parent_module_run_id=parent,
         depth=depth,
         status=status,
+        module_parameters=parameters,
         started_at=NOW,
     )
 

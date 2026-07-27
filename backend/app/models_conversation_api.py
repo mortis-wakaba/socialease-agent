@@ -38,6 +38,12 @@ class ConversationModuleDecisionRequest(StrictConversationModel):
     request_hash: str = Field(min_length=32, max_length=128)
 
 
+class ConversationModuleTerminateRequest(StrictConversationModel):
+    """Explicit owner request to terminate module state."""
+
+    user_id: str = Field(min_length=1)
+
+
 class ConversationMessageResponse(StrictConversationModel):
     """Unified response for general and module-aware conversation turns."""
 
@@ -57,3 +63,12 @@ class ConversationDetailResponse(StrictConversationModel):
     conversation: Conversation
     events: ConversationEventPage
     active_module_stack: list[ModuleRun] = Field(default_factory=list)
+
+
+class ModuleControlResponse(StrictConversationModel):
+    """Result of accepting or explicitly terminating module frames."""
+
+    conversation: Conversation
+    active_module_stack: list[ModuleRun] = Field(default_factory=list)
+    appended_events: list[ConversationEvent] = Field(default_factory=list)
+    response: str

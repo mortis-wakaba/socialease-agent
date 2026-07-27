@@ -117,3 +117,59 @@ async def test_conversation_api_hides_cross_owner_history(
     )
 
     assert hidden.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_conversation_api_accepts_and_manually_terminates_roleplay(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = {"X-Demo-User-Id": "owner"}
+    created = await client.post(
+        "/api/conversations",
+        headers=headers,
+        json={
+            "user_id": "owner",
+            "title": "Roleplay",
+            "history_notice_version": HISTORY_NOTICE_VERSION,
+            "history_notice_acknowledged": True,
+        },
+    )
+    conversation_id = created.json()["conversation_id"]
+    proposed = await client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={
+            "user_id": "owner",
+            "message": "我想做角色扮演，练习在小组讨论中开口",
+            "idempotency_key": "api-roleplay-001",
+        },
+    )
+    proposal = proposed.json()["pending_module_proposal"]
+    accepted = await client.post(
+        (
+            f"/api/conversations/{conversation_id}/module-proposals/"
+            f"{proposal['proposal_id']}/accept"
+        ),
+        headers=headers,
+        json={
+            "user_id": "owner",
+            "request_hash": proposal["request_hash"],
+        },
+    )
+
+    assert accepted.status_code == 200
+    stack = accepted.json()["active_module_stack"]
+    assert len(stack) == 1
+    assert stack[0]["module_type"] == "roleplay"
+    module_run_id = stack[0]["module_run_id"]
+
+    terminated = await client.post(
+        (
+            f"/api/conversations/{conversation_id}/modules/"
+            f"{module_run_id}/terminate"
+        ),
+        headers=headers,
+        json={"user_id": "owner"},
+    )
+    assert terminated.status_code == 200
+    assert terminated.json()["active_module_stack"] == []

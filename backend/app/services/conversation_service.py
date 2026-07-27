@@ -7,6 +7,14 @@ from uuid import uuid4
 
 from app.conversation.compactor import ConversationCompactor
 from app.conversation.context_manager import ConversationContextManager
+from app.conversation.adapters import (
+    ExposureModuleAdapter,
+    ResourceModuleAdapter,
+    RoleplayModuleAdapter,
+    WorksheetModuleAdapter,
+)
+from app.conversation.module_coordinator import ModuleCoordinator
+from app.conversation.module_policy import ConversationStateError, ModuleStackPolicy
 from app.conversation.repository import ConversationRepository
 from app.db.factory import repository_factory
 from app.llm.factory import create_llm_client
@@ -38,6 +46,7 @@ from app.models_conversation import (
     WorksheetParameters,
 )
 from app.models_conversation_api import ConversationMessageResponse
+from app.models_conversation_api import ModuleControlResponse
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
 from app.workflow.engine import AgentHarness
@@ -71,6 +80,7 @@ class ConversationService:
         safety_classifier: BaseSafetyClassifier | None = None,
         intent_router: BaseIntentRouter | None = None,
         context_manager: ConversationContextManager | None = None,
+        module_coordinator: ModuleCoordinator | None = None,
         proposal_ttl: timedelta = timedelta(minutes=15),
     ) -> None:
         self._harness = harness
@@ -96,6 +106,15 @@ class ConversationService:
                 token_estimator=estimator,
             ),
             token_estimator=estimator,
+        )
+        self._module_coordinator = module_coordinator or ModuleCoordinator(
+            repository=self._repository,
+            adapters={
+                ModuleType.ROLEPLAY: RoleplayModuleAdapter(),
+                ModuleType.WORKSHEET: WorksheetModuleAdapter(),
+                ModuleType.EXPOSURE: ExposureModuleAdapter(),
+                ModuleType.RESOURCE: ResourceModuleAdapter(),
+            },
         )
         self._proposal_ttl = proposal_ttl
 
@@ -185,12 +204,27 @@ class ConversationService:
         if conversation is None:
             raise LookupError("conversation not found")
 
+        stack = self._repository.list_module_stack(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        active_run = stack[-1] if stack else None
         user_event = self._repository.append_event(
             conversation_id=conversation_id,
             user_id=user_id,
-            event_type=ConversationEventType.USER_MESSAGE,
+            event_type=(
+                ConversationEventType.MODULE_MESSAGE
+                if active_run
+                else ConversationEventType.USER_MESSAGE
+            ),
             role=ConversationEventRole.USER,
             content=message,
+            module_run_id=(
+                active_run.module_run_id if active_run else None
+            ),
+            parent_module_run_id=(
+                active_run.parent_module_run_id if active_run else None
+            ),
             idempotency_key=f"user:{idempotency_key}",
         )
         safety_result = await self._safety_classifier.classify(message)
@@ -198,10 +232,6 @@ class ConversationService:
             conversation_id=conversation_id,
             user_id=user_id,
             current_user_message=message,
-        )
-        stack = self._repository.list_module_stack(
-            conversation_id=conversation_id,
-            user_id=user_id,
         )
         if safety_result.risk_level == RiskLevel.CRISIS:
             response = crisis_escalation_response(
@@ -242,6 +272,7 @@ class ConversationService:
         if (
             proposed_module is not None
             and safety_result.risk_level == RiskLevel.LOW
+            and _proposal_allowed_for_stack(stack, proposed_module)
         ):
             proposal = self._create_proposal(
                 conversation_id=conversation_id,
@@ -284,6 +315,22 @@ class ConversationService:
                 safety_result=safety_result,
                 context_diagnostics=context.diagnostics,
                 pending_proposal=proposal,
+            )
+
+        if stack:
+            result, module_event = await self._module_coordinator.handle_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                message=message,
+                idempotency_key=idempotency_key,
+            )
+            return self._response(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                appended_events=[user_event, module_event],
+                response=result.response,
+                safety_result=safety_result,
+                context_diagnostics=context.diagnostics,
             )
 
         assistant_key = f"assistant:{idempotency_key}"
@@ -346,6 +393,63 @@ class ConversationService:
         if rejected is None:
             raise ConversationProposalError("proposal not found")
         return rejected
+
+    async def accept_proposal(
+        self,
+        *,
+        conversation_id: str,
+        proposal_id: str,
+        user_id: str,
+        request_hash: str,
+    ) -> ModuleControlResponse:
+        """Accept one proposal and delegate the confirmed stack push."""
+        proposal = self._repository.get_proposal_for_user(
+            proposal_id=proposal_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        if proposal is None:
+            raise ConversationProposalError("proposal not found")
+        if proposal.request_hash != request_hash:
+            raise ConversationProposalError("proposal request hash mismatch")
+        if proposal.status == ModuleProposalStatus.ACCEPTED:
+            return await self._module_coordinator.accept(proposal)
+        proposal = self._validated_pending_proposal(
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+            user_id=user_id,
+            request_hash=request_hash,
+        )
+        try:
+            return await self._module_coordinator.accept(proposal)
+        except ConversationStateError as exc:
+            raise ConversationProposalError(str(exc)) from exc
+
+    async def terminate_current_module(
+        self,
+        *,
+        conversation_id: str,
+        module_run_id: str,
+        user_id: str,
+    ) -> ModuleControlResponse:
+        """Explicitly terminate the active top module."""
+        return await self._module_coordinator.terminate_current(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            module_run_id=module_run_id,
+        )
+
+    async def terminate_all_modules(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ModuleControlResponse:
+        """Explicitly terminate all active and suspended frames."""
+        return await self._module_coordinator.terminate_all(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
 
     def _validated_pending_proposal(
         self,
@@ -528,3 +632,16 @@ def _workflow_context(context) -> dict[str, object]:
             for run in context.active_module_stack
         ],
     }
+
+
+def _proposal_allowed_for_stack(
+    stack,
+    module_type: ModuleType,
+) -> bool:
+    if stack and stack[-1].module_type == module_type:
+        return False
+    try:
+        ModuleStackPolicy.validate_push(stack, module_type)
+    except ConversationStateError:
+        return False
+    return True

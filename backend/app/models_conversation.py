@@ -150,10 +150,49 @@ class CrisisEscalatedEventPayload(StrictConversationModel):
     risk_level: Literal["crisis"] = "crisis"
 
 
+class RoleplayMessageEventPayload(StrictConversationModel):
+    """Structured projection of one role-play module turn."""
+
+    kind: Literal["roleplay_message"] = "roleplay_message"
+    session_id: str = Field(min_length=1)
+    blocked: bool = False
+
+
+class WorksheetMessageEventPayload(StrictConversationModel):
+    """Structured projection of one worksheet module turn."""
+
+    kind: Literal["worksheet_message"] = "worksheet_message"
+    worksheet_id: str = Field(min_length=1)
+    completed: bool = False
+    missing_fields: list[str] = Field(default_factory=list, max_length=16)
+
+
+class ExposureMessageEventPayload(StrictConversationModel):
+    """Structured projection of one exposure module turn."""
+
+    kind: Literal["exposure_message"] = "exposure_message"
+    plan_id: str | None = None
+    awaiting_anxiety_level: bool = False
+    blocked: bool = False
+
+
+class ResourceMessageEventPayload(StrictConversationModel):
+    """Structured projection of one grounded resource module turn."""
+
+    kind: Literal["resource_message"] = "resource_message"
+    search_session_id: str | None = None
+    citation_count: int = Field(default=0, ge=0, le=20)
+    unknown: bool = False
+
+
 ConversationEventPayload = Annotated[
     ModuleProposalEventPayload
     | ModuleLifecycleEventPayload
-    | CrisisEscalatedEventPayload,
+    | CrisisEscalatedEventPayload
+    | RoleplayMessageEventPayload
+    | WorksheetMessageEventPayload
+    | ExposureMessageEventPayload
+    | ResourceMessageEventPayload,
     Field(discriminator="kind"),
 ]
 
@@ -199,8 +238,20 @@ class ConversationEvent(StrictConversationModel):
             ConversationEventType.MODULE_COMPLETED: ModuleLifecycleEventPayload,
             ConversationEventType.MODULE_TERMINATED: ModuleLifecycleEventPayload,
             ConversationEventType.CRISIS_ESCALATED: CrisisEscalatedEventPayload,
+            ConversationEventType.MODULE_MESSAGE: (
+                RoleplayMessageEventPayload,
+                WorksheetMessageEventPayload,
+                ExposureMessageEventPayload,
+                ResourceMessageEventPayload,
+            ),
         }
         expected = expected_payloads.get(self.event_type)
+        if (
+            self.event_type == ConversationEventType.MODULE_MESSAGE
+            and self.role == ConversationEventRole.USER
+            and self.structured_payload is None
+        ):
+            return self
         if expected is None and self.structured_payload is not None:
             raise ValueError("this event type does not accept a structured payload")
         if expected is not None and not isinstance(self.structured_payload, expected):
@@ -240,6 +291,7 @@ class ModuleRun(StrictConversationModel):
     parent_module_run_id: str | None = None
     depth: int = Field(ge=1, le=MAX_MODULE_DEPTH)
     status: ModuleRunStatus = ModuleRunStatus.ACTIVE
+    module_parameters: ModuleParameters
     domain_session_id: str | None = None
     started_at: datetime
     ended_at: datetime | None = None

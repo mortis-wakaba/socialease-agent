@@ -21,6 +21,8 @@ from app.models_conversation_api import (
     ConversationMessageRequest,
     ConversationMessageResponse,
     ConversationModuleDecisionRequest,
+    ConversationModuleTerminateRequest,
+    ModuleControlResponse,
 )
 from app.services.conversation_service import (
     ConversationNoticeError,
@@ -141,6 +143,31 @@ async def send_conversation_message(
 
 
 @router.post(
+    "/{conversation_id}/module-proposals/{proposal_id}/accept",
+    response_model=ModuleControlResponse,
+)
+async def accept_module_proposal(
+    conversation_id: str,
+    proposal_id: str,
+    request: ConversationModuleDecisionRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ModuleControlResponse:
+    """Start a module only after an explicit owner confirmation."""
+    user_id = resolve_request_user_id(request.user_id, current_user)
+    try:
+        return await conversation_service().accept_proposal(
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+            user_id=user_id,
+            request_hash=request.request_hash,
+        )
+    except ConversationProposalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc
+
+
+@router.post(
     "/{conversation_id}/module-proposals/{proposal_id}/reject",
     response_model=ModuleProposal,
 )
@@ -161,3 +188,45 @@ async def reject_module_proposal(
         )
     except ConversationProposalError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{conversation_id}/modules/{module_run_id}/terminate",
+    response_model=ModuleControlResponse,
+)
+async def terminate_current_module(
+    conversation_id: str,
+    module_run_id: str,
+    request: ConversationModuleTerminateRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ModuleControlResponse:
+    """Terminate the active top module and resume its parent."""
+    user_id = resolve_request_user_id(request.user_id, current_user)
+    try:
+        return await conversation_service().terminate_current_module(
+            conversation_id=conversation_id,
+            module_run_id=module_run_id,
+            user_id=user_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Active module not found") from exc
+
+
+@router.post(
+    "/{conversation_id}/modules/terminate-all",
+    response_model=ModuleControlResponse,
+)
+async def terminate_all_modules(
+    conversation_id: str,
+    request: ConversationModuleTerminateRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ModuleControlResponse:
+    """Terminate every active frame and return to ordinary conversation."""
+    user_id = resolve_request_user_id(request.user_id, current_user)
+    try:
+        return await conversation_service().terminate_all_modules(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc

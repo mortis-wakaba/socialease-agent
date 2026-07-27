@@ -127,6 +127,14 @@ class ConversationRepository(Protocol):
         user_id: str,
     ) -> list[ModuleRun]: ...
 
+    def get_module_run_for_user(
+        self,
+        *,
+        module_run_id: str,
+        conversation_id: str,
+        user_id: str,
+    ) -> ModuleRun | None: ...
+
 
 class SQLiteConversationRepository:
     """SQLite timeline adapter with transactional ordering and idempotency."""
@@ -717,6 +725,65 @@ class SQLiteConversationRepository:
                 ),
             ).fetchall()
         return [ModuleRun.model_validate_json(row["payload"]) for row in rows]
+
+    def get_module_run_for_user(
+        self,
+        *,
+        module_run_id: str,
+        conversation_id: str,
+        user_id: str,
+    ) -> ModuleRun | None:
+        """Return one module run only inside its complete owner scope."""
+        with connect() as connection:
+            row = connection.execute(
+                """SELECT payload FROM conversation_module_runs
+                WHERE module_run_id = ? AND conversation_id = ? AND user_id = ?""",
+                (module_run_id, conversation_id, user_id),
+            ).fetchone()
+        return ModuleRun.model_validate_json(row["payload"]) if row else None
+
+    def update_module_domain_session(
+        self,
+        *,
+        module_run_id: str,
+        conversation_id: str,
+        user_id: str,
+        expected_version: int,
+        domain_session_id: str,
+    ) -> ModuleRun:
+        """Attach a lazily created domain session with optimistic locking."""
+        current = self.get_module_run_for_user(
+            module_run_id=module_run_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        if current is None:
+            raise LookupError("module run not found")
+        updated = current.model_copy(
+            update={
+                "domain_session_id": domain_session_id,
+                "version": current.version + 1,
+            }
+        )
+        with connect() as connection:
+            result = connection.execute(
+                """UPDATE conversation_module_runs
+                SET domain_session_id = ?, version = ?, payload = ?
+                WHERE module_run_id = ? AND conversation_id = ? AND user_id = ?
+                  AND version = ?""",
+                (
+                    domain_session_id,
+                    updated.version,
+                    updated.model_dump_json(),
+                    module_run_id,
+                    conversation_id,
+                    user_id,
+                    expected_version,
+                ),
+            )
+        if result.rowcount == 0:
+            raise ConversationConcurrencyError("module run state changed")
+        return updated
 
     def transition_module_run(
         self,
