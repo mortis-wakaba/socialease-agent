@@ -1,0 +1,119 @@
+backend/app/models_knowledge.py
+  s_60c357d9985c3c::t_ee77e71d24dbf3 4,59-67
+  s_60c357d9985c3c::t_79d89cd4dfcf99 68-71,73
+  s_60c357d9985c3c::t_6594b4ed662793 30,54-58,72
+  s_60c357d9985c3c::t_bf107343c2b848 74
+backend/app/memory/worksheet_store.py
+  s_60c357d9985c3c::t_170bb6bb42d04c 24-25,36
+backend/app/models_support.py
+  s_60c357d9985c3c::t_6594b4ed662793 4,41,61-63
+  s_60c357d9985c3c::t_ee77e71d24dbf3 6-8,37,42,44,47-60,64-71
+backend/app/services/support_resource_service.py
+  s_60c357d9985c3c::t_009553e49e4ad9 10,238
+  s_60c357d9985c3c::t_6594b4ed662793 4,77-79,81,123,125-127,170-171,177-179,234,237,239,245-247,250-251,256-257
+  s_60c357d9985c3c::t_ee77e71d24dbf3 80,124,128,130,207,209-210,214,235,248-249,272-276
+  s_60c357d9985c3c::t_e4ca9b0b09fade 156-169,172-176,180-184
+  s_60c357d9985c3c::t_f83156635b4704 236,240-244
+  s_60c357d9985c3c::t_4b02c781c68428 258-259
+backend/app/services/conversation_service.py
+  s_60c357d9985c3c::t_fa49331a3402f6 655-660,662,670,804-812
+  s_60c357d9985c3c::t_12c7064813bcb3 406,416,420-422,561
+  s_60c357d9985c3c::t_170bb6bb42d04c 752
+  s_60c357d9985c3c::t_d131a9a65a503a 813-814
+backend/app/llm/prompts.py
+  s_60c357d9985c3c::t_ad1e2699530ccb 86-90,92-95,97-100,102-104
+backend/app/agents/worksheet.py
+  s_60c357d9985c3c::t_ad1e2699530ccb 16,59-60,63-66,75-80,84-87,110-115,119-126
+backend/app/tracing/versions.py
+  s_60c357d9985c3c::t_ad1e2699530ccb 23
+backend/tests/test_task_sessions.py
+  s_60c357d9985c3c::t_cb47891ea3d753 74,81,267-268,291,299-301,309-311
+  s_60c357d9985c3c::t_c58ce2de72a927 164
+  s_60c357d9985c3c::t_eda12421a1ff9b 237-238
+backend/app/conversation/adapters/base.py
+  s_60c357d9985c3c::t_fa49331a3402f6 23-27
+  s_60c357d9985c3c::t_87958f2cb681ce 35-39
+  s_60c357d9985c3c::t_d5aeef6641bd3c 7-8,32-33
+backend/app/conversation/adapters/worksheet.py
+  s_60c357d9985c3c::t_170bb6bb42d04c 37
+  s_60c357d9985c3c::t_ad1e2699530ccb 11-15,38,71-72,155-170
+  s_60c357d9985c3c::t_d5aeef6641bd3c 3-4,16,60-61,63-64,92,94-126
+  s_60c357d9985c3c::t_87958f2cb681ce 87-91,93
+  s_60c357d9985c3c::t_fa49331a3402f6 27-31,39
+  s_60c357d9985c3c::t_7a806b647a2aa2 127
+backend/app/conversation/module_overlay_store.py
+  s_60c357d9985c3c::t_9332a01d57931f 120-121
+  s_60c357d9985c3c::t_953fe1b13e3e9a 1-119,122-199
+backend/app/conversation/adapters/roleplay.py
+  s_60c357d9985c3c::t_fa49331a3402f6 28-33
+  s_60c357d9985c3c::t_b5f3de9ae1db9d 87,90-91
+  s_60c357d9985c3c::t_87958f2cb681ce 70-74,76
+  s_60c357d9985c3c::t_d5aeef6641bd3c 3-4,11-12,55-56,58-60,69,75,77-86,88-89,92-103
+backend/app/llm/prompt_versions.json
+  s_60c357d9985c3c::t_65e11293475c61 44-45
+backend/app/knowledge/service.py
+  s_60c357d9985c3c::t_009553e49e4ad9 4,71
+  s_60c357d9985c3c::t_6594b4ed662793 7,61-70,72-82
+  s_60c357d9985c3c::t_18a85a407f493d 83
+backend/app/conversation/adapters/resource.py
+  s_60c357d9985c3c::t_6594b4ed662793 7,67-68,72,126-130,146-160
+  s_60c357d9985c3c::t_d5aeef6641bd3c 3-4,12-13,40-41,43-44,52-58,64-66,69-71,73-88,140-145
+  s_60c357d9985c3c::t_fa49331a3402f6 27-32
+  s_60c357d9985c3c::t_87958f2cb681ce 47-51,59-63
+  s_60c357d9985c3c::t_cd4966dad9439e 89
+backend/app/models_worksheet.py
+  s_60c357d9985c3c::t_170bb6bb42d04c 37-38,54
+  s_60c357d9985c3c::t_59ba056e44faf6 79
+backend/app/conversation/adapters/exposure.py
+  s_60c357d9985c3c::t_d5aeef6641bd3c 3,12-13,48-49,51-53,81,83-137
+  s_60c357d9985c3c::t_fa49331a3402f6 24-29
+  s_60c357d9985c3c::t_87958f2cb681ce 76-80,82
+  s_60c357d9985c3c::t_28ab05fd05d669 138
+backend/tests/test_module_overlay_store.py
+  s_60c357d9985c3c::t_9caa3410cd86f9 1-107
+backend/app/services/worksheet_service.py
+  s_60c357d9985c3c::t_59ba056e44faf6 115,192
+  s_60c357d9985c3c::t_ad1e2699530ccb 30,70-75,90-91,141-142,158-161
+  s_60c357d9985c3c::t_170bb6bb42d04c 99-108
+backend/tests/test_module_coordinator.py
+  s_60c357d9985c3c::t_fa49331a3402f6 44-49,171-172,174,227-228,230-231,246,272-275,314-315,317,382
+  s_60c357d9985c3c::t_c58ce2de72a927 26-34,57-58,60-61,71-90,100-101,281,367-381
+  s_60c357d9985c3c::t_87958f2cb681ce 65-70
+  s_60c357d9985c3c::t_66ade74105c58c 102
+backend/tests/test_task_state_runtime.py
+  s_60c357d9985c3c::t_79d89cd4dfcf99 8,81-85,99,117-121
+backend/app/models_conversation.py
+  s_60c357d9985c3c::t_6594b4ed662793 185
+  s_60c357d9985c3c::t_170bb6bb42d04c 270,293
+backend/app/knowledge/formatter.py
+  s_60c357d9985c3c::t_6594b4ed662793 4,87-88,91-92
+  s_60c357d9985c3c::t_009553e49e4ad9 44,89-90
+backend/app/main.py
+  s_60c357d9985c3c::t_79d89cd4dfcf99 145,165-173
+backend/app/conversation/module_coordinator.py
+  s_60c357d9985c3c::t_170bb6bb42d04c 88
+  s_60c357d9985c3c::t_87958f2cb681ce 116,126,171,189,406-410,414,416-424
+  s_60c357d9985c3c::t_12c7064813bcb3 8-11,26-27,41,45,161,175-176,237,261,308,368,392-405,411-413,415,425-426
+  s_60c357d9985c3c::t_fa49331a3402f6 47-51,97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "fa2e5d72f3733a48b75e8424e17988c1db2e7c82",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
