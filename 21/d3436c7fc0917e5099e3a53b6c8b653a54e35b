@@ -1,0 +1,49 @@
+backend/app/db/capabilities.py
+  s_60c357d9985c3c::t_b8a8513d375a37 10,24,82-83
+backend/migrations/versions/0012_unified_conversations.py
+  s_60c357d9985c3c::t_11bd138775aa8c 1-198
+backend/tests/test_postgres_conversation_repository.py
+  s_60c357d9985c3c::t_be852991f5cb22 1-98
+backend/app/models_conversation.py
+  s_60c357d9985c3c::t_11bd138775aa8c 257-270
+backend/app/db/models.py
+  s_60c357d9985c3c::t_11bd138775aa8c 206-283,324-333
+backend/app/conversation/content_protector.py
+  s_60c357d9985c3c::t_60df09c5189e9b 8
+  s_60c357d9985c3c::t_11bd138775aa8c 1-6,9-114,116-150
+  s_60c357d9985c3c::t_6b07e8561b02ca 7,115
+backend/app/conversation/repository.py
+  s_60c357d9985c3c::t_c323d2f10a910f 1-765
+backend/tests/test_repository_factory.py
+  s_60c357d9985c3c::t_8320fe7e41b914 16,75-84,218
+backend/app/db/postgres/conversation_repository.py
+  s_60c357d9985c3c::t_b8a8513d375a37 1-735
+backend/requirements.txt
+  s_60c357d9985c3c::t_11bd138775aa8c 9
+backend/app/db/factory.py
+  s_60c357d9985c3c::t_b8a8513d375a37 12,53-56,114-120
+  s_60c357d9985c3c::t_be48ecf3a9f7cb 121
+backend/tests/test_conversation_repository.py
+  s_60c357d9985c3c::t_aeec71fc3b8ffa 1-284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "21d3436c7fc0917e5099e3a53b6c8b653a54e35b",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
