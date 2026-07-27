@@ -1,0 +1,63 @@
+README.md
+  s_60c357d9985c3c::t_68d495b3e5edc9 12-13,15-19,21-23,25-28,36-37,43,45,51,64,311-312,331
+  s_60c357d9985c3c::t_cee6a0a9969a0f 24
+docs/data_retention_and_privacy.md
+  s_60c357d9985c3c::t_cee6a0a9969a0f 11
+docs/migrations.md
+  s_60c357d9985c3c::t_cee6a0a9969a0f 67-70,72-75
+  s_60c357d9985c3c::t_72af77926bd073 71
+docs/architecture_diagram.md
+  s_60c357d9985c3c::t_cee6a0a9969a0f 25-28
+  s_60c357d9985c3c::t_eb71f2c0b8dcb6 8-9,12-24,29-31,96-100,120,125-131,134,143-144
+docker-compose.prod.yml
+  s_60c357d9985c3c::t_aee305ee42f01f 12-13
+docs/deployment_runbook.md
+  s_60c357d9985c3c::t_aee305ee42f01f 41-44,59-63,93
+.env.staging.example
+  s_60c357d9985c3c::t_fb577d7e950b41 33-34
+docs/monitoring_backup_and_alerting_checklist.md
+  s_60c357d9985c3c::t_aee305ee42f01f 10
+docs/agent_harness_design.md
+  s_60c357d9985c3c::t_88b06314b1dd23 294-296
+  s_60c357d9985c3c::t_5f370fda96ce74 24-28,30-33,42-44,49-50,53-56,59,63-68,72-75,84-85,88-94,274,276,287-291,293,311-315
+.env.production.example
+  s_60c357d9985c3c::t_fb577d7e950b41 35-36
+docs/benchmark_report.md
+  s_60c357d9985c3c::t_0d17a081a905cb 3-5,17,83,86,89-91,94-96,108-110,121-126
+docs/real_user_pilot_checklist.md
+  s_60c357d9985c3c::t_aee305ee42f01f 26,32,38,52
+  s_60c357d9985c3c::t_72af77926bd073 27
+docs/production_readiness.md
+  s_60c357d9985c3c::t_94135aa721d96f 137-144,168,180-181
+  s_60c357d9985c3c::t_d6643279409697 7,10,16-17,20-21,48-52,66
+.env.example
+  s_60c357d9985c3c::t_fb577d7e950b41 83-85
+docs/README.md
+  s_60c357d9985c3c::t_185147f7aa3f6a 7-8,40-45
+docs/environment_config.md
+  s_60c357d9985c3c::t_72af77926bd073 82
+  s_60c357d9985c3c::t_fb577d7e950b41 83,87-90,160-162
+docs/adr/0005-chat-harness-executable-skill-dispatch.md
+  s_60c357d9985c3c::t_cee6a0a9969a0f 3-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "8eb579316384b1c92d0004330d451220c8e6d0b1",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
