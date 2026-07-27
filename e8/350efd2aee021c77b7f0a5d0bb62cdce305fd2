@@ -1,0 +1,78 @@
+backend/app/conversation/adapters/roleplay.py
+  s_60c357d9985c3c::t_1b5e291700160d 83-89
+backend/migrations/versions/0014_conversation_deletion_receipts.py
+  s_60c357d9985c3c::t_15819b1a909790 1-40
+backend/app/conversation/adapters/exposure.py
+  s_60c357d9985c3c::t_1b5e291700160d 72-74
+backend/app/db/postgres/conversation_repository.py
+  s_60c357d9985c3c::t_730171902ca130 4
+  s_60c357d9985c3c::t_7d244d86217f00 7,733-784,802-956,972-988
+  s_60c357d9985c3c::t_625090919aeb82 8,1219-1278
+  s_60c357d9985c3c::t_b79597e6a01406 785-801,957-971
+  s_60c357d9985c3c::t_f8bf133b172f08 989
+backend/tests/test_conversation_api.py
+  s_60c357d9985c3c::t_94998111351821 176-234
+backend/app/models_conversation_api.py
+  s_60c357d9985c3c::t_e022ed46980071 3-4,103
+  s_60c357d9985c3c::t_00c583ce48f66b 15,78-102,104-111
+  s_60c357d9985c3c::t_53bf1d7ee0396a 112-119
+backend/app/api/conversations.py
+  s_60c357d9985c3c::t_22ef37a30eebd7 20-21,23-24,29,128-217
+  s_60c357d9985c3c::t_4d476f14baeee1 218-219
+backend/tests/test_auth_api.py
+  s_60c357d9985c3c::t_78101361a3ee4b 570-587,604
+backend/tests/test_profile_api.py
+  s_60c357d9985c3c::t_6b9cc5212b8fc2 47
+backend/app/services/conversation_service.py
+  s_60c357d9985c3c::t_0ac358644846f1 514-517,774-778,782
+  s_60c357d9985c3c::t_87dc75cf66adac 37,213-224
+  s_60c357d9985c3c::t_53bf1d7ee0396a 51-55,200-212,225-358
+  s_60c357d9985c3c::t_699bd46bea96cb 359
+backend/app/models_memory.py
+  s_60c357d9985c3c::t_f18de95c30b058 31,33
+backend/tests/test_conversation_repository.py
+  s_60c357d9985c3c::t_1cf29aa7b9e994 20,286-351
+backend/app/conversation/adapters/worksheet.py
+  s_60c357d9985c3c::t_1b5e291700160d 77-83
+backend/app/conversation/repository.py
+  s_60c357d9985c3c::t_3cd507377a2c7e 138-158,766-809,824-916,931,933-958
+  s_60c357d9985c3c::t_b79597e6a01406 810-823,917-930,932
+  s_60c357d9985c3c::t_a65b335d0598ae 1223-1265
+  s_60c357d9985c3c::t_a7a7e257d26c6a 959
+backend/app/memory/settings_payload.py
+  s_60c357d9985c3c::t_f18de95c30b058 101-103
+backend/app/conversation/adapters/base.py
+  s_60c357d9985c3c::t_1b5e291700160d 30
+backend/app/services/memory_privacy_service.py
+  s_60c357d9985c3c::t_07212ddb8c7df8 46-50
+  s_60c357d9985c3c::t_15819b1a909790 51
+backend/app/conversation/module_coordinator.py
+  s_60c357d9985c3c::t_1b5e291700160d 304-308
+backend/app/conversation/adapters/resource.py
+  s_60c357d9985c3c::t_1b5e291700160d 42-48
+backend/app/db/models.py
+  s_60c357d9985c3c::t_15819b1a909790 296-302,355-356
+docs/data_retention_and_privacy.md
+  s_60c357d9985c3c::t_1877838eea5d27 11,27-30,48-53,66-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "e8350efd2aee021c77b7f0a5d0bb62cdce305fd2",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
