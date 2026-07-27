@@ -158,6 +158,12 @@ class RoleplayAgent:
                     if prompt_context is not None
                     else []
                 ),
+                shared_summary=(
+                    prompt_context.shared_summary.model_dump(mode="json")
+                    if prompt_context is not None
+                    and prompt_context.shared_summary is not None
+                    else None
+                ),
             ),
         )
 
@@ -178,7 +184,14 @@ class RoleplayAgent:
     def feedback(self, session: RoleplaySession) -> RoleplayFeedback:
         """Generate structured feedback from privacy-safe derived features."""
         user_messages = [message for message in session.messages if message.role.value == "user"]
-        feature_items = [message.features for message in user_messages if message.features is not None]
+        feature_items = [
+            *session.practice_features,
+            *[
+                message.features
+                for message in user_messages
+                if message.features is not None
+            ],
+        ]
         rubric_breakdown: list[RoleplayRubricBreakdown] = []
 
         if feature_items:

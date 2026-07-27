@@ -84,6 +84,10 @@ class RoleplaySession(BaseModel):
     difficulty: int = Field(ge=1, le=5)
     status: RoleplaySessionStatus = RoleplaySessionStatus.ACTIVE
     messages: list[RoleplayMessage] = Field(default_factory=list)
+    practice_features: list[RoleplayMessageFeatures] = Field(
+        default_factory=list,
+        max_length=100,
+    )
     retrieved_guidance: RoleplayGuidance
     created_at: datetime
     updated_at: datetime

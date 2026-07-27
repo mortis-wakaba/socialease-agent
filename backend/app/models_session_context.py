@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models_roleplay import RoleplayMessageRole
+from app.models_conversation_context import ConversationCompactPayload
 
 
 class SessionContextMessage(BaseModel):
@@ -90,6 +91,7 @@ class RoleplayPromptContext(BaseModel):
 
     recent_messages: list[str] = Field(default_factory=list, max_length=20)
     compact_state: RoleplayCompactState | None = None
+    shared_summary: ConversationCompactPayload | None = None
     retrieved_memories: list[str] = Field(default_factory=list, max_length=3)
     diagnostics: RoleplayContextDiagnostics
 

@@ -32,7 +32,7 @@ class RoleplayModuleAdapter:
     ) -> ModuleAdapterResult:
         del context
         parameters = _parameters(run)
-        result = await self._service.start_session(
+        result = await self._service.start_conversation_session(
             RoleplayStartRequest(
                 user_id=run.user_id,
                 scenario_description=parameters.scenario_description,
@@ -55,16 +55,25 @@ class RoleplayModuleAdapter:
         context: ConversationWorkingContext,
         overlay: ModuleOverlay,
     ) -> ModuleAdapterResult:
-        del context
         if not isinstance(overlay.payload, RoleplayOverlay):
             raise ValueError("role-play overlay payload is invalid")
         session_id = _session_id(run)
-        result = await self._service.send_message(
+        result = await self._service.send_conversation_message(
             RoleplayMessageRequest(
                 session_id=session_id,
                 user_id=run.user_id,
                 message=message,
-            )
+            ),
+            context=context,
+            overlay=overlay,
+        )
+        return ModuleAdapterResult(
+            response=result.response,
+            domain_session_id=session_id,
+            event_payload=RoleplayMessageEventPayload(
+                session_id=session_id,
+                blocked=result.blocked,
+            ),
         )
 
     async def build_overlay(
@@ -101,17 +110,8 @@ class RoleplayModuleAdapter:
             version=run.version,
             updated_at=session.updated_at or datetime.now(UTC),
         )
-        return ModuleAdapterResult(
-            response=result.response,
-            domain_session_id=session_id,
-            event_payload=RoleplayMessageEventPayload(
-                session_id=session_id,
-                blocked=result.blocked,
-            ),
-        )
-
     async def suspend(self, run: ModuleRun) -> None:
-        await self._service.pause_session(
+        self._service.pause_conversation_session(
             RoleplayPauseRequest(
                 session_id=_session_id(run),
                 user_id=run.user_id,
@@ -119,7 +119,7 @@ class RoleplayModuleAdapter:
         )
 
     async def resume(self, run: ModuleRun) -> None:
-        await self._service.resume_session(
+        self._service.resume_conversation_session(
             RoleplayResumeRequest(
                 session_id=_session_id(run),
                 user_id=run.user_id,
@@ -130,11 +130,7 @@ class RoleplayModuleAdapter:
         await self.suspend(run)
 
     async def delete_runtime_context(self, run: ModuleRun) -> None:
-        if run.domain_session_id:
-            await self._service.context_manager.delete(
-                user_id=run.user_id,
-                session_id=run.domain_session_id,
-            )
+        del run
 
 
 def _parameters(run: ModuleRun) -> RoleplayParameters:

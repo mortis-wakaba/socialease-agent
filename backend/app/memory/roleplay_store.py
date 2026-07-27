@@ -31,6 +31,7 @@ class RoleplaySessionStore:
         difficulty: int,
         opening_message: str,
         retrieved_guidance: RoleplayGuidance,
+        retain_opening_message: bool = True,
     ) -> RoleplaySession:
         """Create and store a new role-play session."""
         now = datetime.now(timezone.utc)
@@ -41,13 +42,17 @@ class RoleplaySessionStore:
             scenario_spec=scenario_spec,
             difficulty=difficulty,
             retrieved_guidance=retrieved_guidance,
-            messages=[
-                RoleplayMessage(
-                    role=RoleplayMessageRole.AGENT,
-                    content=opening_message,
-                    created_at=now,
-                )
-            ],
+            messages=(
+                [
+                    RoleplayMessage(
+                        role=RoleplayMessageRole.AGENT,
+                        content=opening_message,
+                        created_at=now,
+                    )
+                ]
+                if retain_opening_message
+                else []
+            ),
             created_at=now,
             updated_at=now,
         )
@@ -96,6 +101,29 @@ class RoleplaySessionStore:
                 ],
                 "updated_at": now,
             }
+        )
+        return self.repository.save(updated)
+
+    def record_features(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        features: RoleplayMessageFeatures,
+    ) -> RoleplaySession | None:
+        """Persist privacy-safe turn features without duplicating transcript text."""
+        session = self.repository.get_for_user(session_id, user_id)
+        if session is None:
+            return None
+        updated = session.model_copy(
+            update={
+                "practice_features": [
+                    *session.practice_features,
+                    features,
+                ][-100:],
+                "updated_at": datetime.now(timezone.utc),
+            },
+            deep=True,
         )
         return self.repository.save(updated)
 
