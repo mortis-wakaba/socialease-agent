@@ -1,0 +1,47 @@
+frontend/e2e/product-flows.spec.ts
+  s_60c357d9985c3c::t_2630be3421e62c 759,854,1247
+  s_60c357d9985c3c::t_7da25a0d5f4add 1078-1173
+  s_60c357d9985c3c::t_e73517334398a7 126,129-273,277-279,281,283-285,287-298
+  s_60c357d9985c3c::t_503776826cfcb9 930-935,938-981,984
+backend/app/models_conversation_api.py
+  s_60c357d9985c3c::t_3d7e2f81a8d6c5 69
+frontend/app/settings/page.tsx
+  s_60c357d9985c3c::t_2630be3421e62c 405-409,411
+backend/app/services/conversation_service.py
+  s_60c357d9985c3c::t_3d7e2f81a8d6c5 200-217
+frontend/lib/api.ts
+  s_60c357d9985c3c::t_352cdd19004fc1 387-391,396-398
+  s_60c357d9985c3c::t_f09e511db7eb05 8-14,365-386,392-395,399-520
+  s_60c357d9985c3c::t_603e086856f170 521
+backend/tests/test_conversation_api.py
+  s_60c357d9985c3c::t_7bc91de27c5631 80-83
+frontend/lib/types.ts
+  s_60c357d9985c3c::t_2073a812fc2758 112-247,316
+backend/app/api/conversations.py
+  s_60c357d9985c3c::t_3d7e2f81a8d6c5 123-126
+frontend/app/chat/page.tsx
+  s_60c357d9985c3c::t_352cdd19004fc1 169-172,176-179,181-184,186,490-491,493
+  s_60c357d9985c3c::t_b4740d03ce9759 3,14,16-22,24-25,29-36,39-40,43,46-66,68-71,73-77,79-96,98-103,106,109-128,134,137-139,142-143,145-166,192-196,199-201,203,205-211,213,219-270,273-280,282,284-301,303-387,393-394,396-411,414-415,417-422,424,427-489,492,494-507,509-523,525-531,537-549,551-555,557-576,578-593,598-603,605-609,611-612,615-623,625-627,629-630,632-654,659-666,668,672-680,683-692,694-713,716-723,726-747
+  s_60c357d9985c3c::t_2630be3421e62c 508
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "367becc7f7183bac9b898a8d4b9ddc212288369f",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
