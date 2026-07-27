@@ -42,7 +42,7 @@ flowchart LR
 - **Calendar MCP**：Calendar Skill 只生成有限期提醒预览；创建、修改和删除通过 owner-bound Consent、幂等键与创建后回读控制。当前内置 Provider 是 Demo，真实厂商通过 `CalendarProvider` Adapter 扩展。
 - **History / Context / Memory 分离**：完整会话历史默认长期保留，直到用户主动删除；模型只读取带 Token Budget 的可重建上下文；长期 Agent Memory 仍需独立同意。Role-play、Worksheet 与 Support 的短期任务状态保存在 Redis。
 - **Grounded Retrieval**：本地 BM25 检索返回 Citation；未命中时返回 `unknown`，不编造学校、电话或联系人。
-- **Trace / Eval**：记录隐私安全的执行诊断；提供 309 条确定性 Eval（含 45 条 Output Guardrail 用例）和可选 DeepEval LLM Judge。
+- **Trace / Eval**：记录隐私安全的执行诊断；当前生成 311 条确定性 Eval Trace（含 45 条 Output Guardrail 用例）和可选 DeepEval LLM Judge。
 
 ## 项目结构
 
