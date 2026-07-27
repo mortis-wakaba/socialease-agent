@@ -1,0 +1,60 @@
+backend/app/api/roleplay.py
+  s_60c357d9985c3c::t_7ad73a27e7cb09 3
+backend/app/services/worksheet_service.py
+  s_60c357d9985c3c::t_fd2407f871d874 11,57,63
+backend/app/models_session_context.py
+  s_60c357d9985c3c::t_0f77be4bbdabd1 7-10,32,40
+  s_60c357d9985c3c::t_13ffc4e6d07d68 1
+backend/app/conversation/context_provider.py
+  s_60c357d9985c3c::t_fd2407f871d874 19,346,353
+backend/tests/test_auth_boundaries.py
+  s_60c357d9985c3c::t_a046a6f1df5767 10-11,142-147,149,356,362
+backend/tests/test_heavier_load.py
+  s_60c357d9985c3c::t_b3ec44c9040e35 17,21,148-149,153
+  s_60c357d9985c3c::t_d63dfc3a4342b2 150-152
+backend/app/conversation/adapters/roleplay.py
+  s_60c357d9985c3c::t_ca8107033af17b 130-133
+backend/app/services/support_resource_service.py
+  s_60c357d9985c3c::t_fd2407f871d874 13,40,46
+backend/app/main.py
+  s_60c357d9985c3c::t_fd2407f871d874 24,128
+backend/app/services/roleplay_service.py
+  s_60c357d9985c3c::t_f00efe7e6c3b42 1,13,15-16,29,40,45,55,72,74-77,80-82,89-91,93,95-96,99,104,112,114-118,122,124,129,137,147-148,160,164,168,171-174,176,184,190,199-204,216,222-223,229,234,236,243-244,250,255-276,278-279,282-288,291-292,300,310-320,322-331,342,363,371,447-449,451-462,482-486
+  s_60c357d9985c3c::t_0f77be4bbdabd1 358
+  s_60c357d9985c3c::t_7ad73a27e7cb09 207,209
+backend/app/conversation/module_overlay_store.py
+  s_60c357d9985c3c::t_fd2407f871d874 16,157,164
+backend/tests/test_harness_architecture.py
+  s_60c357d9985c3c::t_77261ab488a32a 386,417-419
+backend/app/skills/roleplay.py
+  s_60c357d9985c3c::t_de886f213a4873 1,10,14,17,22-23,25-37
+backend/tests/test_profile_api.py
+  s_60c357d9985c3c::t_b3ec44c9040e35 12-13,33-42,84,225,701,761
+backend/app/memory/redis_settings.py
+  s_60c357d9985c3c::t_fd2407f871d874 1,8-9,12,15-17,19,21-25
+backend/tests/test_chat_api.py
+  s_60c357d9985c3c::t_77261ab488a32a 306,344-347
+backend/app/memory/roleplay_store.py
+  s_60c357d9985c3c::t_836d5598c8916a 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "0617e00da494039179b55704d6986691a06774ca",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_60c357d9985c3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa2b1-6879-77f3-8aa6-9a66bcfe5419",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
