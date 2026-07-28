@@ -137,6 +137,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
     services:
+      postgres:
+        image: postgres:16@sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54
+        env:
+          POSTGRES_USER: socialease
+          POSTGRES_PASSWORD: socialease
+          POSTGRES_DB: socialease_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U socialease -d socialease_smoke"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       redis:
         image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
         ports:
@@ -147,6 +160,7 @@ jobs:
           --health-timeout 3s
           --health-retries 5
     env:
+      SOCIALEASE_DATABASE_URL: postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease_smoke
       SOCIALEASE_REDIS_URL: redis://127.0.0.1:6379/0
       SOCIALEASE_REQUIRE_REDIS: "true"
     steps:
