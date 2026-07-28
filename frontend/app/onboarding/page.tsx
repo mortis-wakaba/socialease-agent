@@ -55,7 +55,6 @@ export default function OnboardingPage() {
       return;
     }
     void loadOnboardingProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.ready, auth.authenticated, auth.userId]);
 
   async function loadOnboardingProfile() {
