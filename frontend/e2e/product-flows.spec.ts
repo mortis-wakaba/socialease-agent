@@ -37,17 +37,6 @@ test("unified chat keeps confirmed nested modules in one durable timeline", asyn
   await page.route("**/api/conversations**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    if (path.endsWith("/imports/legacy-roleplay")) {
-      await route.fulfill({
-        json: {
-          user_id: "demo_user",
-          scanned_count: 0,
-          imported_count: 0,
-          conversations: []
-        }
-      });
-      return;
-    }
     if (path === "/api/conversations" && request.method() === "GET") {
       await route.fulfill({
         json: { items: created ? [conversation] : [], next_cursor: null }

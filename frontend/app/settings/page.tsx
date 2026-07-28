@@ -393,7 +393,7 @@ export default function SettingsPage() {
     <AuthGuard>
       <PageHeader
         title="设置"
-        description="查看隐私控制，导出或删除已保存的练习记录，并管理低敏感度的练习偏好。"
+        description="查看隐私控制，独立管理对话历史、练习记录和跨会话 Agent Memory。"
       />
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
@@ -461,8 +461,8 @@ export default function SettingsPage() {
           <Panel title="已保存的数据">
             <div className="space-y-3 text-sm text-slate-700">
               <p>
-                已保存记录可能包含流程追踪、角色扮演会话、反思表、社交练习计划、
-                同意协议、练习步骤状态和记忆设置。
+                这里导出跨会话 Agent Memory、候选记忆、练习线程检查点和个性化设置。
+                对话历史与练习记录通过各自页面独立管理。
               </p>
               <p>
                 原始社交或心理相关文本默认最小化保存。敏感标识符会被脱敏；
@@ -470,7 +470,7 @@ export default function SettingsPage() {
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button type="button" onClick={exportMemory} disabled={loading}>
-                  导出
+                  导出 Agent Memory
                 </Button>
                 <Button type="button" variant="secondary" onClick={loadProfile} disabled={loading}>
                   刷新
@@ -479,10 +479,11 @@ export default function SettingsPage() {
             </div>
           </Panel>
 
-          <Panel title="删除记忆">
+          <Panel title="删除 Agent Memory">
             <div className="space-y-3">
               <FormHint>
-                输入 DELETE 后会删除当前用户拥有的练习记录。账号凭证与练习记忆分开管理。
+                输入 DELETE 后会删除跨会话 Agent Memory、候选记忆和个性化设置。
+                对话历史与练习记录不会被删除。
               </FormHint>
               <input
                 value={deleteConfirm}
@@ -496,7 +497,7 @@ export default function SettingsPage() {
                 onClick={deleteMemory}
                 disabled={loading || deleteConfirm !== "DELETE"}
               >
-                删除记忆
+                删除 Agent Memory
               </Button>
             </div>
           </Panel>
@@ -505,7 +506,8 @@ export default function SettingsPage() {
             <div className="space-y-3">
               <FormHint>
                 输入 DELETE ACCOUNT 后会删除当前登录账号、撤销会话，并清理该账号拥有的练习记录。
-                这是账号级操作；如果只想清空练习记录，请使用上面的删除记忆。
+                这是账号级操作；如果只想清空跨会话个性化内容，请使用上面的
+                Agent Memory 删除。
               </FormHint>
               <input
                 value={accountDeleteConfirm}

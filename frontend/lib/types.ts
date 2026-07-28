@@ -246,12 +246,6 @@ export type ConversationExportResponse = {
   exported_at: string;
 };
 
-export type LegacyRoleplayImportResponse = {
-  user_id: string;
-  scanned_count: number;
-  imported_count: number;
-};
-
 export type AuthUser = {
   user_id: string;
   email: string;

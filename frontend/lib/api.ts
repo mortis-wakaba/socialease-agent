@@ -9,7 +9,6 @@ import type {
   ConversationMessageResponse,
   ConversationPage,
   ConversationStatus,
-  LegacyRoleplayImportResponse,
   ModuleControlResponse,
   ConsentRequiredDetail,
   InterventionPlanListResponse,
@@ -254,14 +253,6 @@ export const api = {
     );
   },
 
-  importLegacyRoleplay(userId: string) {
-    const params = new URLSearchParams({ user_id: userId });
-    return request<LegacyRoleplayImportResponse>(
-      `/api/conversations/imports/legacy-roleplay?${params.toString()}`,
-      { method: "POST" }
-    );
-  },
-
   getConversation(
     conversationId: string,
     userId: string,
@@ -486,7 +477,10 @@ export const api = {
   deleteUserMemory(userId: string) {
     return request<UserMemoryDeleteResponse>(
       `/api/users/${encodeURIComponent(userId)}/memory`,
-      { method: "DELETE" }
+      {
+        method: "DELETE",
+        body: JSON.stringify({ confirm_delete: true })
+      }
     );
   },
 

@@ -12,19 +12,19 @@
     "test:e2e:production-auth": "playwright test --config playwright.production-auth.config.ts"
   },
   "dependencies": {
-    "next": "^14.2.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "next": "^15.5.21",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@types/node": "^20.11.0",
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.0",
     "eslint": "^8.57.0",
-    "eslint-config-next": "^14.2.0",
-    "postcss": "^8.4.0",
+    "eslint-config-next": "^15.5.21",
+    "postcss": "^8.5.24",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.4.0"
   }

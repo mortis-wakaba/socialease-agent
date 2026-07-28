@@ -51,12 +51,6 @@ export default function ChatPage() {
     setLoading(true);
     setError(null);
     try {
-      let importWarning: string | null = null;
-      try {
-        await api.importLegacyRoleplay(effectiveUserId);
-      } catch {
-        importWarning = "旧版练习记录暂时无法导入；现有统一对话仍可继续使用。";
-      }
       const result = await api.listConversations(effectiveUserId);
       setConversations(result.items);
       if (result.items.length > 0) {
@@ -71,7 +65,6 @@ export default function ChatPage() {
         setCurrent(null);
         setEvents([]);
       }
-      setError(importWarning);
     } catch (err) {
       setError(errorMessage(err, "无法载入对话历史"));
     } finally {
