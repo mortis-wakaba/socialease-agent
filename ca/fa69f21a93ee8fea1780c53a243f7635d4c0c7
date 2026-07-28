@@ -1,0 +1,38 @@
+docs/data_retention_and_privacy.md
+  s_38b53f6c90704c::t_c5e8243f88715c 12-13,43,45-48,51-53,62-63,71,74
+docs/production_readiness.md
+  s_38b53f6c90704c::t_b3fad90337e923 184-191
+docs/environment_config.md
+  s_38b53f6c90704c::t_5f8840618557ec 39-40
+  s_38b53f6c90704c::t_4feb4d5a47e178 62-69
+docker-compose.prod.yml
+  s_38b53f6c90704c::t_11af6ef6df09ac 70-85,89-92
+  s_38b53f6c90704c::t_5f8840618557ec 20-22
+  s_38b53f6c90704c::t_c0cc1034dcba21 2-10,23,39,60-62
+  s_38b53f6c90704c::t_3f9db8681fe41b 126
+  s_38b53f6c90704c::t_95148a75b69811 86-88
+  s_38b53f6c90704c::t_86f8fefb53c4e6 93
+.env.production.example
+  s_38b53f6c90704c::t_4feb4d5a47e178 19-21,23-25,69-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "cafa69f21a93ee8fea1780c53a243f7635d4c0c7",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
