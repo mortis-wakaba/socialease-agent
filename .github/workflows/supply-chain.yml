@@ -28,7 +28,7 @@ jobs:
           python -m pip install pip-audit
           pip-audit --requirement backend/requirements.lock
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
 
