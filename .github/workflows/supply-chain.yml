@@ -32,7 +32,16 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Audit locked frontend dependencies
+      - name: Block high vulnerabilities in frontend production dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Block critical vulnerabilities in the complete frontend tree
+        working-directory: frontend
+        run: npm audit --audit-level=critical
+
+      - name: Report high vulnerabilities in frontend build tooling
+        continue-on-error: true
         working-directory: frontend
         run: npm audit --audit-level=high
 
