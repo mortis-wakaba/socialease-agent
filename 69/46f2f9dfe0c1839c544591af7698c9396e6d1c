@@ -1,0 +1,32 @@
+backend/requirements.txt
+  s_38b53f6c90704c::t_8ea0e91a2da7a0 3-4
+backend/requirements-runtime.txt
+  s_38b53f6c90704c::t_8ea0e91a2da7a0 7-13
+scripts/e2e_smoke.sh
+  s_38b53f6c90704c::t_8ea0e91a2da7a0 64
+  s_38b53f6c90704c::t_2076e24a72d8f4 12,53-58,62
+  s_38b53f6c90704c::t_26407b64a9fa40 71
+.github/workflows/ci.yml
+  s_38b53f6c90704c::t_2076e24a72d8f4 140-152,163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "6946f2f9dfe0c1839c544591af7698c9396e6d1c",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
