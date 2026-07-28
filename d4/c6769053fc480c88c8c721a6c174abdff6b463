@@ -1,0 +1,33 @@
+frontend/app/settings/page.tsx
+  s_38b53f6c90704c::t_d7228672250241 396,482,485-486,500
+  s_38b53f6c90704c::t_c5e8243f88715c 464-465,473,509-510
+Dockerfile.frontend
+  s_38b53f6c90704c::t_9c3da3e45e6a35 27-29
+  s_38b53f6c90704c::t_c0cc1034dcba21 43-46,53
+  s_38b53f6c90704c::t_3f9db8681fe41b 1,24
+frontend/lib/api.ts
+  s_38b53f6c90704c::t_d7228672250241 480-483
+frontend/next.config.mjs
+  s_38b53f6c90704c::t_c0cc1034dcba21 2-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "d4c6769053fc480c88c8c721a6c174abdff6b463",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
