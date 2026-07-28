@@ -3,10 +3,10 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.config import database_settings
-from app.db.postgres.engine import shared_postgres_engine
+from app.db.postgres.engine import shared_postgres_async_engine
 from app.models_memory import (
     AgentMemoryType,
     PracticePreferences,
@@ -20,21 +20,25 @@ from app.memory.settings_payload import load_user_memory_settings_payload
 class PostgresUserMemorySettingsRepository:
     """PostgreSQL-backed privacy-aware memory settings repository."""
 
-    def __init__(self, database_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or shared_postgres_engine(
+    def __init__(
+        self,
+        database_url: str | None = None,
+        engine: AsyncEngine | None = None,
+    ) -> None:
+        self.engine = engine or shared_postgres_async_engine(
             database_url or database_settings().database_url
         )
 
-    def get(self, user_id: str) -> UserMemorySettings:
+    async def get(self, user_id: str) -> UserMemorySettings:
         """Return memory settings or privacy-preserving defaults."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text("SELECT payload FROM user_memory_settings WHERE user_id = :user_id"),
                 {"user_id": user_id},
-            ).mappings().first()
+            )).mappings().first()
         return load_user_memory_settings_payload(row["payload"] if row else None)
 
-    def save(
+    async def save(
         self,
         *,
         user_id: str,
@@ -44,7 +48,7 @@ class PostgresUserMemorySettingsRepository:
         disabled_memory_types: list[AgentMemoryType] | None = None,
     ) -> UserMemorySettings:
         """Persist explicit user memory settings."""
-        current = self.get(user_id)
+        current = await self.get(user_id)
         settings = UserMemorySettings(
             consent_state=consent_state or current.consent_state,
             practice_preferences=practice_preferences or current.practice_preferences,
@@ -55,8 +59,8 @@ class PostgresUserMemorySettingsRepository:
                 else current.disabled_memory_types
             ),
         )
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """INSERT INTO user_memory_settings
                     (user_id, payload, updated_at)

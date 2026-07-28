@@ -21,7 +21,10 @@ async def get_intervention_plan(
 ) -> InterventionPlanResponse:
     """Return a display-friendly timeline for one intervention plan."""
     require_owner_path_user(user_id, current_user)
-    plan = intervention_plan_service.get_view_by_id(user_id=user_id, plan_id=plan_id)
+    plan = await intervention_plan_service.get_view_by_id(
+        user_id=user_id,
+        plan_id=plan_id,
+    )
     if plan is None:
         raise HTTPException(status_code=404, detail="Intervention plan not found")
     return InterventionPlanResponse(plan=plan)
@@ -38,10 +41,16 @@ async def pause_intervention_plan(
 ) -> InterventionPlanResponse:
     """Pause an active intervention plan when the user wants to stop practice."""
     require_owner_path_user(user_id, current_user)
-    plan = intervention_plan_service.pause_plan(user_id=user_id, plan_id=plan_id)
+    plan = await intervention_plan_service.pause_plan(
+        user_id=user_id,
+        plan_id=plan_id,
+    )
     if plan is None:
         raise HTTPException(status_code=404, detail="Intervention plan not found")
-    view = intervention_plan_service.get_view_by_id(user_id=user_id, plan_id=plan.plan_id)
+    view = await intervention_plan_service.get_view_by_id(
+        user_id=user_id,
+        plan_id=plan.plan_id,
+    )
     if view is None:
         raise HTTPException(status_code=404, detail="Intervention plan not found")
     return InterventionPlanResponse(plan=view)
@@ -60,5 +69,8 @@ async def list_user_intervention_plans(
     require_owner_path_user(user_id, current_user)
     return InterventionPlanListResponse(
         user_id=user_id,
-        plans=intervention_plan_service.list_views_for_user(user_id=user_id, limit=limit),
+        plans=await intervention_plan_service.list_views_for_user(
+            user_id=user_id,
+            limit=limit,
+        ),
     )

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from app.conversation.adapters.base import ModuleAdapterResult
+from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
 from app.models_conversation import (
     ConversationEventRole,
     ModuleRun,
@@ -15,8 +15,9 @@ from app.models_module_overlay import (
     ParentResumeProjection,
     ResourceOverlay,
 )
-from app.models_support import SupportQueryRequest
+from app.models_support import SupportQueryRequest, SupportQueryResponse
 from app.services.support_resource_service import (
+    PreparedSupportQuery,
     SupportResourceService,
     support_resource_service,
 )
@@ -28,14 +29,37 @@ class ResourceModuleAdapter:
     def __init__(self, service: SupportResourceService | None = None) -> None:
         self._service = service or support_resource_service
 
-    async def start(
+    async def prepare_start(
         self,
         run: ModuleRun,
         context: ConversationWorkingContext,
-    ) -> ModuleAdapterResult:
+    ) -> PreparedModuleStart:
         del context
         parameters = _parameters(run)
-        return await self._query(run, parameters.query)
+        return PreparedModuleStart(
+            payload=await self._prepare_query(run, parameters.query)
+        )
+
+    async def persist_start(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+    ) -> ModuleAdapterResult:
+        del run
+        if not isinstance(prepared.payload, PreparedSupportQuery):
+            raise TypeError("resource module preparation is invalid")
+        return _adapter_result(prepared.payload.response)
+
+    async def after_start_commit(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+        result: ModuleAdapterResult,
+    ) -> None:
+        del run, result
+        if not isinstance(prepared.payload, PreparedSupportQuery):
+            raise TypeError("resource module preparation is invalid")
+        await self._service.publish_prepared_query(prepared.payload)
 
     async def handle_message(
         self,
@@ -121,34 +145,49 @@ class ResourceModuleAdapter:
                 task_id=run.domain_session_id,
             )
 
-    async def _query(
+    async def _prepare_query(
         self,
         run: ModuleRun,
         query: str,
-    ) -> ModuleAdapterResult:
-        result = await self._service.query_resources(
+    ) -> PreparedSupportQuery:
+        prepared = await self._service.prepare_query_resources(
             SupportQueryRequest(
                 query=query,
                 user_id=run.user_id,
                 search_session_id=run.domain_session_id,
             )
         )
+        result = prepared.response
         if result.blocked:
             raise ValueError("resource query was blocked by safety policy")
-        return ModuleAdapterResult(
-            response=result.answer,
-            domain_session_id=result.search_session_id,
-            event_payload=ResourceMessageEventPayload(
-                search_session_id=result.search_session_id,
-                citation_count=len(result.citations),
-                citation_ids=[
-                    citation.citation_id
-                    for citation in result.citations
-                    if citation.citation_id is not None
-                ],
-                unknown=result.unknown,
-            ),
-        )
+        return prepared
+
+    async def _query(
+        self,
+        run: ModuleRun,
+        query: str,
+    ) -> ModuleAdapterResult:
+        prepared = await self._prepare_query(run, query)
+        await self._service.publish_prepared_query(prepared)
+        return _adapter_result(prepared.response)
+
+
+def _adapter_result(result: SupportQueryResponse) -> ModuleAdapterResult:
+    """Project a prepared support response into the conversation contract."""
+    return ModuleAdapterResult(
+        response=result.answer,
+        domain_session_id=result.search_session_id,
+        event_payload=ResourceMessageEventPayload(
+            search_session_id=result.search_session_id,
+            citation_count=len(result.citations),
+            citation_ids=[
+                citation.citation_id
+                for citation in result.citations
+                if citation.citation_id is not None
+            ],
+            unknown=result.unknown,
+        ),
+    )
 
 
 def _parameters(run: ModuleRun) -> ResourceParameters:

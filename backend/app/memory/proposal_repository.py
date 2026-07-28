@@ -24,32 +24,32 @@ from app.models_long_term_memory import (
 class MemoryProposalRepository(Protocol):
     """Persistence contract for safe proposals awaiting confirmation."""
 
-    def save_pending(
+    async def save_pending(
         self,
         record: PendingMemoryProposalRecord,
     ) -> PendingMemoryProposalRecord: ...
 
-    def get_for_user(
+    async def get_for_user(
         self,
         proposal_id: str,
         user_id: str,
     ) -> PendingMemoryProposalRecord | None: ...
 
-    def get_by_idempotency_key(
+    async def get_by_idempotency_key(
         self,
         *,
         user_id: str,
         idempotency_key: str,
     ) -> PendingMemoryProposalRecord | None: ...
 
-    def list_pending(
+    async def list_pending(
         self,
         user_id: str,
         *,
         limit: int = 100,
     ) -> list[PendingMemoryProposalRecord]: ...
 
-    def consume_pending(
+    async def consume_pending(
         self,
         *,
         user_id: str,
@@ -60,7 +60,7 @@ class MemoryProposalRepository(Protocol):
         changed_at: datetime,
     ) -> None: ...
 
-    def record_rejection(
+    async def record_rejection(
         self,
         *,
         user_id: str,
@@ -76,7 +76,7 @@ class SQLiteMemoryProposalRepository:
     def __init__(self) -> None:
         initialize_database()
 
-    def save_pending(
+    async def save_pending(
         self,
         record: PendingMemoryProposalRecord,
     ) -> PendingMemoryProposalRecord:
@@ -143,7 +143,7 @@ class SQLiteMemoryProposalRepository:
             raise MemoryConflictError("memory proposal already exists") from error
         return record
 
-    def get_for_user(
+    async def get_for_user(
         self,
         proposal_id: str,
         user_id: str,
@@ -157,7 +157,7 @@ class SQLiteMemoryProposalRepository:
             ).fetchone()
         return _proposal_from_row(row) if row else None
 
-    def get_by_idempotency_key(
+    async def get_by_idempotency_key(
         self,
         *,
         user_id: str,
@@ -172,7 +172,7 @@ class SQLiteMemoryProposalRepository:
             ).fetchone()
         return _proposal_from_row(row) if row else None
 
-    def list_pending(
+    async def list_pending(
         self,
         user_id: str,
         *,
@@ -197,7 +197,7 @@ class SQLiteMemoryProposalRepository:
             for row in rows
         ]
 
-    def consume_pending(
+    async def consume_pending(
         self,
         *,
         user_id: str,
@@ -261,7 +261,7 @@ class SQLiteMemoryProposalRepository:
                     created_at=changed_at,
                 ),
             )
-    def record_rejection(
+    async def record_rejection(
         self,
         *,
         user_id: str,

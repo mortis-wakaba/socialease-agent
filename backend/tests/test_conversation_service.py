@@ -1,5 +1,6 @@
 """Tests for consent-gated module proposals in unified conversations."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import pytest
 from app.conversation.compactor import ConversationCompactor
 from app.conversation.context_manager import ConversationContextManager
 from app.conversation.repository import SQLiteConversationRepository
+from app.conversation.repository import ConversationIdempotencyError
 from app.db.engine import connect
 from app.models import (
     ChatResponse,
@@ -24,6 +26,7 @@ from app.models_conversation import (
     ModuleType,
 )
 from app.services.conversation_service import (
+    ConversationCommandInProgressError,
     ConversationNoticeError,
     ConversationProposalError,
     ConversationService,
@@ -111,6 +114,20 @@ class GeneralHarness:
         )
 
 
+class BlockingGeneralHarness(GeneralHarness):
+    """Hold one model call open so a concurrent replay can be asserted."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def run(self, *args: object, **kwargs: object) -> ChatResponse:
+        self.entered.set()
+        await self.release.wait()
+        return await super().run(*args, **kwargs)
+
+
 @pytest.fixture
 def repository(
     monkeypatch: pytest.MonkeyPatch,
@@ -147,13 +164,14 @@ def _service(
     )
 
 
-def test_current_history_notice_is_required(
+@pytest.mark.anyio
+async def test_current_history_notice_is_required(
     repository: SQLiteConversationRepository,
 ) -> None:
     service = _service(repository)
 
     with pytest.raises(ConversationNoticeError):
-        service.create_conversation(
+        await service.create_conversation(
             user_id="owner",
             title="Conversation",
             history_notice_version=HISTORY_NOTICE_VERSION,
@@ -166,7 +184,7 @@ async def test_module_intent_only_creates_an_option_until_user_confirms(
     repository: SQLiteConversationRepository,
 ) -> None:
     service = _service(repository)
-    conversation = service.create_conversation(
+    conversation = await service.create_conversation(
         user_id="owner",
         title="Practice",
         history_notice_version=HISTORY_NOTICE_VERSION,
@@ -199,12 +217,16 @@ async def test_module_intent_only_creates_an_option_until_user_confirms(
         replay.pending_module_proposal.proposal_id
         == response.pending_module_proposal.proposal_id
     )
-    assert len(service.list_events(
-        conversation_id=conversation.conversation_id,
-        user_id="owner",
-        cursor=None,
-        limit=20,
-    ).items) == 2
+    assert len(
+        (
+            await service.list_events(
+                conversation_id=conversation.conversation_id,
+                user_id="owner",
+                cursor=None,
+                limit=20,
+            )
+        ).items
+    ) == 2
     with connect() as connection:
         episodic_count = connection.execute(
             "SELECT COUNT(*) AS total FROM episodic_memories WHERE user_id = ?",
@@ -223,7 +245,7 @@ async def test_crisis_preempts_proposal_and_module_routing(
     repository: SQLiteConversationRepository,
 ) -> None:
     service = _service(repository, crisis=True)
-    conversation = service.create_conversation(
+    conversation = await service.create_conversation(
         user_id="owner",
         title="Safety",
         history_notice_version=HISTORY_NOTICE_VERSION,
@@ -250,7 +272,7 @@ async def test_proposal_reject_checks_hash_state_and_owner(
     repository: SQLiteConversationRepository,
 ) -> None:
     service = _service(repository)
-    conversation = service.create_conversation(
+    conversation = await service.create_conversation(
         user_id="owner",
         title="Decision",
         history_notice_version=HISTORY_NOTICE_VERSION,
@@ -266,20 +288,20 @@ async def test_proposal_reject_checks_hash_state_and_owner(
     assert proposal is not None
 
     with pytest.raises(ConversationProposalError, match="hash"):
-        service.reject_proposal(
+        await service.reject_proposal(
             conversation_id=conversation.conversation_id,
             proposal_id=proposal.proposal_id,
             user_id="owner",
             request_hash="b" * 64,
         )
     with pytest.raises(ConversationProposalError, match="not found"):
-        service.reject_proposal(
+        await service.reject_proposal(
             conversation_id=conversation.conversation_id,
             proposal_id=proposal.proposal_id,
             user_id="other",
             request_hash=proposal.request_hash,
         )
-    rejected = service.reject_proposal(
+    rejected = await service.reject_proposal(
         conversation_id=conversation.conversation_id,
         proposal_id=proposal.proposal_id,
         user_id="owner",
@@ -287,7 +309,7 @@ async def test_proposal_reject_checks_hash_state_and_owner(
     )
     assert rejected.status is ModuleProposalStatus.REJECTED
     with pytest.raises(ConversationProposalError, match="no longer pending"):
-        service.reject_proposal(
+        await service.reject_proposal(
             conversation_id=conversation.conversation_id,
             proposal_id=proposal.proposal_id,
             user_id="owner",
@@ -310,7 +332,7 @@ async def test_general_support_abstains_from_module_proposal(
             compactor=ConversationCompactor(),
         ),
     )
-    conversation = service.create_conversation(
+    conversation = await service.create_conversation(
         user_id="owner",
         title="General",
         history_notice_version=HISTORY_NOTICE_VERSION,
@@ -345,3 +367,55 @@ async def test_general_support_abstains_from_module_proposal(
         "今天和同学聊完后有点失落",
         "可以先说说现在最困扰你的部分。",
     ]
+
+
+@pytest.mark.anyio
+async def test_message_command_prevents_concurrent_model_execution_and_replays(
+    repository: SQLiteConversationRepository,
+) -> None:
+    harness = BlockingGeneralHarness()
+    service = ConversationService(
+        harness=harness,  # type: ignore[arg-type]
+        repository=repository,
+        safety_classifier=LowSafety(),
+        intent_router=GeneralIntent(),
+        context_manager=ConversationContextManager(
+            repository=repository,
+            compactor=ConversationCompactor(),
+        ),
+    )
+    conversation = await service.create_conversation(
+        user_id="owner",
+        title="Concurrent",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+    arguments = {
+        "conversation_id": conversation.conversation_id,
+        "user_id": "owner",
+        "message": "同一条消息",
+        "idempotency_key": "concurrent-command-001",
+    }
+
+    first = asyncio.create_task(service.send_message(**arguments))
+    await harness.entered.wait()
+    with pytest.raises(ConversationCommandInProgressError):
+        await service.send_message(**arguments)
+    with pytest.raises(ConversationIdempotencyError):
+        await service.send_message(**{**arguments, "message": "不同消息"})
+    harness.release.set()
+    completed = await first
+    replay = await service.send_message(**arguments)
+
+    assert replay == completed
+    assert len(harness.conversation_contexts) == 1
+    assert len(
+        (
+            await service.list_events(
+                conversation_id=conversation.conversation_id,
+                user_id="owner",
+                cursor=None,
+                limit=20,
+            )
+        ).items
+    ) == 2

@@ -26,7 +26,7 @@ class EpisodicMemoryCommitter:
     def __init__(self, repository: LongTermMemoryRepository) -> None:
         self.repository = repository
 
-    def commit(
+    async def commit(
         self,
         *,
         user_id: str,
@@ -45,7 +45,7 @@ class EpisodicMemoryCommitter:
             memory_type=proposal.memory_type.value,
             summary=safe_summary,
         )
-        existing = self.repository.get_memory_by_idempotency_key(
+        existing = await self.repository.get_memory_by_idempotency_key(
             user_id=user_id,
             idempotency_key=key,
         )
@@ -81,11 +81,14 @@ class EpisodicMemoryCommitter:
         )
         try:
             return (
-                self.repository.create_memory(record, reason_code=reason_code),
+                await self.repository.create_memory(
+                    record,
+                    reason_code=reason_code,
+                ),
                 False,
             )
         except MemoryConflictError:
-            existing = self.repository.get_memory_by_idempotency_key(
+            existing = await self.repository.get_memory_by_idempotency_key(
                 user_id=user_id,
                 idempotency_key=key,
             )

@@ -112,7 +112,7 @@ class MemoryDoctorService:
             conflict_term_overlap=max(conflict_term_overlap, 1),
         )
 
-    def diagnose(
+    async def diagnose(
         self,
         user_id: str,
         *,
@@ -121,16 +121,19 @@ class MemoryDoctorService:
         """Run all bounded checks inside one exact user repository scope."""
         return self.diagnose_loaded(
             user_id=user_id,
-            memories=self.memory_repository.list_memories(user_id, limit=500),
-            checkpoints=self.memory_repository.list_checkpoints(
+            memories=await self.memory_repository.list_memories(
                 user_id,
                 limit=500,
             ),
-            proposals=self.proposal_repository.list_pending(
+            checkpoints=await self.memory_repository.list_checkpoints(
                 user_id,
                 limit=500,
             ),
-            settings=self.settings_repository.get(user_id),
+            proposals=await self.proposal_repository.list_pending(
+                user_id,
+                limit=500,
+            ),
+            settings=await self.settings_repository.get(user_id),
             now=now,
         )
 

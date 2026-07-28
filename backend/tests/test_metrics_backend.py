@@ -9,16 +9,17 @@ from app.models import Intent, IntentResult, RiskLevel, SafetyResult, TraceRecor
 from app.observability.metrics import SQLiteMetricsRepository
 
 
-def test_sqlite_metrics_repository_records_non_identifying_aggregates(
+@pytest.mark.anyio
+async def test_sqlite_metrics_repository_records_non_identifying_aggregates(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
     monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "metrics.db"))
     repository = SQLiteMetricsRepository()
-    repository.reset()
+    await repository.reset()
 
-    repository.record_trace(
+    await repository.record_trace(
         TraceRecord(
             run_id="run_should_not_be_persisted_in_metrics",
             user_id="user_should_not_be_persisted_in_metrics",
@@ -40,7 +41,7 @@ def test_sqlite_metrics_repository_records_non_identifying_aggregates(
             created_at=datetime.now(timezone.utc),
         )
     )
-    repository.record_trace(
+    await repository.record_trace(
         TraceRecord(
             run_id="crisis_run_should_not_be_persisted_in_metrics",
             user_id="crisis_user_should_not_be_persisted_in_metrics",
@@ -57,15 +58,15 @@ def test_sqlite_metrics_repository_records_non_identifying_aggregates(
             created_at=datetime.now(timezone.utc),
         )
     )
-    repository.record_runtime_event("rate_limit_hit")
-    repository.record_runtime_event("llm_concurrency_saturation", count=2)
-    repository.record_runtime_event("slow_request")
-    repository.record_runtime_event("memory_export", count=2)
-    repository.record_runtime_event("memory_delete")
-    repository.record_runtime_event("memory_preferences_saved")
-    repository.record_runtime_event("memory_preferences_disabled")
+    await repository.record_runtime_event("rate_limit_hit")
+    await repository.record_runtime_event("llm_concurrency_saturation", count=2)
+    await repository.record_runtime_event("slow_request")
+    await repository.record_runtime_event("memory_export", count=2)
+    await repository.record_runtime_event("memory_delete")
+    await repository.record_runtime_event("memory_preferences_saved")
+    await repository.record_runtime_event("memory_preferences_disabled")
 
-    snapshot = repository.snapshot()
+    snapshot = await repository.snapshot()
 
     assert snapshot.total_runs == 2
     assert snapshot.crisis_runs == 1

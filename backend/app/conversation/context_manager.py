@@ -172,7 +172,7 @@ class ConversationContextManager:
         )
         if compacted_through >= compact_before - 1:
             return previous
-        page = self._repository.list_events(
+        page = await self._repository.list_events(
             conversation_id=conversation_id,
             user_id=user_id,
             cursor=(
@@ -196,7 +196,7 @@ class ConversationContextManager:
             events=candidates,
         )
         try:
-            saved = self._repository.save_compact_summary(
+            saved = await self._repository.save_compact_summary(
                 summary,
                 expected_version=previous.version if previous else None,
             )
@@ -206,7 +206,7 @@ class ConversationContextManager:
             )
             return saved
         except ConversationConcurrencyError:
-            return self._repository.get_compact_summary(
+            return await self._repository.get_compact_summary(
                 conversation_id=conversation_id,
                 user_id=user_id,
             )

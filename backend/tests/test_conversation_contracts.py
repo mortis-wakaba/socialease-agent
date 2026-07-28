@@ -55,7 +55,8 @@ def _run(
     )
 
 
-def test_conversation_contract_rejects_extra_fields() -> None:
+@pytest.mark.anyio
+async def test_conversation_contract_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
         Conversation(
             conversation_id="conversation-1",
@@ -68,7 +69,8 @@ def test_conversation_contract_rejects_extra_fields() -> None:
         )
 
 
-def test_proposal_requires_matching_bounded_parameters() -> None:
+@pytest.mark.anyio
+async def test_proposal_requires_matching_bounded_parameters() -> None:
     proposal = ModuleProposal(
         proposal_id="proposal-1",
         conversation_id="conversation-1",
@@ -85,7 +87,8 @@ def test_proposal_requires_matching_bounded_parameters() -> None:
     assert proposal.bounded_parameters.kind == "roleplay"
 
 
-def test_event_payload_must_match_event_type() -> None:
+@pytest.mark.anyio
+async def test_event_payload_must_match_event_type() -> None:
     with pytest.raises(ValidationError):
         ConversationEvent(
             event_id="event-1",
@@ -101,7 +104,8 @@ def test_event_payload_must_match_event_type() -> None:
         )
 
 
-def test_state_transitions_are_one_way_and_explicit() -> None:
+@pytest.mark.anyio
+async def test_state_transitions_are_one_way_and_explicit() -> None:
     ModuleStackPolicy.validate_conversation_transition(
         ConversationStatus.ACTIVE,
         ConversationStatus.ARCHIVED,
@@ -127,7 +131,8 @@ def test_state_transitions_are_one_way_and_explicit() -> None:
         )
 
 
-def test_roleplay_can_nest_exposure_but_resource_cannot_nest() -> None:
+@pytest.mark.anyio
+async def test_roleplay_can_nest_exposure_but_resource_cannot_nest() -> None:
     roleplay = _run(
         "roleplay-1",
         ModuleType.ROLEPLAY,
@@ -148,7 +153,8 @@ def test_roleplay_can_nest_exposure_but_resource_cannot_nest() -> None:
         ModuleStackPolicy.validate_push([resource], ModuleType.ROLEPLAY)
 
 
-def test_stack_rejects_depth_overflow_and_cycles() -> None:
+@pytest.mark.anyio
+async def test_stack_rejects_depth_overflow_and_cycles() -> None:
     stack = [
         _run(
             "roleplay-1",
@@ -195,7 +201,8 @@ def test_stack_rejects_depth_overflow_and_cycles() -> None:
         ModuleStackPolicy.validate_push(cycle, ModuleType.ROLEPLAY)
 
 
-def test_crisis_always_preempts_module_routing() -> None:
+@pytest.mark.anyio
+async def test_crisis_always_preempts_module_routing() -> None:
     assert ModuleStackPolicy.safety_preempts_modules(
         crisis=True,
         has_active_module=True,

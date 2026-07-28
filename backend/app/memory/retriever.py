@@ -51,7 +51,7 @@ class EpisodicMemoryRetriever:
         self.context_token_budget = min(max(context_token_budget, 128), 1024)
         self.candidate_limit = min(max(candidate_limit, 10), 100)
 
-    def retrieve(
+    async def retrieve(
         self,
         request: MemoryRetrievalRequest,
         *,
@@ -60,7 +60,7 @@ class EpisodicMemoryRetriever:
     ) -> MemoryRetrievalResult:
         """Return bounded hits; provider or model output never controls filters."""
         timestamp = _as_utc(now or datetime.now(timezone.utc))
-        settings = self.settings_repository.get(request.user_id)
+        settings = await self.settings_repository.get(request.user_id)
         consent = settings.consent_state
         if not consent.consent_to_practice_summary:
             return _empty_result(
@@ -86,7 +86,7 @@ class EpisodicMemoryRetriever:
         if request.include_archived:
             statuses = (*statuses, MemoryRecordStatus.ARCHIVED)
         query_terms = ()
-        candidates = self.repository.search_memory_candidates(
+        candidates = await self.repository.search_memory_candidates(
             user_id=request.user_id,
             statuses=statuses,
             memory_types=allowed_memory_types,
@@ -108,7 +108,7 @@ class EpisodicMemoryRetriever:
         audit_failed = False
         if hits and record_usage:
             try:
-                self.repository.record_retrieval(
+                await self.repository.record_retrieval(
                     user_id=request.user_id,
                     memory_ids=tuple(hit.memory_id for hit in hits),
                     retrieved_at=timestamp,

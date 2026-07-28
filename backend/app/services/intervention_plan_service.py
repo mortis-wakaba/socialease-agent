@@ -15,7 +15,7 @@ class InterventionPlanService:
     def __init__(self, store: InterventionPlanStore | None = None) -> None:
         self.store = store or repository_factory().intervention_plan_repository()
 
-    def create_for_action(
+    async def create_for_action(
         self,
         *,
         user_id: str,
@@ -35,7 +35,7 @@ class InterventionPlanService:
             protocol_id=protocol_id,
         )
         status = "pending_consent" if requires_consent else "completed"
-        return self.store.create(
+        return await self.store.create(
             user_id=user_id,
             session_id=session_id,
             steps=steps,
@@ -43,7 +43,7 @@ class InterventionPlanService:
             protocol_id=protocol_id,
         )
 
-    def create_for_exposure_plan(
+    async def create_for_exposure_plan(
         self,
         *,
         user_id: str,
@@ -51,6 +51,9 @@ class InterventionPlanService:
         intensity: int | None,
     ) -> InterventionPlan:
         """Create a traceable account-level plan for direct exposure ladders."""
+        existing = await self.store.get_for_session(exposure_plan_id, user_id)
+        if existing is not None:
+            return existing
         steps = self._steps_for_action(
             harness_action=HarnessAction.CREATE_EXPOSURE_PLAN,
             selected_skill="exposure_planning_skill",
@@ -58,7 +61,7 @@ class InterventionPlanService:
             intensity=intensity,
             protocol_id=None,
         )
-        return self.store.create(
+        return await self.store.create(
             user_id=user_id,
             session_id=exposure_plan_id,
             steps=steps,
@@ -66,26 +69,26 @@ class InterventionPlanService:
             protocol_id=None,
         )
 
-    def get_for_session(self, *, user_id: str, session_id: str) -> InterventionPlan | None:
+    async def get_for_session(self, *, user_id: str, session_id: str) -> InterventionPlan | None:
         """Return an existing intervention plan for a session."""
-        return self.store.get_for_session(session_id, user_id)
+        return await self.store.get_for_session(session_id, user_id)
 
-    def get_by_id(self, *, user_id: str, plan_id: str) -> InterventionPlan | None:
+    async def get_by_id(self, *, user_id: str, plan_id: str) -> InterventionPlan | None:
         """Return one intervention plan if it belongs to the user."""
-        return self.store.get_by_id_for_user(plan_id, user_id)
+        return await self.store.get_by_id_for_user(plan_id, user_id)
 
-    def get_view_by_id(self, *, user_id: str, plan_id: str) -> InterventionPlanView | None:
+    async def get_view_by_id(self, *, user_id: str, plan_id: str) -> InterventionPlanView | None:
         """Return a display-friendly plan view if it belongs to the user."""
-        plan = self.get_by_id(user_id=user_id, plan_id=plan_id)
+        plan = await self.get_by_id(user_id=user_id, plan_id=plan_id)
         return _plan_view(plan) if plan is not None else None
 
-    def list_views_for_user(self, *, user_id: str, limit: int = 20) -> list[InterventionPlanView]:
+    async def list_views_for_user(self, *, user_id: str, limit: int = 20) -> list[InterventionPlanView]:
         """Return recent display-friendly intervention plan views."""
-        return [_plan_view(plan) for plan in self.store.list_for_user(user_id, limit=limit)]
+        return [_plan_view(plan) for plan in await self.store.list_for_user(user_id, limit=limit)]
 
-    def mark_consent_approved(self, *, user_id: str, plan_id: str) -> InterventionPlan | None:
+    async def mark_consent_approved(self, *, user_id: str, plan_id: str) -> InterventionPlan | None:
         """Mark consent-related steps approved while action execution is still pending."""
-        plan = self.store.get_by_id_for_user(plan_id, user_id)
+        plan = await self.store.get_by_id_for_user(plan_id, user_id)
         if plan is None:
             return None
         updated_steps = [
@@ -94,13 +97,13 @@ class InterventionPlanService:
             else step
             for step in plan.steps
         ]
-        return self.store.save(
+        return await self.store.save(
             plan.model_copy(update={"status": "active", "steps": updated_steps})
         )
 
-    def mark_consent_rejected(self, *, user_id: str, plan_id: str) -> InterventionPlan | None:
+    async def mark_consent_rejected(self, *, user_id: str, plan_id: str) -> InterventionPlan | None:
         """Cancel a pending plan after the user rejects consent."""
-        plan = self.store.get_by_id_for_user(plan_id, user_id)
+        plan = await self.store.get_by_id_for_user(plan_id, user_id)
         if plan is None:
             return None
         updated_steps = []
@@ -116,11 +119,11 @@ class InterventionPlanService:
                 )
             else:
                 updated_steps.append(step)
-        return self.store.save(
+        return await self.store.save(
             plan.model_copy(update={"status": "cancelled", "steps": updated_steps})
         )
 
-    def mark_action_completed(
+    async def mark_action_completed(
         self,
         *,
         user_id: str,
@@ -129,7 +132,7 @@ class InterventionPlanService:
         result_summary: str,
     ) -> InterventionPlan | None:
         """Mark the action step completed after an approved skill executes."""
-        plan = self.store.get_by_id_for_user(plan_id, user_id)
+        plan = await self.store.get_by_id_for_user(plan_id, user_id)
         if plan is None:
             return None
         updated_steps = []
@@ -152,7 +155,7 @@ class InterventionPlanService:
                 action_step_updated = True
                 continue
             updated_steps.append(step)
-        return self.store.save(
+        return await self.store.save(
             plan.model_copy(
                 update={
                     "status": "completed",
@@ -162,7 +165,7 @@ class InterventionPlanService:
             )
         )
 
-    def pause_plan(
+    async def pause_plan(
         self,
         *,
         user_id: str,
@@ -170,7 +173,7 @@ class InterventionPlanService:
         reason: str = "User paused practice.",
     ) -> InterventionPlan | None:
         """Mark an intervention plan as paused without deleting progress."""
-        plan = self.store.get_by_id_for_user(plan_id, user_id)
+        plan = await self.store.get_by_id_for_user(plan_id, user_id)
         if plan is None:
             return None
         updated_steps = []
@@ -186,7 +189,7 @@ class InterventionPlanService:
                 )
             else:
                 updated_steps.append(step)
-        return self.store.save(
+        return await self.store.save(
             plan.model_copy(
                 update={
                     "status": "paused",

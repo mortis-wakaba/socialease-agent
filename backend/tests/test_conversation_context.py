@@ -53,9 +53,9 @@ def anyio_backend() -> str:
 async def test_context_is_bounded_compacted_and_restored_across_instances(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Long timeline")
+    conversation = await repository.create(user_id="owner", title="Long timeline")
     for index in range(18):
-        repository.append_event(
+        await repository.append_event(
             conversation_id=conversation.conversation_id,
             user_id="owner",
             event_type=ConversationEventType.USER_MESSAGE,
@@ -90,7 +90,7 @@ async def test_context_is_bounded_compacted_and_restored_across_instances(
     assert context.recent_events[-1].sequence_no == 18
 
     restored_repository = SQLiteConversationRepository()
-    restored = restored_repository.get_compact_summary(
+    restored = await restored_repository.get_compact_summary(
         conversation_id=conversation.conversation_id,
         user_id="owner",
     )
@@ -101,7 +101,7 @@ async def test_context_is_bounded_compacted_and_restored_across_instances(
 async def test_recent_history_selects_complete_turns_without_orphaned_replies(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Turn selection")
+    conversation = await repository.create(user_id="owner", title="Turn selection")
     messages = [
         (ConversationEventRole.USER, "u" * 1200),
         (ConversationEventRole.ASSISTANT, "a" * 1200),
@@ -109,7 +109,7 @@ async def test_recent_history_selects_complete_turns_without_orphaned_replies(
         (ConversationEventRole.ASSISTANT, "最近的回答"),
     ]
     for index, (role, content) in enumerate(messages):
-        repository.append_event(
+        await repository.append_event(
             conversation_id=conversation.conversation_id,
             user_id="owner",
             event_type=(
@@ -147,7 +147,8 @@ async def test_recent_history_selects_complete_turns_without_orphaned_replies(
     ]
 
 
-def test_context_profiles_share_one_contract_with_module_specific_budgets() -> None:
+@pytest.mark.anyio
+async def test_context_profiles_share_one_contract_with_module_specific_budgets() -> None:
     ordinary = context_budgets_for_profile(ConversationContextProfile.ORDINARY)
     roleplay = context_budgets_for_profile(ConversationContextProfile.ROLEPLAY)
     worksheet = context_budgets_for_profile(ConversationContextProfile.WORKSHEET)
@@ -214,9 +215,9 @@ async def test_compactor_excludes_crisis_injection_and_model_inference() -> None
 async def test_current_request_is_retained_before_older_events(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Priority")
+    conversation = await repository.create(user_id="owner", title="Priority")
     for index in range(8):
-        repository.append_event(
+        await repository.append_event(
             conversation_id=conversation.conversation_id,
             user_id="owner",
             event_type=ConversationEventType.USER_MESSAGE,

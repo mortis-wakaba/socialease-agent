@@ -15,8 +15,9 @@ def test_app_imports_with_postgres_runtime_configuration() -> None:
             "postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
         ),
         "SOCIALEASE_AUTH_MODE": "production",
-        "SOCIALEASE_AUTH_TOKEN_SECRET": "test-postgres-import-secret",
+        "SOCIALEASE_AUTH_TOKEN_SECRET": "test-postgres-import-secret-32-bytes",
         "SOCIALEASE_REDIS_URL": "redis://127.0.0.1:6379/0",
+        "SOCIALEASE_CALENDAR_MCP_URL": "https://calendar-mcp.invalid/mcp",
     }
 
     result = subprocess.run(

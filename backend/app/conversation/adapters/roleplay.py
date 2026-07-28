@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from app.conversation.adapters.base import ModuleAdapterResult
+from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
 from app.models_conversation import (
     ModuleRun,
     RoleplayMessageEventPayload,
@@ -29,20 +29,31 @@ class RoleplayModuleAdapter:
     def __init__(self, service: RoleplayService | None = None) -> None:
         self._service = service or roleplay_service
 
-    async def start(
+    async def prepare_start(
         self,
         run: ModuleRun,
         context: ConversationWorkingContext,
-    ) -> ModuleAdapterResult:
+    ) -> PreparedModuleStart:
         del context
         parameters = _parameters(run)
-        result = await self._service.start_conversation_session(
+        prepared = await self._service.prepare_conversation_session(
             RoleplayStartRequest(
                 user_id=run.user_id,
                 scenario_description=parameters.scenario_description,
                 practice_goal=parameters.practice_goal,
                 difficulty=parameters.difficulty,
-            )
+            ),
+        )
+        return PreparedModuleStart(payload=prepared)
+
+    async def persist_start(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+    ) -> ModuleAdapterResult:
+        result = await self._service.persist_prepared_conversation_session(
+            prepared.payload,
+            session_id=run.domain_session_id,
         )
         return ModuleAdapterResult(
             response=result.opening_message,
@@ -51,6 +62,23 @@ class RoleplayModuleAdapter:
                 session_id=result.session.session_id,
             ),
         )
+
+    async def after_start_commit(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+        result: ModuleAdapterResult,
+    ) -> None:
+        del prepared
+        session_id = result.domain_session_id
+        if session_id is None:
+            raise ValueError("role-play session id missing after commit")
+        session = await self._service.store.get_for_user(
+            session_id, run.user_id
+        )
+        if session is None:
+            raise LookupError("role-play session not found after commit")
+        await self._service.after_conversation_session_commit(session)
 
     async def handle_message(
         self,
@@ -87,7 +115,7 @@ class RoleplayModuleAdapter:
     ) -> ModuleOverlay:
         """Project role-play domain state without copying its transcript."""
         del context
-        session = self._service.store.get_for_user(
+        session = await self._service.store.get_for_user(
             _session_id(run),
             run.user_id,
         )
@@ -134,7 +162,7 @@ class RoleplayModuleAdapter:
         )
 
     async def suspend(self, run: ModuleRun) -> None:
-        self._service.pause_conversation_session(
+        await self._service.pause_conversation_session(
             RoleplayPauseRequest(
                 session_id=_session_id(run),
                 user_id=run.user_id,
@@ -142,7 +170,7 @@ class RoleplayModuleAdapter:
         )
 
     async def resume(self, run: ModuleRun) -> None:
-        self._service.resume_conversation_session(
+        await self._service.resume_conversation_session(
             RoleplayResumeRequest(
                 session_id=_session_id(run),
                 user_id=run.user_id,
@@ -150,7 +178,7 @@ class RoleplayModuleAdapter:
         )
 
     async def terminate(self, run: ModuleRun) -> None:
-        self._service.complete_conversation_session(
+        await self._service.complete_conversation_session(
             session_id=_session_id(run),
             user_id=run.user_id,
         )

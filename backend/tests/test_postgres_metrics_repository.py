@@ -29,18 +29,19 @@ def migrated_database() -> None:
 
 
 @pytest.fixture
-def repository() -> PostgresMetricsRepository:
+async def repository() -> PostgresMetricsRepository:
     """Return a PostgreSQL metrics repository for tests."""
     assert TEST_DATABASE_URL is not None
     repo = PostgresMetricsRepository(database_url=TEST_DATABASE_URL)
-    repo.reset()
+    await repo.reset()
     return repo
 
 
-def test_postgres_metrics_records_aggregate_safe_fields(
+@pytest.mark.anyio
+async def test_postgres_metrics_records_aggregate_safe_fields(
     repository: PostgresMetricsRepository,
 ) -> None:
-    repository.record_trace(
+    await repository.record_trace(
         TraceRecord(
             run_id="run_should_not_be_persisted_in_metrics",
             user_id="user_should_not_be_persisted_in_metrics",
@@ -62,7 +63,7 @@ def test_postgres_metrics_records_aggregate_safe_fields(
             created_at=datetime.now(timezone.utc),
         )
     )
-    repository.record_trace(
+    await repository.record_trace(
         TraceRecord(
             run_id="crisis_run_should_not_be_persisted_in_metrics",
             user_id="crisis_user_should_not_be_persisted_in_metrics",
@@ -79,10 +80,10 @@ def test_postgres_metrics_records_aggregate_safe_fields(
             created_at=datetime.now(timezone.utc),
         )
     )
-    repository.record_runtime_event("rate_limit_hit")
-    repository.record_runtime_event("llm_concurrency_saturation", count=2)
+    await repository.record_runtime_event("rate_limit_hit")
+    await repository.record_runtime_event("llm_concurrency_saturation", count=2)
 
-    snapshot = repository.snapshot()
+    snapshot = await repository.snapshot()
 
     assert snapshot.total_runs == 2
     assert snapshot.crisis_runs == 1
@@ -94,13 +95,13 @@ def test_postgres_metrics_records_aggregate_safe_fields(
     assert snapshot.rate_limit_hits == 1
     assert snapshot.llm_concurrency_saturation == 2
 
-    with repository.engine.connect() as connection:
-        row = connection.execute(
+    async with repository.engine.connect() as connection:
+        row = (await connection.execute(
             text("SELECT * FROM harness_metric_events LIMIT 1")
-        ).mappings().first()
-        runtime_row = connection.execute(
+        )).mappings().first()
+        runtime_row = (await connection.execute(
             text("SELECT * FROM harness_runtime_metric_events LIMIT 1")
-        ).mappings().first()
+        )).mappings().first()
 
     assert row is not None
     assert "run_id" not in row
@@ -113,10 +114,11 @@ def test_postgres_metrics_records_aggregate_safe_fields(
     assert "output" not in runtime_row
 
 
-def test_postgres_metrics_reset_clears_events(
+@pytest.mark.anyio
+async def test_postgres_metrics_reset_clears_events(
     repository: PostgresMetricsRepository,
 ) -> None:
-    repository.record_trace(
+    await repository.record_trace(
         TraceRecord(
             run_id="reset_demo_run",
             user_id="reset_demo_user",
@@ -134,7 +136,7 @@ def test_postgres_metrics_reset_clears_events(
         )
     )
 
-    repository.reset()
-    snapshot = repository.snapshot()
+    await repository.reset()
+    snapshot = await repository.snapshot()
 
     assert snapshot.total_runs == 0

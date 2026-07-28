@@ -1,5 +1,6 @@
 """API tests for real-user pilot account authentication."""
 
+import asyncio
 import json
 import logging
 from uuid import uuid4
@@ -12,6 +13,7 @@ from app.auth.tokens import create_auth_token
 from app.db.engine import connect
 from app.main import app
 from app.observability.request_logging import PROCESS_TIME_HEADER
+from app.services.account_service import InvalidCredentialsError, account_service
 
 
 TEST_AUTH_SECRET = "test-real-account-secret"
@@ -401,6 +403,31 @@ async def test_refresh_rotates_token_and_old_refresh_fails(
 
 
 @pytest.mark.anyio
+async def test_concurrent_refresh_claims_old_token_only_once(
+    client: httpx.AsyncClient,
+) -> None:
+    """Two workers cannot both rotate the same refresh token."""
+    register = await client.post(
+        "/api/auth/register",
+        json={
+            "email": unique_email("concurrent_refresh"),
+            "password": "correct-horse-password",
+        },
+    )
+    old_refresh = register.json()["tokens"]["refresh_token"]
+    async def rotate() -> bool:
+        try:
+            await account_service.refresh(old_refresh)
+        except InvalidCredentialsError:
+            return False
+        return True
+
+    results = await asyncio.gather(rotate(), rotate())
+
+    assert sorted(results) == [False, True]
+
+
+@pytest.mark.anyio
 async def test_refresh_can_use_httponly_cookie_without_body(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -558,15 +585,6 @@ async def test_delete_account_revokes_session_and_removes_login(
     access_token = payload["tokens"]["access_token"]
     user_id = payload["user"]["user_id"]
     headers = {"Authorization": f"Bearer {access_token}"}
-    await client.post(
-        "/api/chat",
-        headers=headers,
-        json={
-            "user_id": user_id,
-            "message": "我想练习课堂发言，先写一个开场。",
-            "context": {},
-        },
-    )
     with connect() as connection:
         connection.execute(
             """INSERT INTO conversations
@@ -600,7 +618,7 @@ async def test_delete_account_revokes_session_and_removes_login(
     payload = delete_response.json()
     assert payload["deleted"] is True
     assert payload["revoked_sessions"] >= 1
-    assert payload["deleted_memory_counts"]["runs"] >= 1
+    assert payload["deleted_memory_counts"]["runs"] == 0
     assert payload["deleted_memory_counts"]["conversations"] == 1
     assert profile_after_delete.status_code == 401
     assert login_after_delete.status_code == 401
@@ -646,46 +664,7 @@ async def test_cookie_chat_requires_csrf_or_allowed_origin(
     assert request_logs[-1]["path"] == "/api/chat"
     assert request_logs[-1]["status_code"] == 403
     assert request_logs[-1]["request_id"] == blocked.headers["x-request-id"]
-    assert allowed.status_code == 200
-
-
-@pytest.mark.anyio
-async def test_cookie_protocol_response_requires_csrf_or_allowed_origin(
-    client: httpx.AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("SOCIALEASE_AUTH_COOKIE_ENABLED", "true")
-    monkeypatch.setenv("SOCIALEASE_AUTH_COOKIE_SECURE", "false")
-    email = unique_email("cookie_protocol")
-    register = await client.post(
-        "/api/auth/register",
-        headers={"Origin": ALLOWED_ORIGIN},
-        json={"email": email, "password": "correct-horse-password"},
-    )
-    user_id = register.json()["user"]["user_id"]
-    initial = await client.post(
-        "/api/chat",
-        headers={"Origin": ALLOWED_ORIGIN},
-        json={
-            "user_id": user_id,
-            "message": "我想模拟课堂发言",
-            "context": {},
-        },
-    )
-    protocol_id = initial.json()["structured_data"]["protocol_id"]
-
-    blocked = await client.post(
-        f"/api/protocols/{protocol_id}/respond",
-        json={"user_id": user_id, "approved": True},
-    )
-    allowed = await client.post(
-        f"/api/protocols/{protocol_id}/respond",
-        headers={"Origin": ALLOWED_ORIGIN},
-        json={"user_id": user_id, "approved": True},
-    )
-
-    assert blocked.status_code == 403
-    assert allowed.status_code == 200
+    assert allowed.status_code == 404
 
 
 @pytest.mark.anyio

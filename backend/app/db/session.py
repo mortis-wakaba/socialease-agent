@@ -13,6 +13,7 @@ def initialize_database() -> None:
         _migrate_user_audit_columns(connection)
         _migrate_long_term_memory_columns(connection)
         _migrate_open_scenario_columns(connection)
+        _migrate_module_outbox_columns(connection)
         _create_post_migration_indexes(connection)
 
 
@@ -27,6 +28,45 @@ def _migrate_protocol_columns(connection) -> None:
         "harness_action": "ALTER TABLE protocols ADD COLUMN harness_action TEXT",
         "request_hash": "ALTER TABLE protocols ADD COLUMN request_hash TEXT",
         "expires_at": "ALTER TABLE protocols ADD COLUMN expires_at TEXT",
+    }
+    for column, statement in migrations.items():
+        if column not in columns:
+            connection.execute(statement)
+
+
+def _migrate_module_outbox_columns(connection) -> None:
+    """Add worker coordination columns to an existing local demo database."""
+    columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(conversation_module_start_outbox)"
+        ).fetchall()
+    }
+    migrations = {
+        "proposal_id": (
+            "ALTER TABLE conversation_module_start_outbox "
+            "ADD COLUMN proposal_id TEXT"
+        ),
+        "max_attempts": (
+            "ALTER TABLE conversation_module_start_outbox "
+            "ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 8"
+        ),
+        "next_attempt_at": (
+            "ALTER TABLE conversation_module_start_outbox "
+            "ADD COLUMN next_attempt_at TEXT"
+        ),
+        "lease_owner": (
+            "ALTER TABLE conversation_module_start_outbox "
+            "ADD COLUMN lease_owner TEXT"
+        ),
+        "lease_expires_at": (
+            "ALTER TABLE conversation_module_start_outbox "
+            "ADD COLUMN lease_expires_at TEXT"
+        ),
+        "completed_at": (
+            "ALTER TABLE conversation_module_start_outbox "
+            "ADD COLUMN completed_at TEXT"
+        ),
     }
     for column, statement in migrations.items():
         if column not in columns:

@@ -1,7 +1,5 @@
 """FastAPI routes for unified user-owned conversations."""
 
-from functools import lru_cache
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth.context import AuthContext
@@ -10,6 +8,7 @@ from app.auth.dependencies import (
     resolve_optional_user_id,
     resolve_request_user_id,
 )
+from app.conversation.repository import ConversationIdempotencyError
 from app.models_conversation import (
     Conversation,
     ConversationPage,
@@ -27,38 +26,17 @@ from app.models_conversation_api import (
     ConversationModuleDecisionRequest,
     ConversationModuleTerminateRequest,
     ConversationUpdateRequest,
-    LegacyRoleplayImportResponse,
     ModuleControlResponse,
 )
 from app.services.conversation_service import (
+    ConversationCommandInProgressError,
     ConversationNoticeError,
     ConversationProposalError,
-    ConversationService,
 )
-from app.services.roleplay_service import roleplay_service
-from app.tracing.logger import trace_logger
-from app.workflow.default_hooks import create_default_hooks
-from app.workflow.engine import AgentHarness
+from app.services.conversation_runtime import conversation_service
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
-
-
-@lru_cache(maxsize=1)
-def conversation_service() -> ConversationService:
-    """Return the process-wide unified conversation coordinator."""
-    return ConversationService(
-        harness=AgentHarness(
-            trace_logger=trace_logger,
-            hooks=create_default_hooks(),
-        )
-    )
-
-
-async def close_cached_conversation_service() -> None:
-    """Close context-cache resources only when the service was instantiated."""
-    if conversation_service.cache_info().currsize:
-        await conversation_service().close()
 
 
 @router.post("", response_model=Conversation)
@@ -69,7 +47,7 @@ async def create_conversation(
     """Create a durable conversation after the current history notice."""
     user_id = resolve_request_user_id(request.user_id, current_user)
     try:
-        return conversation_service().create_conversation(
+        return await conversation_service().create_conversation(
             user_id=user_id,
             title=request.title,
             history_notice_version=request.history_notice_version,
@@ -89,49 +67,10 @@ async def list_conversations(
     """List durable conversation history for its owner."""
     effective_user_id = resolve_optional_user_id(user_id, current_user)
     try:
-        return conversation_service().list_conversations(
+        return await conversation_service().list_conversations(
             user_id=effective_user_id,
             cursor=cursor,
             limit=limit,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post(
-    "/imports/legacy-roleplay",
-    response_model=LegacyRoleplayImportResponse,
-)
-async def import_legacy_roleplay(
-    user_id: str | None = None,
-    current_user: AuthContext = Depends(get_current_user),
-) -> LegacyRoleplayImportResponse:
-    """Idempotently expose legacy role-play sessions as archived timelines."""
-    effective_user_id = resolve_optional_user_id(user_id, current_user)
-    batch_size = 200
-    offset = 0
-    scanned_count = 0
-    imported_count = 0
-    try:
-        while True:
-            legacy = roleplay_service.list_sessions(
-                user_id=effective_user_id,
-                limit=batch_size,
-                offset=offset,
-            )
-            result = conversation_service().import_legacy_roleplay_sessions(
-                user_id=effective_user_id,
-                sessions=legacy.sessions,
-            )
-            scanned_count += result.scanned_count
-            imported_count += result.imported_count
-            if len(legacy.sessions) < batch_size:
-                break
-            offset += batch_size
-        return LegacyRoleplayImportResponse(
-            user_id=effective_user_id,
-            scanned_count=scanned_count,
-            imported_count=imported_count,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -148,7 +87,7 @@ async def get_conversation(
     """Return one owner-scoped conversation and timeline page."""
     effective_user_id = resolve_optional_user_id(user_id, current_user)
     service = conversation_service()
-    conversation = service.get_conversation(
+    conversation = await service.get_conversation(
         conversation_id=conversation_id,
         user_id=effective_user_id,
     )
@@ -157,17 +96,17 @@ async def get_conversation(
     try:
         return ConversationDetailResponse(
             conversation=conversation,
-            events=service.list_events(
+            events=await service.list_events(
                 conversation_id=conversation_id,
                 user_id=effective_user_id,
                 cursor=cursor,
                 limit=limit,
             ),
-            active_module_stack=service.list_module_stack(
+            active_module_stack=await service.list_module_stack(
                 conversation_id=conversation_id,
                 user_id=effective_user_id,
             ),
-            pending_module_proposals=service.list_pending_proposals(
+            pending_module_proposals=await service.list_pending_proposals(
                 conversation_id=conversation_id,
                 user_id=effective_user_id,
             ),
@@ -185,7 +124,7 @@ async def update_conversation(
     """Rename, archive, or unarchive one owner conversation."""
     user_id = resolve_request_user_id(request.user_id, current_user)
     try:
-        updated = conversation_service().update_conversation(
+        updated = await conversation_service().update_conversation(
             conversation_id=conversation_id,
             user_id=user_id,
             expected_version=request.expected_version,
@@ -210,7 +149,7 @@ async def export_conversation(
 ) -> ConversationExportResponse:
     """Export one complete decrypted owner timeline."""
     effective_user_id = resolve_optional_user_id(user_id, current_user)
-    exported = conversation_service().export_conversation(
+    exported = await conversation_service().export_conversation(
         conversation_id=conversation_id,
         user_id=effective_user_id,
     )
@@ -229,7 +168,7 @@ async def export_all_conversations(
 ) -> ConversationExportCollectionResponse:
     """Export all complete timelines owned by the current user."""
     effective_user_id = resolve_optional_user_id(user_id, current_user)
-    return conversation_service().export_all_conversations(
+    return await conversation_service().export_all_conversations(
         user_id=effective_user_id
     )
 
@@ -288,6 +227,8 @@ async def send_conversation_message(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
+    except (ConversationCommandInProgressError, ConversationIdempotencyError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post(
@@ -328,7 +269,7 @@ async def reject_module_proposal(
     """Reject a pending proposal without changing the module stack."""
     user_id = resolve_request_user_id(request.user_id, current_user)
     try:
-        return conversation_service().reject_proposal(
+        return await conversation_service().reject_proposal(
             conversation_id=conversation_id,
             proposal_id=proposal_id,
             user_id=user_id,

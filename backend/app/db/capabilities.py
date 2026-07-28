@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from app.auth.tokens import auth_mode
 from app.db.config import database_settings
 from app.db.providers import DatabaseProvider, resolve_database_provider
 
@@ -91,6 +92,10 @@ def database_capability_report(database_url: str | None = None) -> DatabaseCapab
 def validate_runtime_database_support(database_url: str | None = None) -> DatabaseCapabilityReport:
     """Fail early when the configured provider cannot run the full API runtime."""
     report = database_capability_report(database_url)
+    if report.provider == DatabaseProvider.SQLITE and auth_mode() == "production":
+        raise DatabaseCapabilityError(
+            "Production requires PostgreSQL; SQLite is limited to local demo and tests."
+        )
     if report.full_runtime_supported:
         return report
     supported = ", ".join(report.supported_repositories)

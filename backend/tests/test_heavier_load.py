@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import os
 from uuid import uuid4
@@ -41,10 +40,11 @@ async def client() -> httpx.AsyncClient:
         yield async_client
 
 
-def test_concurrent_protocol_approval_allows_one_terminal_transition() -> None:
+@pytest.mark.anyio
+async def test_concurrent_protocol_approval_allows_one_terminal_transition() -> None:
     service = ProtocolService()
     user_id = f"load_protocol_user_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
         reason="load test consent",
@@ -53,29 +53,35 @@ def test_concurrent_protocol_approval_allows_one_terminal_transition() -> None:
         request_hash="load-approval-hash",
     )
 
-    def approve_once():
-        return service.respond(
+    async def approve_once():
+        return await service.respond(
             protocol_id=protocol.protocol_id,
             user_id=user_id,
             approved=True,
         )
 
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        responses = list(executor.map(lambda _: approve_once(), range(16)))
+    responses = await asyncio.gather(*(approve_once() for _ in range(16)))
 
     approved = [response for response in responses if response is not None and response.status == "approved"]
-    fetched = service.store.get_for_user(protocol.protocol_id, user_id)
+    fetched = await service.store.get_for_user(protocol.protocol_id, user_id)
 
     assert approved
     assert fetched is not None
     assert fetched.status == "approved"
-    assert service.respond(protocol_id=protocol.protocol_id, user_id=user_id, approved=False).status == "approved"
+    repeated = await service.respond(
+        protocol_id=protocol.protocol_id,
+        user_id=user_id,
+        approved=False,
+    )
+    assert repeated is not None
+    assert repeated.status == "approved"
 
 
-def test_concurrent_protocol_consume_under_higher_contention() -> None:
+@pytest.mark.anyio
+async def test_concurrent_protocol_consume_under_higher_contention() -> None:
     service = ProtocolService()
     user_id = f"load_consume_user_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.CREATE_EXPOSURE_PLAN,
         reason="load test consent",
@@ -83,15 +89,15 @@ def test_concurrent_protocol_consume_under_higher_contention() -> None:
         session_id=None,
         request_hash="load-consume-hash",
     )
-    approved = service.respond(
+    approved = await service.respond(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         approved=True,
     )
     assert approved is not None
 
-    def consume_once() -> bool:
-        consumed = service.consume_for_action(
+    async def consume_once() -> bool:
+        consumed = await service.consume_for_action(
             protocol_id=protocol.protocol_id,
             user_id=user_id,
             harness_action=HarnessAction.CREATE_EXPOSURE_PLAN,
@@ -100,43 +106,10 @@ def test_concurrent_protocol_consume_under_higher_contention() -> None:
         )
         return consumed is not None
 
-    with ThreadPoolExecutor(max_workers=32) as executor:
-        results = list(executor.map(lambda _: consume_once(), range(32)))
+    results = await asyncio.gather(*(consume_once() for _ in range(32)))
 
     assert results.count(True) == 1
     assert results.count(False) == 31
-
-
-@pytest.mark.anyio
-async def test_concurrent_chat_runs_across_many_users(client: httpx.AsyncClient) -> None:
-    user_ids = [f"load_chat_user_{uuid4().hex}" for _ in range(50)]
-    messages = [
-        "我想模拟课堂发言",
-        "小组讨论前我有点紧张，想整理表达",
-        "我想做一个社交练习计划，目标是问老师问题",
-    ]
-
-    async def run_chat(index: int, user_id: str) -> dict:
-        response = await client.post(
-            "/api/chat",
-            headers={"X-Demo-User-Id": user_id},
-            json={
-                "user_id": "body_user_should_be_ignored",
-                "message": messages[index % len(messages)],
-                "context": {},
-            },
-        )
-        assert response.status_code == 200
-        return response.json()
-
-    payloads = await asyncio.gather(
-        *(run_chat(index, user_id) for index, user_id in enumerate(user_ids))
-    )
-
-    assert len(payloads) == len(user_ids)
-    assert {payload["trace"]["user_id"] for payload in payloads} == set(user_ids)
-    assert all(payload["risk_level"] in {"low", "medium"} for payload in payloads)
-    assert all(payload["trace"]["request_id"] for payload in payloads)
 
 
 @pytest.mark.anyio
@@ -167,15 +140,19 @@ async def test_memory_export_delete_with_active_sessions_and_cleanup(
     async def export_memory() -> int:
         response = await client.get(f"/api/users/{user_id}/memory/export")
         assert response.status_code == 200
-        return len(response.json()["records"]["roleplay_sessions"])
+        return len(response.json()["records"]["user_memory_settings"])
 
     async def delete_memory() -> int:
-        response = await client.delete(f"/api/users/{user_id}/memory")
+        response = await client.request(
+            "DELETE",
+            f"/api/users/{user_id}/memory",
+            json={"confirm_delete": True},
+        )
         assert response.status_code == 200
-        return response.json()["deleted_counts"]["roleplay_sessions"]
+        return response.json()["deleted_counts"]["user_memory_settings"]
 
     export_task = asyncio.create_task(export_memory())
-    cleanup_result = retention_service.run_once(
+    cleanup_result = await retention_service.run_once(
         now=datetime.now(timezone.utc),
         abandoned_plan_minutes=0,
     )

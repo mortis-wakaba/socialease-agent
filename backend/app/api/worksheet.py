@@ -20,7 +20,7 @@ async def get_worksheet(
 ) -> WorksheetRecord:
     """Return a saved worksheet by id."""
     try:
-        worksheet = worksheet_service.get_worksheet(worksheet_id)
+        worksheet = await worksheet_service.get_worksheet(worksheet_id)
         hide_if_not_owner(worksheet.user_id, current_user)
         return worksheet
     except ServiceNotFoundError:

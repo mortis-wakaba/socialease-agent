@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from app.conversation.adapters.base import ModuleAdapterResult
+from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
 from app.models_conversation import (
     ModuleRun,
     WorksheetMessageEventPayload,
@@ -28,19 +28,32 @@ class WorksheetModuleAdapter:
     def __init__(self, service: WorksheetService | None = None) -> None:
         self._service = service or worksheet_service
 
-    async def start(
+    async def prepare_start(
         self,
         run: ModuleRun,
         context: ConversationWorkingContext,
-    ) -> ModuleAdapterResult:
+    ) -> PreparedModuleStart:
         parameters = _parameters(run)
-        result = await self._service.create_worksheet(
+        prepared = await self._service.prepare_worksheet(
             WorksheetCreateRequest(
                 user_id=run.user_id,
                 message=parameters.situation,
                 source_event_id=run.source_event_id,
             ),
             conversation_context=_prompt_context(context),
+        )
+        if prepared.blocked:
+            raise ValueError("worksheet could not be started safely")
+        return PreparedModuleStart(payload=prepared)
+
+    async def persist_start(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+    ) -> ModuleAdapterResult:
+        result = await self._service.persist_prepared_worksheet(
+            prepared.payload,
+            worksheet_id=run.domain_session_id,
         )
         worksheet_id = (
             result.worksheet.worksheet_id if result.worksheet else None
@@ -56,6 +69,23 @@ class WorksheetModuleAdapter:
                 missing_fields=result.missing_fields,
             ),
         )
+
+    async def after_start_commit(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+        result: ModuleAdapterResult,
+    ) -> None:
+        del prepared
+        worksheet_id = result.domain_session_id
+        if worksheet_id is None:
+            raise ValueError("worksheet id missing after commit")
+        worksheet = await self._service.store.get_for_user(
+            worksheet_id, run.user_id
+        )
+        if worksheet is None:
+            raise LookupError("worksheet not found after commit")
+        await self._service.after_worksheet_commit(worksheet)
 
     async def handle_message(
         self,
@@ -95,7 +125,7 @@ class WorksheetModuleAdapter:
     ) -> ModuleOverlay:
         """Rebuild worksheet progress from its durable domain record."""
         del context
-        worksheet = self._service.store.get_for_user(
+        worksheet = await self._service.store.get_for_user(
             _worksheet_id(run),
             run.user_id,
         )

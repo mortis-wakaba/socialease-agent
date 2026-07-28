@@ -26,7 +26,9 @@ async def get_exposure_plan_by_id(
     """Return one exposure plan by id for the owning user."""
     try:
         effective_user_id = resolve_optional_user_id(user_id, current_user)
-        return exposure_service.get_plan_by_id(plan_id=plan_id, user_id=effective_user_id)
+        return await exposure_service.get_plan_by_id(
+            plan_id=plan_id, user_id=effective_user_id
+        )
     except ServiceNotFoundError:
         raise HTTPException(status_code=404, detail="Exposure plan not found")
 
@@ -38,4 +40,4 @@ async def get_user_exposure(
 ) -> UserExposureResponse:
     """Return the user's active exposure plan and progress."""
     require_owner_path_user(user_id, current_user)
-    return exposure_service.get_user_plan(user_id)
+    return await exposure_service.get_user_plan(user_id)

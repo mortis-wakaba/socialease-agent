@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.memory.commit_service import EpisodicMemoryCommitter
 from app.memory.identity import (
     memory_content_hash,
@@ -29,7 +31,7 @@ class RacingMemoryRepository:
         self.record: EpisodicMemoryRecord | None = None
         self.create_calls = 0
 
-    def get_memory_by_idempotency_key(
+    async def get_memory_by_idempotency_key(
         self,
         *,
         user_id: str,
@@ -43,7 +45,7 @@ class RacingMemoryRepository:
             return self.record
         return None
 
-    def create_memory(
+    async def create_memory(
         self,
         record: EpisodicMemoryRecord,
         *,
@@ -90,7 +92,8 @@ def test_shared_conflict_semantics_exposes_overlap_and_decision() -> None:
     assert not memories_conflict(helpful, "课堂发言前先深呼吸")
 
 
-def test_committer_recovers_the_concurrent_idempotent_winner() -> None:
+@pytest.mark.anyio
+async def test_committer_recovers_the_concurrent_idempotent_winner() -> None:
     repository = RacingMemoryRepository()
     proposal = MemoryProposal(
         memory_type=MemoryType.HELPFUL_STRATEGY,
@@ -103,7 +106,7 @@ def test_committer_recovers_the_concurrent_idempotent_winner() -> None:
         occurred_at=NOW,
     )
 
-    record, deduplicated = EpisodicMemoryCommitter(repository).commit(
+    record, deduplicated = await EpisodicMemoryCommitter(repository).commit(
         user_id="owner",
         proposal=proposal,
         safe_summary=proposal.summary,

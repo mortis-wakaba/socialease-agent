@@ -71,17 +71,23 @@ class MemoryCenterService:
             settings_repository=self.settings_repository,
         )
 
-    def snapshot(self, user_id: str) -> MemoryCenterResponse:
+    async def snapshot(self, user_id: str) -> MemoryCenterResponse:
         """Return a bounded snapshot with stable, working, and episodic layers."""
         timestamp = datetime.now(timezone.utc)
-        settings = self.settings_repository.get(user_id)
-        memories = self.memory_repository.list_memories(user_id, limit=500)
-        checkpoints = self.memory_repository.list_checkpoints(
+        settings = await self.settings_repository.get(user_id)
+        memories = await self.memory_repository.list_memories(user_id, limit=500)
+        checkpoints = await self.memory_repository.list_checkpoints(
             user_id,
             limit=500,
         )
-        proposals = self.proposal_repository.list_pending(user_id, limit=500)
-        events = self.memory_repository.list_events(user_id=user_id, limit=500)
+        proposals = await self.proposal_repository.list_pending(
+            user_id,
+            limit=500,
+        )
+        events = await self.memory_repository.list_events(
+            user_id=user_id,
+            limit=500,
+        )
         return MemoryCenterResponse(
             user_id=user_id,
             stable_memory=StableMemoryView(
@@ -114,7 +120,7 @@ class MemoryCenterService:
             ),
         )
 
-    def set_type_personalization(
+    async def set_type_personalization(
         self,
         *,
         user_id: str,
@@ -122,27 +128,30 @@ class MemoryCenterService:
         enabled: bool,
     ) -> list[AgentMemoryType]:
         """Enable or disable one category without deleting its records."""
-        current = self.settings_repository.get(user_id)
+        current = await self.settings_repository.get(user_id)
         disabled = list(current.disabled_memory_types)
         if enabled:
             disabled = [item for item in disabled if item != memory_type]
         elif memory_type not in disabled:
             disabled.append(memory_type)
         disabled.sort(key=lambda item: item.value)
-        saved = self.settings_repository.save(
+        saved = await self.settings_repository.save(
             user_id=user_id,
             disabled_memory_types=disabled,
         )
         return saved.disabled_memory_types
 
-    def list_proposals(self, user_id: str) -> MemoryProposalListResponse:
+    async def list_proposals(
+        self,
+        user_id: str,
+    ) -> MemoryProposalListResponse:
         """Return only current, unexpired pending candidates."""
         timestamp = datetime.now(timezone.utc)
         return MemoryProposalListResponse(
             user_id=user_id,
             proposals=[
                 _proposal_view(record)
-                for record in self.proposal_repository.list_pending(
+                for record in await self.proposal_repository.list_pending(
                     user_id,
                     limit=100,
                 )
@@ -150,7 +159,7 @@ class MemoryCenterService:
             ],
         )
 
-    def edit(
+    async def edit(
         self,
         *,
         user_id: str,
@@ -159,7 +168,10 @@ class MemoryCenterService:
         expected_version: int,
     ) -> MemoryMutationResponse:
         """Validate and update one user-confirmed summary."""
-        current = self._require_memory(user_id=user_id, memory_id=memory_id)
+        current = await self._require_memory(
+            user_id=user_id,
+            memory_id=memory_id,
+        )
         proposal = MemoryProposal(
             memory_type=current.memory_type,
             summary=summary,
@@ -172,7 +184,9 @@ class MemoryCenterService:
         )
         decision = self.policy_engine.decide(
             proposal,
-            consent_state=self.settings_repository.get(user_id).consent_state,
+            consent_state=(
+                await self.settings_repository.get(user_id)
+            ).consent_state,
             risk_level=RiskLevel.LOW,
         )
         if (
@@ -183,7 +197,7 @@ class MemoryCenterService:
                 f"memory_summary_rejected:{decision.reason.value}"
             )
         safe_summary = decision.safe_summary
-        updated = self.memory_repository.update_memory_summary(
+        updated = await self.memory_repository.update_memory_summary(
             memory_id=memory_id,
             user_id=user_id,
             expected_version=expected_version,
@@ -201,7 +215,7 @@ class MemoryCenterService:
             user_id=user_id,
             memory=_memory_view(
                 updated,
-                events=self.memory_repository.list_events(
+                events=await self.memory_repository.list_events(
                     user_id=user_id,
                     subject_id=memory_id,
                     limit=100,
@@ -209,7 +223,7 @@ class MemoryCenterService:
             ),
         )
 
-    def archive(
+    async def archive(
         self,
         *,
         user_id: str,
@@ -217,7 +231,7 @@ class MemoryCenterService:
         expected_version: int,
     ) -> MemoryMutationResponse:
         """Archive one memory so ordinary retrieval no longer uses it."""
-        return self._transition(
+        return await self._transition(
             user_id=user_id,
             memory_id=memory_id,
             expected_version=expected_version,
@@ -225,7 +239,7 @@ class MemoryCenterService:
             reason_code="user_archived",
         )
 
-    def restore(
+    async def restore(
         self,
         *,
         user_id: str,
@@ -233,7 +247,7 @@ class MemoryCenterService:
         expected_version: int,
     ) -> MemoryMutationResponse:
         """Restore one inactive or archived memory to active use."""
-        return self._transition(
+        return await self._transition(
             user_id=user_id,
             memory_id=memory_id,
             expected_version=expected_version,
@@ -241,7 +255,7 @@ class MemoryCenterService:
             reason_code="user_restored",
         )
 
-    def delete(
+    async def delete(
         self,
         *,
         user_id: str,
@@ -249,7 +263,7 @@ class MemoryCenterService:
         expected_version: int,
     ) -> MemoryMutationResponse:
         """Physically delete one memory body and retain content-free audit."""
-        self.memory_repository.delete_memory(
+        await self.memory_repository.delete_memory(
             memory_id=memory_id,
             user_id=user_id,
             expected_version=expected_version,
@@ -257,7 +271,7 @@ class MemoryCenterService:
         )
         return MemoryMutationResponse(user_id=user_id, deleted=True)
 
-    def confirm_proposal(
+    async def confirm_proposal(
         self,
         *,
         user_id: str,
@@ -265,7 +279,7 @@ class MemoryCenterService:
         expected_version: int,
     ) -> MemoryProposalDecisionResponse:
         """Commit one explicitly confirmed candidate and erase proposal content."""
-        proposal = self._require_proposal(
+        proposal = await self._require_proposal(
             user_id=user_id,
             proposal_id=proposal_id,
             expected_version=expected_version,
@@ -273,7 +287,7 @@ class MemoryCenterService:
         timestamp = datetime.now(timezone.utc)
         if proposal.expires_at <= timestamp:
             raise MemoryConflictError("pending memory proposal has expired")
-        settings = self.settings_repository.get(user_id)
+        settings = await self.settings_repository.get(user_id)
         if proposal.memory_type.value in {
             memory_type.value for memory_type in settings.disabled_memory_types
         }:
@@ -305,7 +319,7 @@ class MemoryCenterService:
             raise ValueError(
                 f"memory_proposal_rejected:{decision.reason.value}"
             )
-        memory, _ = self.committer.commit(
+        memory, _ = await self.committer.commit(
             user_id=user_id,
             proposal=confirmed_proposal,
             safe_summary=decision.safe_summary,
@@ -315,7 +329,7 @@ class MemoryCenterService:
             evidence_type=MemoryEvidenceType.USER_CONFIRMED,
             confidence=1.0,
         )
-        self.proposal_repository.consume_pending(
+        await self.proposal_repository.consume_pending(
             user_id=user_id,
             proposal_id=proposal_id,
             expected_version=expected_version,
@@ -329,7 +343,7 @@ class MemoryCenterService:
             status=MemoryProposalStatus.CONFIRMED,
             memory=_memory_view(
                 memory,
-                events=self.memory_repository.list_events(
+                events=await self.memory_repository.list_events(
                     user_id=user_id,
                     subject_id=memory.memory_id,
                     limit=100,
@@ -337,7 +351,7 @@ class MemoryCenterService:
             ),
         )
 
-    def reject_proposal(
+    async def reject_proposal(
         self,
         *,
         user_id: str,
@@ -345,12 +359,12 @@ class MemoryCenterService:
         expected_version: int,
     ) -> MemoryProposalDecisionResponse:
         """Reject a pending candidate and erase its body."""
-        self._require_proposal(
+        await self._require_proposal(
             user_id=user_id,
             proposal_id=proposal_id,
             expected_version=expected_version,
         )
-        self.proposal_repository.consume_pending(
+        await self.proposal_repository.consume_pending(
             user_id=user_id,
             proposal_id=proposal_id,
             expected_version=expected_version,
@@ -364,7 +378,7 @@ class MemoryCenterService:
             status=MemoryProposalStatus.REJECTED,
         )
 
-    def _transition(
+    async def _transition(
         self,
         *,
         user_id: str,
@@ -373,7 +387,7 @@ class MemoryCenterService:
         target_status: MemoryRecordStatus,
         reason_code: str,
     ) -> MemoryMutationResponse:
-        updated = self.memory_repository.transition_memory(
+        updated = await self.memory_repository.transition_memory(
             memory_id=memory_id,
             user_id=user_id,
             expected_version=expected_version,
@@ -384,7 +398,7 @@ class MemoryCenterService:
             user_id=user_id,
             memory=_memory_view(
                 updated,
-                events=self.memory_repository.list_events(
+                events=await self.memory_repository.list_events(
                     user_id=user_id,
                     subject_id=memory_id,
                     limit=100,
@@ -392,27 +406,30 @@ class MemoryCenterService:
             ),
         )
 
-    def _require_memory(
+    async def _require_memory(
         self,
         *,
         user_id: str,
         memory_id: str,
     ) -> EpisodicMemoryRecord:
-        record = self.memory_repository.get_memory(memory_id, user_id)
+        record = await self.memory_repository.get_memory(memory_id, user_id)
         if record is None:
             raise MemoryNotFoundError(
                 "user-scoped episodic memory was not found"
             )
         return record
 
-    def _require_proposal(
+    async def _require_proposal(
         self,
         *,
         user_id: str,
         proposal_id: str,
         expected_version: int,
     ) -> PendingMemoryProposalRecord:
-        record = self.proposal_repository.get_for_user(proposal_id, user_id)
+        record = await self.proposal_repository.get_for_user(
+            proposal_id,
+            user_id,
+        )
         if record is None:
             raise MemoryNotFoundError(
                 "user-scoped memory proposal was not found"

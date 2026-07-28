@@ -35,11 +35,12 @@ def repository() -> PostgresWorksheetRepository:
     return PostgresWorksheetRepository(database_url=TEST_DATABASE_URL)
 
 
-def test_postgres_worksheet_save_and_get(repository: PostgresWorksheetRepository) -> None:
+@pytest.mark.anyio
+async def test_postgres_worksheet_save_and_get(repository: PostgresWorksheetRepository) -> None:
     record = _worksheet_record(user_id=f"pg_worksheet_user_{uuid4().hex}")
 
-    saved = repository.save(record)
-    fetched = repository.get(record.worksheet_id)
+    saved = await repository.save(record)
+    fetched = await repository.get(record.worksheet_id)
 
     assert saved.worksheet_id == record.worksheet_id
     assert fetched is not None
@@ -50,7 +51,8 @@ def test_postgres_worksheet_save_and_get(repository: PostgresWorksheetRepository
     assert fetched.disclaimer == WORKSHEET_DISCLAIMER
 
 
-def test_postgres_worksheet_save_upserts_existing_record(
+@pytest.mark.anyio
+async def test_postgres_worksheet_save_upserts_existing_record(
     repository: PostgresWorksheetRepository,
 ) -> None:
     record = _worksheet_record(user_id=f"pg_worksheet_upsert_user_{uuid4().hex}")
@@ -61,9 +63,9 @@ def test_postgres_worksheet_save_upserts_existing_record(
         }
     )
 
-    repository.save(record)
-    repository.save(updated)
-    fetched = repository.get(record.worksheet_id)
+    await repository.save(record)
+    await repository.save(updated)
+    fetched = await repository.get(record.worksheet_id)
 
     assert fetched is not None
     assert fetched.fields.emotion == "焦虑"

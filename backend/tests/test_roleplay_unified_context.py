@@ -57,7 +57,7 @@ class RecordingCheckpoint:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def record_roleplay(self, **kwargs: object) -> None:
+    async def record_roleplay(self, **kwargs: object) -> None:
         self.calls.append(kwargs)
 
 
@@ -91,7 +91,9 @@ async def test_unified_roleplay_uses_timeline_and_stores_only_features() -> None
         started_at=datetime.now(UTC),
     )
     initial_context = _context(run, recent_events=[])
-    started = await adapter.start(run, initial_context)
+    prepared = await adapter.prepare_start(run, initial_context)
+    started = await adapter.persist_start(run, prepared)
+    await adapter.after_start_commit(run, prepared, started)
     run = run.model_copy(
         update={"domain_session_id": started.domain_session_id}
     )
@@ -116,7 +118,7 @@ async def test_unified_roleplay_uses_timeline_and_stores_only_features() -> None
         overlay,
     )
 
-    session = service.store.get_for_user(
+    session = await service.store.get_for_user(
         started.domain_session_id or "",
         run.user_id,
     )

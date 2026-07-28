@@ -11,6 +11,7 @@ from app.calendar.mcp_client import (
     StreamableHTTPCalendarMCPClient,
 )
 from app.calendar.provider import InMemoryCalendarProvider
+from app.auth.tokens import auth_mode
 from app.calendar.tools import CalendarToolService
 from app.models_calendar import (
     CalendarEventProposal,
@@ -160,6 +161,10 @@ def create_calendar_client() -> CalendarMCPClient:
     url = os.getenv("SOCIALEASE_CALENDAR_MCP_URL", "").strip()
     if url:
         return StreamableHTTPCalendarMCPClient(url=url)
+    if auth_mode() == "production":
+        raise RuntimeError(
+            "Production calendar actions require SOCIALEASE_CALENDAR_MCP_URL."
+        )
     return InProcessCalendarMCPClient(CalendarToolService(calendar_demo_provider))
 
 

@@ -2,7 +2,7 @@
 
 ## When to use
 
-Use this skill for non-crisis `/api/chat` requests, especially general social stress, uncertainty about which practice mode to use, or lightweight emotional support.
+Use this skill for non-crisis unified conversation messages, especially general social stress, uncertainty about which practice mode to use, or lightweight emotional support.
 
 ## Inputs
 

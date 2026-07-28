@@ -80,20 +80,20 @@ class DatabaseConversationContextProvider:
     ) -> ConversationContextSnapshot:
         """Return one internally consistent owner-scoped read projection."""
         return ConversationContextSnapshot(
-            conversation=self._repository.get_for_user(
+            conversation=await self._repository.get_for_user(
                 conversation_id,
                 user_id,
             ),
-            recent_events=self._repository.list_recent_events(
+            recent_events=await self._repository.list_recent_events(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 limit=recent_limit,
             ),
-            compact_summary=self._repository.get_compact_summary(
+            compact_summary=await self._repository.get_compact_summary(
                 conversation_id=conversation_id,
                 user_id=user_id,
             ),
-            module_stack=self._repository.list_module_stack(
+            module_stack=await self._repository.list_module_stack(
                 conversation_id=conversation_id,
                 user_id=user_id,
             ),
@@ -190,7 +190,10 @@ class CachedConversationContextProvider:
         recent_limit: int,
     ) -> ConversationContextSnapshot:
         """Return a matching encrypted projection or rebuild from the database."""
-        conversation = self._repository.get_for_user(conversation_id, user_id)
+        conversation = await self._repository.get_for_user(
+            conversation_id,
+            user_id,
+        )
         if conversation is None:
             return ConversationContextSnapshot(
                 conversation=None,

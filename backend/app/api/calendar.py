@@ -1,10 +1,18 @@
 """Owner-scoped APIs for consented Calendar MCP operations."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 
 from app.auth.context import AuthContext
 from app.auth.dependencies import get_current_user, resolve_request_user_id
 from app.calendar.mcp_client import CalendarMCPError
+from app.calendar.outbox import CalendarActionOutbox, CalendarActionType
+from app.calendar.outbox_processor import (
+    CalendarOutboxProcessor,
+    CalendarOutboxUnavailable,
+)
 from app.calendar.provider import CalendarEventNotFoundError
 from app.calendar.service import CalendarVerificationError, calendar_service
 from app.models_calendar import (
@@ -17,8 +25,8 @@ from app.models_calendar import (
 from app.safety.actions import HarnessAction
 from app.safety.direct_actions import (
     PROTOCOL_HEADER_NAME,
-    consume_direct_action_consent,
-    require_direct_action_consent,
+    direct_action_request_hash,
+    require_direct_action_approval,
 )
 
 
@@ -35,24 +43,14 @@ async def create_calendar_event(
     effective = request.model_copy(
         update={"user_id": resolve_request_user_id(request.user_id, current_user)}
     )
-    consent = require_direct_action_consent(
+    response = await _enqueue_and_process(
         user_id=effective.user_id,
         harness_action=HarnessAction.CREATE_CALENDAR_EVENT,
-        payload=effective,
+        consent_payload=effective,
+        outbox_payload=effective.model_dump(mode="json"),
         protocol_id=protocol_id,
-    )
-    try:
-        response = await calendar_service.create_event(
-            user_id=effective.user_id,
-            proposal=effective.proposal,
-            idempotency_key=effective.idempotency_key,
-        )
-    except (CalendarMCPError, CalendarVerificationError) as exc:
-        raise HTTPException(status_code=503, detail="Calendar tool is unavailable") from exc
-    consume_direct_action_consent(
-        user_id=effective.user_id,
-        consent=consent,
-        result_summary="Created and verified one calendar practice event.",
+        action_type="create",
+        idempotency_key=effective.idempotency_key,
     )
     return response
 
@@ -105,28 +103,14 @@ async def update_calendar_event(
         "calendar_action_id": calendar_action_id,
         **effective.model_dump(mode="json"),
     }
-    consent = require_direct_action_consent(
+    return await _enqueue_and_process(
         user_id=effective.user_id,
         harness_action=HarnessAction.UPDATE_CALENDAR_EVENT,
-        payload=consent_payload,
+        consent_payload=consent_payload,
+        outbox_payload=consent_payload,
         protocol_id=protocol_id,
+        action_type="update",
     )
-    try:
-        response = await calendar_service.update_event(
-            user_id=effective.user_id,
-            calendar_action_id=calendar_action_id,
-            proposal=effective.proposal,
-        )
-    except CalendarEventNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Calendar event not found") from exc
-    except (CalendarMCPError, CalendarVerificationError) as exc:
-        raise HTTPException(status_code=503, detail="Calendar tool is unavailable") from exc
-    consume_direct_action_consent(
-        user_id=effective.user_id,
-        consent=consent,
-        result_summary="Updated and verified one calendar practice event.",
-    )
-    return response
 
 
 @router.delete("/events/{calendar_action_id}", response_model=CalendarEventResponse)
@@ -144,24 +128,62 @@ async def delete_calendar_event(
         "calendar_action_id": calendar_action_id,
         **effective.model_dump(mode="json"),
     }
-    consent = require_direct_action_consent(
+    return await _enqueue_and_process(
         user_id=effective.user_id,
         harness_action=HarnessAction.DELETE_CALENDAR_EVENT,
+        consent_payload=consent_payload,
+        outbox_payload=consent_payload,
+        protocol_id=protocol_id,
+        action_type="delete",
+    )
+
+
+async def _enqueue_and_process(
+    *,
+    user_id: str,
+    harness_action: HarnessAction,
+    consent_payload: BaseModel | dict[str, Any],
+    outbox_payload: dict[str, object],
+    protocol_id: str | None,
+    action_type: CalendarActionType,
+    idempotency_key: str | None = None,
+) -> CalendarEventResponse:
+    """Atomically enqueue an approved action, then attempt low-latency execution."""
+    consent = await require_direct_action_approval(
+        user_id=user_id,
+        harness_action=harness_action,
         payload=consent_payload,
         protocol_id=protocol_id,
     )
-    try:
-        response = await calendar_service.delete_event(
-            user_id=effective.user_id,
-            calendar_action_id=calendar_action_id,
+    request_hash = (
+        consent.request_hash
+        if consent is not None
+        else direct_action_request_hash(
+            harness_action=harness_action,
+            payload=consent_payload,
         )
+    )
+    outbox = CalendarActionOutbox()
+    job = await outbox.enqueue(
+        protocol_id=consent.protocol_id if consent is not None else None,
+        user_id=user_id,
+        action_type=action_type,
+        request_hash=request_hash,
+        idempotency_key=idempotency_key or f"calendar-outbox:{request_hash}",
+        payload=outbox_payload,
+    )
+    if job is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Approved consent protocol is required",
+        )
+    try:
+        return await CalendarOutboxProcessor(outbox=outbox).process_job(job.job_id)
     except CalendarEventNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Calendar event not found") from exc
-    except (CalendarMCPError, CalendarVerificationError) as exc:
+    except (
+        CalendarMCPError,
+        CalendarVerificationError,
+        CalendarOutboxUnavailable,
+    ) as exc:
         raise HTTPException(status_code=503, detail="Calendar tool is unavailable") from exc
-    consume_direct_action_consent(
-        user_id=effective.user_id,
-        consent=consent,
-        result_summary="Cancelled and verified one calendar practice event.",
-    )
-    return response

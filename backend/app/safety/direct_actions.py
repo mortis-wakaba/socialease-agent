@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from app.auth.tokens import auth_mode
+from app.models_protocols import ProtocolStatus
 from app.protocols.service import protocol_service
 from app.safety.actions import HarnessAction
 
@@ -38,7 +39,7 @@ def direct_action_consent_enforced() -> bool:
     return auth_mode() == "production"
 
 
-def require_direct_action_consent(
+async def require_direct_action_consent(
     *,
     user_id: str,
     harness_action: HarnessAction,
@@ -53,7 +54,7 @@ def require_direct_action_consent(
         payload=payload,
     )
     if protocol_id is None:
-        protocol = protocol_service.create_consent_request(
+        protocol = await protocol_service.create_consent_request(
             user_id=user_id,
             harness_action=harness_action,
             reason="Direct state-changing API action requires explicit consent.",
@@ -75,13 +76,14 @@ def require_direct_action_consent(
                 "harness_action": harness_action.value,
             },
         )
-    if not protocol_service.is_approved_for_action(
+    claimed = await protocol_service.claim_for_action(
         protocol_id=protocol_id,
         user_id=user_id,
         harness_action=harness_action,
         request_hash=request_hash,
         session_id=None,
-    ):
+    )
+    if claimed is None:
         raise HTTPException(status_code=403, detail="Approved consent protocol is required")
     return DirectActionConsent(
         protocol_id=protocol_id,
@@ -90,22 +92,70 @@ def require_direct_action_consent(
     )
 
 
-def consume_direct_action_consent(
+async def require_direct_action_approval(
     *,
     user_id: str,
-    consent: DirectActionConsent | None,
-    result_summary: str,
-) -> None:
-    """Consume an approved direct-action protocol after successful execution."""
-    if consent is None:
-        return
-    protocol_service.consume_for_action(
-        protocol_id=consent.protocol_id,
+    harness_action: HarnessAction,
+    payload: BaseModel | dict[str, Any],
+    protocol_id: str | None,
+) -> DirectActionConsent | None:
+    """Validate consent without consuming it; a transactional outbox must consume it."""
+    if not direct_action_consent_enforced():
+        return None
+    request_hash = direct_action_request_hash(
+        harness_action=harness_action,
+        payload=payload,
+    )
+    if protocol_id is None:
+        protocol = await protocol_service.create_consent_request(
+            user_id=user_id,
+            harness_action=harness_action,
+            reason="Direct state-changing API action requires explicit consent.",
+            required_protocol=f"{harness_action.value}_direct_api_consent",
+            session_id=None,
+            request_hash=request_hash,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "action": "consent_required",
+                "consent_required": True,
+                "protocol_id": protocol.protocol_id,
+                "protocol_status": protocol.status.value,
+                "protocol_expires_at": (
+                    protocol.expires_at.isoformat()
+                    if protocol.expires_at
+                    else None
+                ),
+                "protocol_request_hash": protocol.request_hash,
+                "harness_action": harness_action.value,
+            },
+        )
+    approved = await protocol_service.is_approved_for_action(
+        protocol_id=protocol_id,
         user_id=user_id,
-        harness_action=consent.harness_action,
-        request_hash=consent.request_hash,
+        harness_action=harness_action,
+        request_hash=request_hash,
         session_id=None,
-        result_summary=result_summary,
+    )
+    if not approved:
+        # A consumed protocol may already own the exact outbox job. The outbox
+        # performs the authoritative locked validation in that replay path.
+        record = await protocol_service.store.get_for_user(protocol_id, user_id)
+        if (
+            record is None
+            or record.status is not ProtocolStatus.CONSUMED
+            or record.harness_action != harness_action.value
+            or record.request_hash != request_hash
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Approved consent protocol is required",
+            )
+    return DirectActionConsent(
+        protocol_id=protocol_id,
+        request_hash=request_hash,
+        harness_action=harness_action,
     )
 
 

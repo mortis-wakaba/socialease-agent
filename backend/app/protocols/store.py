@@ -17,7 +17,7 @@ class ProtocolStore:
         if resolve_database_provider(database_settings().database_url) == DatabaseProvider.SQLITE:
             initialize_database()
 
-    def create(
+    async def create(
         self,
         *,
         user_id: str,
@@ -43,9 +43,9 @@ class ProtocolStore:
             created_at=now,
             updated_at=now,
         )
-        return self.save(record)
+        return await self.save(record)
 
-    def save(self, record: ProtocolRecord) -> ProtocolRecord:
+    async def save(self, record: ProtocolRecord) -> ProtocolRecord:
         """Persist one protocol record."""
         with connect() as connection:
             connection.execute(
@@ -69,7 +69,11 @@ class ProtocolStore:
             )
         return record
 
-    def get_for_user(self, protocol_id: str, user_id: str) -> ProtocolRecord | None:
+    async def get_for_user(
+        self,
+        protocol_id: str,
+        user_id: str,
+    ) -> ProtocolRecord | None:
         """Return a protocol only if it belongs to the user."""
         with connect() as connection:
             row = connection.execute(
@@ -78,7 +82,7 @@ class ProtocolStore:
             ).fetchone()
         return ProtocolRecord.model_validate_json(row["payload"]) if row else None
 
-    def set_status(
+    async def set_status(
         self,
         *,
         protocol_id: str,
@@ -86,7 +90,7 @@ class ProtocolStore:
         status: ProtocolStatus,
     ) -> ProtocolRecord | None:
         """Update a protocol status if it belongs to the user."""
-        record = self.get_for_user(protocol_id, user_id)
+        record = await self.get_for_user(protocol_id, user_id)
         if record is None:
             return None
         now = datetime.now(timezone.utc)
@@ -104,9 +108,9 @@ class ProtocolStore:
                 **timestamp_updates,
             }
         )
-        return self.save(updated)
+        return await self.save(updated)
 
-    def transition_status(
+    async def transition_status(
         self,
         *,
         protocol_id: str,
@@ -115,7 +119,7 @@ class ProtocolStore:
         next_status: ProtocolStatus,
     ) -> ProtocolRecord | None:
         """Atomically transition status when the current status matches."""
-        record = self.get_for_user(protocol_id, user_id)
+        record = await self.get_for_user(protocol_id, user_id)
         if record is None or record.status != expected_status:
             return None
         now = datetime.now(timezone.utc)
@@ -149,7 +153,7 @@ class ProtocolStore:
             )
         return updated if cursor.rowcount == 1 else None
 
-    def expire_pending_before(self, cutoff: datetime) -> int:
+    async def expire_pending_before(self, cutoff: datetime) -> int:
         """Expire pending protocols whose expiration timestamp has passed."""
         with connect() as connection:
             rows = connection.execute(
@@ -160,7 +164,7 @@ class ProtocolStore:
         expired_count = 0
         for row in rows:
             record = ProtocolRecord.model_validate_json(row["payload"])
-            if self.transition_status(
+            if await self.transition_status(
                 protocol_id=record.protocol_id,
                 user_id=record.user_id,
                 expected_status=ProtocolStatus.PENDING,

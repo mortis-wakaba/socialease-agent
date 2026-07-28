@@ -19,7 +19,7 @@ class PersistenceGate:
     def __init__(self, repository: UserMemorySettingsRepository | None = None) -> None:
         self.repository = repository or repository_factory().user_memory_settings_repository()
 
-    def persist_text(
+    async def persist_text(
         self,
         *,
         user_id: str,
@@ -27,7 +27,7 @@ class PersistenceGate:
         text: str,
     ) -> PersistenceDecision:
         """Return a safe text value for persistence."""
-        settings = self.repository.get(user_id)
+        settings = await self.repository.get(user_id)
         redacted, detected = redact_sensitive_identifiers(text)
         if settings.consent_state.allow_sensitive_memory:
             redacted = text
@@ -95,7 +95,7 @@ class PersistenceGate:
             redacted_types=detected,
         )
 
-    def persist_texts(
+    async def persist_texts(
         self,
         *,
         user_id: str,
@@ -104,7 +104,9 @@ class PersistenceGate:
     ) -> list[str]:
         """Apply the same persistence policy to a list of texts."""
         return [
-            self.persist_text(user_id=user_id, kind=kind, text=text).persisted_text
+            (
+                await self.persist_text(user_id=user_id, kind=kind, text=text)
+            ).persisted_text
             for text in texts
         ]
 

@@ -78,7 +78,8 @@ async def test_calendar_create_requires_consumable_request_bound_consent(
         json=payload,
         headers={"X-SocialEase-Protocol-Id": protocol_id},
     )
-    assert replay.status_code == 403
+    assert replay.status_code == 200
+    assert replay.json()["event"]["calendar_action_id"] == body["event"]["calendar_action_id"]
 
 
 @pytest.mark.anyio
@@ -109,7 +110,7 @@ async def test_calendar_consent_cannot_be_reused_with_changed_proposal(
 
 
 @pytest.mark.anyio
-async def test_calendar_tool_failure_does_not_consume_approved_consent(
+async def test_calendar_tool_failure_retries_without_new_consent(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -135,16 +136,19 @@ async def test_calendar_tool_failure_does_not_consume_approved_consent(
         headers={"X-SocialEase-Protocol-Id": protocol_id},
     )
     monkeypatch.setattr(calendar_service, "create_event", original_create)
-    recovered = await client.post(
+    await asyncio.sleep(1.05)
+    replay = await client.post(
         "/api/calendar/events",
         json=payload,
         headers={"X-SocialEase-Protocol-Id": protocol_id},
     )
+    replacement = await client.post("/api/calendar/events", json=payload)
 
     assert failed.status_code == 503
     assert failed.json()["detail"] == "Calendar tool is unavailable"
-    assert recovered.status_code == 200
-    assert recovered.json()["verified"] is True
+    assert replay.status_code == 200
+    assert replacement.status_code == 409
+    assert replacement.json()["detail"]["consent_required"] is True
 
 
 @pytest.mark.anyio
@@ -173,7 +177,12 @@ async def test_concurrent_calendar_replay_keeps_external_side_effect_idempotent(
     responses = await asyncio.gather(*(replay_once() for _ in range(8)))
     listed = await client.get("/api/calendar/events", params={"user_id": user_id})
 
-    assert sum(response.status_code == 200 for response in responses) == 1
-    assert all(response.status_code in {200, 403} for response in responses)
+    assert all(response.status_code == 200 for response in responses)
+    assert len(
+        {
+            response.json()["event"]["calendar_action_id"]
+            for response in responses
+        }
+    ) == 1
     assert listed.status_code == 200
     assert len(listed.json()["events"]) == 1

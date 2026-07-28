@@ -20,8 +20,8 @@ from app.memory.settings_payload import load_user_memory_settings_payload
 class UserMemorySettingsRepository(Protocol):
     """Persistence contract for privacy-aware memory settings."""
 
-    def get(self, user_id: str) -> UserMemorySettings: ...
-    def save(
+    async def get(self, user_id: str) -> UserMemorySettings: ...
+    async def save(
         self,
         *,
         user_id: str,
@@ -39,7 +39,7 @@ class SQLiteUserMemorySettingsRepository:
         if resolve_database_provider(database_settings().database_url) == DatabaseProvider.SQLITE:
             initialize_database()
 
-    def get(self, user_id: str) -> UserMemorySettings:
+    async def get(self, user_id: str) -> UserMemorySettings:
         """Return memory settings or privacy-preserving defaults."""
         with connect() as connection:
             row = connection.execute(
@@ -48,7 +48,7 @@ class SQLiteUserMemorySettingsRepository:
             ).fetchone()
         return load_user_memory_settings_payload(row["payload"] if row else None)
 
-    def save(
+    async def save(
         self,
         *,
         user_id: str,
@@ -58,7 +58,7 @@ class SQLiteUserMemorySettingsRepository:
         disabled_memory_types: list[AgentMemoryType] | None = None,
     ) -> UserMemorySettings:
         """Persist explicit user memory settings."""
-        current = self.get(user_id)
+        current = await self.get(user_id)
         settings = UserMemorySettings(
             consent_state=consent_state or current.consent_state,
             practice_preferences=practice_preferences or current.practice_preferences,

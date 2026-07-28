@@ -22,26 +22,22 @@ from app.models_memory import (
 )
 
 
-USER_MEMORY_TABLES = (
-    "runs",
-    "roleplay_sessions",
-    "worksheets",
-    "exposure_plans",
-    "exposure_attempts",
-    "protocols",
-    "intervention_plans",
+AGENT_MEMORY_TABLES = (
     "user_memory_settings",
-    "session_reviews",
     "episodic_memories",
     "thread_checkpoints",
     "memory_events",
     "memory_proposals",
 )
-USER_MEMORY_DELETE_ORDER = (
+AGENT_MEMORY_DELETE_ORDER = (
     "memory_events",
     "memory_proposals",
     "thread_checkpoints",
     "episodic_memories",
+    "user_memory_settings",
+)
+ACCOUNT_DATA_DELETE_ORDER = (
+    *AGENT_MEMORY_DELETE_ORDER[:-1],
     "runs",
     "conversation_events",
     "conversation_module_proposals",
@@ -78,41 +74,68 @@ class MemoryPrivacyService:
         self.profile_repository = profile_repository or factory.user_profile_repository()
         self.settings_repository = settings_repository or factory.user_memory_settings_repository()
 
-    def profile(self, user_id: str) -> UserProfileResponse:
+    async def profile(self, user_id: str) -> UserProfileResponse:
         """Return a privacy-minimized profile with memory settings."""
-        memory_settings = self.settings_repository.get(user_id)
+        memory_settings = await self.settings_repository.get(user_id)
         return UserProfileResponse(
             user_id=user_id,
-            practice_summary=self.profile_repository.get_summary(user_id),
+            practice_summary=await self.profile_repository.get_summary(user_id),
             consent_state=memory_settings.consent_state,
             practice_preferences=memory_settings.practice_preferences,
         )
 
-    def export(self, user_id: str) -> UserMemoryExportResponse:
+    async def export(self, user_id: str) -> UserMemoryExportResponse:
         """Export user-owned persisted records in JSON-compatible form."""
         if self.provider == DatabaseProvider.POSTGRES:
-            records = self._export_postgres(user_id)
+            records = await self._export_postgres(user_id)
         else:
             records = self._export_sqlite(user_id)
         return UserMemoryExportResponse(
             user_id=user_id,
-            profile=self.profile(user_id),
+            profile=await self.profile(user_id),
             records=records,
         )
 
-    def delete(self, user_id: str) -> UserMemoryDeleteResponse:
-        """Delete user-owned persisted records."""
+    async def delete(self, user_id: str) -> UserMemoryDeleteResponse:
+        """Delete only cross-conversation agent memory and personalization."""
         if self.provider == DatabaseProvider.POSTGRES:
-            deleted_counts = self._delete_postgres(user_id)
+            deleted_counts = await self._delete_postgres(
+                user_id,
+                tables=AGENT_MEMORY_DELETE_ORDER,
+            )
         else:
-            deleted_counts = self._delete_sqlite(user_id)
+            deleted_counts = self._delete_sqlite(
+                user_id,
+                tables=AGENT_MEMORY_DELETE_ORDER,
+            )
         return UserMemoryDeleteResponse(
             user_id=user_id,
             deleted_counts=deleted_counts,
-            profile_after_delete=self.profile(user_id),
+            profile_after_delete=await self.profile(user_id),
         )
 
-    def update_preferences(
+    async def delete_all_user_data(
+        self,
+        user_id: str,
+    ) -> UserMemoryDeleteResponse:
+        """Delete every durable user-owned product record for account erasure."""
+        if self.provider == DatabaseProvider.POSTGRES:
+            deleted_counts = await self._delete_postgres(
+                user_id,
+                tables=ACCOUNT_DATA_DELETE_ORDER,
+            )
+        else:
+            deleted_counts = self._delete_sqlite(
+                user_id,
+                tables=ACCOUNT_DATA_DELETE_ORDER,
+            )
+        return UserMemoryDeleteResponse(
+            user_id=user_id,
+            deleted_counts=deleted_counts,
+            profile_after_delete=await self.profile(user_id),
+        )
+
+    async def update_preferences(
         self,
         *,
         user_id: str,
@@ -121,14 +144,14 @@ class MemoryPrivacyService:
         """Save practice preferences only after explicit consent."""
         if not request.consent_to_save_preferences:
             raise PermissionError("Explicit consent_to_save_preferences=true is required.")
-        current = self.settings_repository.get(user_id)
+        current = await self.settings_repository.get(user_id)
         consent_state = UserConsentState(
             consent_to_practice_summary=current.consent_state.consent_to_practice_summary,
             consent_to_save_preferences=True,
             do_not_store_raw_messages=True,
             allow_sensitive_memory=False,
         )
-        settings = self.settings_repository.save(
+        settings = await self.settings_repository.save(
             user_id=user_id,
             consent_state=consent_state,
             practice_preferences=request.practice_preferences,
@@ -139,16 +162,19 @@ class MemoryPrivacyService:
             practice_preferences=settings.practice_preferences,
         )
 
-    def disable_preferences(self, user_id: str) -> MemoryPreferencesUpdateResponse:
+    async def disable_preferences(
+        self,
+        user_id: str,
+    ) -> MemoryPreferencesUpdateResponse:
         """Turn off long-term practice preferences without deleting all memory."""
-        current = self.settings_repository.get(user_id)
+        current = await self.settings_repository.get(user_id)
         consent_state = UserConsentState(
             consent_to_practice_summary=current.consent_state.consent_to_practice_summary,
             consent_to_save_preferences=False,
             do_not_store_raw_messages=True,
             allow_sensitive_memory=False,
         )
-        settings = self.settings_repository.save(
+        settings = await self.settings_repository.save(
             user_id=user_id,
             consent_state=consent_state,
             practice_preferences=PracticePreferences(),
@@ -159,21 +185,21 @@ class MemoryPrivacyService:
             practice_preferences=settings.practice_preferences,
         )
 
-    def update_practice_summary_consent(
+    async def update_practice_summary_consent(
         self,
         *,
         user_id: str,
         consent_to_practice_summary: bool,
     ) -> PracticeSummaryConsentUpdateResponse:
         """Enable or revoke future agent use of saved practice summaries."""
-        current = self.settings_repository.get(user_id)
+        current = await self.settings_repository.get(user_id)
         consent_state = UserConsentState(
             consent_to_practice_summary=consent_to_practice_summary,
             consent_to_save_preferences=current.consent_state.consent_to_save_preferences,
             do_not_store_raw_messages=True,
             allow_sensitive_memory=False,
         )
-        settings = self.settings_repository.save(
+        settings = await self.settings_repository.save(
             user_id=user_id,
             consent_state=consent_state,
         )
@@ -182,22 +208,25 @@ class MemoryPrivacyService:
             consent_state=settings.consent_state,
         )
 
-    def get_onboarding_profile(self, user_id: str) -> UserOnboardingProfileResponse:
+    async def get_onboarding_profile(
+        self,
+        user_id: str,
+    ) -> UserOnboardingProfileResponse:
         """Return low-sensitivity onboarding choices."""
-        settings = self.settings_repository.get(user_id)
+        settings = await self.settings_repository.get(user_id)
         return UserOnboardingProfileResponse(
             user_id=user_id,
             onboarding_profile=settings.onboarding_profile,
         )
 
-    def update_onboarding_profile(
+    async def update_onboarding_profile(
         self,
         *,
         user_id: str,
         onboarding_profile: UserOnboardingProfile,
     ) -> UserOnboardingProfileResponse:
         """Save low-sensitivity onboarding profile fields."""
-        settings = self.settings_repository.save(
+        settings = await self.settings_repository.save(
             user_id=user_id,
             onboarding_profile=onboarding_profile,
         )
@@ -206,9 +235,12 @@ class MemoryPrivacyService:
             onboarding_profile=settings.onboarding_profile,
         )
 
-    def reset_onboarding_profile(self, user_id: str) -> UserOnboardingProfileResponse:
+    async def reset_onboarding_profile(
+        self,
+        user_id: str,
+    ) -> UserOnboardingProfileResponse:
         """Reset onboarding profile choices while preserving other memory settings."""
-        settings = self.settings_repository.save(
+        settings = await self.settings_repository.save(
             user_id=user_id,
             onboarding_profile=UserOnboardingProfile(),
         )
@@ -221,7 +253,7 @@ class MemoryPrivacyService:
         """Export user-owned SQLite rows."""
         records: dict[str, list[dict[str, object]]] = {}
         with connect() as connection:
-            for table in USER_MEMORY_TABLES:
+            for table in AGENT_MEMORY_TABLES:
                 rows = connection.execute(
                     f"SELECT * FROM {table} WHERE user_id = ?",
                     (user_id,),
@@ -234,11 +266,16 @@ class MemoryPrivacyService:
                 ]
         return records
 
-    def _delete_sqlite(self, user_id: str) -> dict[str, int]:
+    def _delete_sqlite(
+        self,
+        user_id: str,
+        *,
+        tables: tuple[str, ...],
+    ) -> dict[str, int]:
         """Delete user-owned SQLite rows in dependency-safe order."""
         deleted_counts: dict[str, int] = {}
         with connect() as connection:
-            for table in USER_MEMORY_DELETE_ORDER:
+            for table in tables:
                 cursor = connection.execute(
                     f"DELETE FROM {table} WHERE user_id = ?",
                     (user_id,),
@@ -246,46 +283,52 @@ class MemoryPrivacyService:
                 deleted_counts[table] = cursor.rowcount
         return deleted_counts
 
-    def _export_postgres(self, user_id: str) -> dict[str, list[dict[str, object]]]:
+    async def _export_postgres(
+        self,
+        user_id: str,
+    ) -> dict[str, list[dict[str, object]]]:
         """Export user-owned PostgreSQL rows."""
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import text
 
-        engine = create_engine(self.database_url, pool_pre_ping=True)
-        try:
-            records: dict[str, list[dict[str, object]]] = {}
-            with engine.connect() as connection:
-                for table in USER_MEMORY_TABLES:
-                    rows = connection.execute(
+        from app.db.postgres.engine import shared_postgres_async_engine
+
+        engine = shared_postgres_async_engine(self.database_url)
+        records: dict[str, list[dict[str, object]]] = {}
+        async with engine.connect() as connection:
+            for table in AGENT_MEMORY_TABLES:
+                rows = (await connection.execute(
                         text(f"SELECT * FROM {table} WHERE user_id = :user_id"),
                         {"user_id": user_id},
-                    ).mappings().all()
-                    records[table] = [
-                        _sanitize_memory_settings_export_row(_json_safe_row(dict(row)))
-                        if table == "user_memory_settings"
-                        else _json_safe_row(dict(row))
-                        for row in rows
-                    ]
-            return records
-        finally:
-            engine.dispose()
+                )).mappings().all()
+                records[table] = [
+                    _sanitize_memory_settings_export_row(_json_safe_row(dict(row)))
+                    if table == "user_memory_settings"
+                    else _json_safe_row(dict(row))
+                    for row in rows
+                ]
+        return records
 
-    def _delete_postgres(self, user_id: str) -> dict[str, int]:
+    async def _delete_postgres(
+        self,
+        user_id: str,
+        *,
+        tables: tuple[str, ...],
+    ) -> dict[str, int]:
         """Delete user-owned PostgreSQL rows in dependency-safe order."""
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import text
 
-        engine = create_engine(self.database_url, pool_pre_ping=True)
-        try:
-            deleted_counts: dict[str, int] = {}
-            with engine.begin() as connection:
-                for table in USER_MEMORY_DELETE_ORDER:
-                    result = connection.execute(
+        from app.db.postgres.engine import shared_postgres_async_engine
+
+        engine = shared_postgres_async_engine(self.database_url)
+        deleted_counts: dict[str, int] = {}
+        async with engine.begin() as connection:
+            for table in tables:
+                result = await connection.execute(
                         text(f"DELETE FROM {table} WHERE user_id = :user_id"),
                         {"user_id": user_id},
-                    )
-                    deleted_counts[table] = result.rowcount or 0
-            return deleted_counts
-        finally:
-            engine.dispose()
+                )
+                deleted_counts[table] = result.rowcount or 0
+        return deleted_counts
 
 
 def _json_safe_row(row: dict[str, object]) -> dict[str, object]:

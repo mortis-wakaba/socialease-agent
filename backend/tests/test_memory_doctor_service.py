@@ -64,7 +64,7 @@ class ScopedMemoryRepository:
         self.checkpoints = checkpoints
         self.requested_users: list[str] = []
 
-    def list_memories(
+    async def list_memories(
         self,
         user_id: str,
         *,
@@ -77,7 +77,7 @@ class ScopedMemoryRepository:
             records = [item for item in records if item.status in statuses]
         return records[:limit]
 
-    def list_checkpoints(
+    async def list_checkpoints(
         self,
         user_id: str,
         *,
@@ -96,7 +96,7 @@ class ScopedProposalRepository:
         self.proposals = proposals
         self.requested_users: list[str] = []
 
-    def list_pending(
+    async def list_pending(
         self,
         user_id: str,
         *,
@@ -118,7 +118,7 @@ class ScopedSettingsRepository:
         self.settings = settings
         self.requested_users: list[str] = []
 
-    def get(self, user_id: str) -> UserMemorySettings:
+    async def get(self, user_id: str) -> UserMemorySettings:
         self.requested_users.append(user_id)
         return self.settings.get(user_id, UserMemorySettings())
 
@@ -143,7 +143,8 @@ class EnabledEmbeddingInspector:
         return ["raw-vector-record-id"]
 
 
-def test_doctor_detects_quality_issues_without_returning_memory_content() -> None:
+@pytest.mark.anyio
+async def test_doctor_detects_quality_issues_without_returning_memory_content() -> None:
     user_id = "doctor_owner"
     duplicate_summary = "小组讨论前先写一句开场，对表达观点有帮助。"
     conflict_summary = "小组讨论前不要写开场，这对表达观点没有帮助。"
@@ -223,7 +224,7 @@ def test_doctor_detects_quality_issues_without_returning_memory_content() -> Non
         active_memory_token_budget=128,
     )
 
-    report = service.diagnose(user_id, now=NOW)
+    report = await service.diagnose(user_id, now=NOW)
 
     codes = {issue.code for issue in report.issues}
     assert {
@@ -277,7 +278,8 @@ def test_doctor_detects_quality_issues_without_returning_memory_content() -> Non
     )
 
 
-def test_doctor_clean_report_has_one_status_for_every_rule() -> None:
+@pytest.mark.anyio
+async def test_doctor_clean_report_has_one_status_for_every_rule() -> None:
     user_id = "doctor-clean"
     service = MemoryDoctorService(
         memory_repository=ScopedMemoryRepository(memories=[], checkpoints=[]),
@@ -285,7 +287,7 @@ def test_doctor_clean_report_has_one_status_for_every_rule() -> None:
         settings_repository=ScopedSettingsRepository({}),
     )
 
-    report = service.diagnose(user_id, now=NOW)
+    report = await service.diagnose(user_id, now=NOW)
 
     assert report.issues == []
     assert len(report.checks) == len(MemoryDoctorIssueCode)
@@ -296,7 +298,8 @@ def test_doctor_clean_report_has_one_status_for_every_rule() -> None:
     )
 
 
-def test_doctor_hashes_embedding_adapter_identifiers_before_reporting() -> None:
+@pytest.mark.anyio
+async def test_doctor_hashes_embedding_adapter_identifiers_before_reporting() -> None:
     service = MemoryDoctorService(
         memory_repository=ScopedMemoryRepository(memories=[], checkpoints=[]),
         proposal_repository=ScopedProposalRepository([]),
@@ -304,7 +307,7 @@ def test_doctor_hashes_embedding_adapter_identifiers_before_reporting() -> None:
         embedding_inspector=EnabledEmbeddingInspector(),
     )
 
-    report = service.diagnose("doctor-embedding", now=NOW)
+    report = await service.diagnose("doctor-embedding", now=NOW)
 
     issue = next(
         item

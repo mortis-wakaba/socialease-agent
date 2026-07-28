@@ -16,7 +16,9 @@ _ip_limiter = SlidingWindowRateLimiter(limit_per_minute=0)
 _limiter_limit = 0
 
 
-def check_auth_rate_limit(request: Request, *, action: str, email: str | None) -> None:
+async def check_auth_rate_limit(
+    request: Request, *, action: str, email: str | None
+) -> None:
     """Raise 429 when one auth action exceeds its configured local budget."""
     limit = _auth_limit_per_minute()
     if limit <= 0:
@@ -31,7 +33,7 @@ def check_auth_rate_limit(request: Request, *, action: str, email: str | None) -
     from app.observability.runtime_events import record_auth_rate_limit_hit
 
     decision = email_decision if not email_decision.allowed else ip_decision
-    record_auth_rate_limit_hit()
+    await record_auth_rate_limit_hit()
     raise HTTPException(
         status_code=429,
         detail={

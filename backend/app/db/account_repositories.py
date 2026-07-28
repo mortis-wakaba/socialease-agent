@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.config import database_settings
 from app.db.engine import connect
 from app.db.session import initialize_database
+from app.db.postgres.engine import shared_postgres_async_engine
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ class AccessTokenSession:
 class AccountRepository(Protocol):
     """Persistence contract for account and session records."""
 
-    def create_user(
+    async def create_user(
         self,
         *,
         user_id: str,
@@ -55,8 +56,8 @@ class AccountRepository(Protocol):
         password_hash: str,
         now: datetime,
     ) -> None: ...
-    def get_by_email(self, email: str) -> AccountRecord | None: ...
-    def create_session(
+    async def get_by_email(self, email: str) -> AccountRecord | None: ...
+    async def create_session(
         self,
         *,
         session_id: str,
@@ -66,14 +67,24 @@ class AccountRepository(Protocol):
         expires_at: datetime,
         now: datetime,
     ) -> None: ...
-    def get_session_by_refresh_hash(self, refresh_hash: str) -> SessionRecord | None: ...
-    def get_session_id_by_refresh_hash(self, refresh_hash: str) -> str | None: ...
-    def get_access_token_session(self, token_id: str) -> AccessTokenSession | None: ...
-    def revoke_session(self, session_id: str, now: datetime) -> None: ...
-    def revoke_user_sessions(self, user_id: str, now: datetime) -> int: ...
-    def delete_user(self, user_id: str) -> bool: ...
-    def record_successful_login(self, user_id: str, now: datetime) -> None: ...
-    def record_failed_login(self, user_id: str, now: datetime) -> None: ...
+    async def get_session_by_refresh_hash(self, refresh_hash: str) -> SessionRecord | None: ...
+    async def rotate_session(
+        self,
+        *,
+        refresh_hash: str,
+        new_session_id: str,
+        new_refresh_token_hash: str,
+        new_access_token_id: str,
+        new_expires_at: datetime,
+        now: datetime,
+    ) -> SessionRecord | None: ...
+    async def get_session_id_by_refresh_hash(self, refresh_hash: str) -> str | None: ...
+    async def get_access_token_session(self, token_id: str) -> AccessTokenSession | None: ...
+    async def revoke_session(self, session_id: str, now: datetime) -> None: ...
+    async def revoke_user_sessions(self, user_id: str, now: datetime) -> int: ...
+    async def delete_user(self, user_id: str) -> bool: ...
+    async def record_successful_login(self, user_id: str, now: datetime) -> None: ...
+    async def record_failed_login(self, user_id: str, now: datetime) -> None: ...
 
 
 class SQLiteAccountRepository:
@@ -82,7 +93,7 @@ class SQLiteAccountRepository:
     def __init__(self) -> None:
         initialize_database()
 
-    def create_user(
+    async def create_user(
         self,
         *,
         user_id: str,
@@ -97,7 +108,7 @@ class SQLiteAccountRepository:
                 (user_id, email, password_hash, now.isoformat(), now.isoformat()),
             )
 
-    def get_by_email(self, email: str) -> AccountRecord | None:
+    async def get_by_email(self, email: str) -> AccountRecord | None:
         with connect() as connection:
             row = connection.execute(
                 """SELECT user_id, email, password_hash,
@@ -115,7 +126,7 @@ class SQLiteAccountRepository:
             last_failed_login_at=row["last_failed_login_at"],
         )
 
-    def create_session(
+    async def create_session(
         self,
         *,
         session_id: str,
@@ -142,7 +153,7 @@ class SQLiteAccountRepository:
                 ),
             )
 
-    def get_session_by_refresh_hash(self, refresh_hash: str) -> SessionRecord | None:
+    async def get_session_by_refresh_hash(self, refresh_hash: str) -> SessionRecord | None:
         with connect() as connection:
             row = connection.execute(
                 """SELECT s.session_id, s.user_id, s.expires_at, s.revoked_at, u.email
@@ -161,7 +172,76 @@ class SQLiteAccountRepository:
             revoked_at=row["revoked_at"],
         )
 
-    def get_session_id_by_refresh_hash(self, refresh_hash: str) -> str | None:
+    async def rotate_session(
+        self,
+        *,
+        refresh_hash: str,
+        new_session_id: str,
+        new_refresh_token_hash: str,
+        new_access_token_id: str,
+        new_expires_at: datetime,
+        now: datetime,
+    ) -> SessionRecord | None:
+        """Consume one refresh session and create its replacement atomically."""
+        connection = connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT s.session_id, s.user_id, s.expires_at, s.revoked_at, u.email
+                FROM user_sessions s
+                JOIN users u ON u.user_id = s.user_id
+                WHERE s.refresh_token_hash = ?""",
+                (refresh_hash,),
+            ).fetchone()
+            if row is None or row["revoked_at"] is not None:
+                connection.rollback()
+                return None
+            if datetime.fromisoformat(row["expires_at"]) <= now:
+                connection.execute(
+                    """UPDATE user_sessions SET revoked_at = ?, updated_at = ?
+                    WHERE session_id = ? AND revoked_at IS NULL""",
+                    (now.isoformat(), now.isoformat(), row["session_id"]),
+                )
+                connection.commit()
+                return None
+            updated = connection.execute(
+                """UPDATE user_sessions SET revoked_at = ?, updated_at = ?
+                WHERE session_id = ? AND revoked_at IS NULL""",
+                (now.isoformat(), now.isoformat(), row["session_id"]),
+            )
+            if updated.rowcount != 1:
+                connection.rollback()
+                return None
+            connection.execute(
+                """INSERT INTO user_sessions (
+                    session_id, user_id, refresh_token_hash, access_token_id,
+                    expires_at, revoked_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)""",
+                (
+                    new_session_id,
+                    row["user_id"],
+                    new_refresh_token_hash,
+                    new_access_token_id,
+                    new_expires_at.isoformat(),
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+            connection.commit()
+            return SessionRecord(
+                session_id=row["session_id"],
+                user_id=row["user_id"],
+                email=row["email"],
+                expires_at=row["expires_at"],
+                revoked_at=row["revoked_at"],
+            )
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    async def get_session_id_by_refresh_hash(self, refresh_hash: str) -> str | None:
         with connect() as connection:
             row = connection.execute(
                 "SELECT session_id FROM user_sessions WHERE refresh_token_hash = ?",
@@ -169,7 +249,7 @@ class SQLiteAccountRepository:
             ).fetchone()
         return row["session_id"] if row else None
 
-    def get_access_token_session(self, token_id: str) -> AccessTokenSession | None:
+    async def get_access_token_session(self, token_id: str) -> AccessTokenSession | None:
         with connect() as connection:
             row = connection.execute(
                 "SELECT expires_at, revoked_at FROM user_sessions WHERE access_token_id = ?",
@@ -179,14 +259,14 @@ class SQLiteAccountRepository:
             return None
         return AccessTokenSession(expires_at=row["expires_at"], revoked_at=row["revoked_at"])
 
-    def revoke_session(self, session_id: str, now: datetime) -> None:
+    async def revoke_session(self, session_id: str, now: datetime) -> None:
         with connect() as connection:
             connection.execute(
                 "UPDATE user_sessions SET revoked_at = ?, updated_at = ? WHERE session_id = ?",
                 (now.isoformat(), now.isoformat(), session_id),
             )
 
-    def revoke_user_sessions(self, user_id: str, now: datetime) -> int:
+    async def revoke_user_sessions(self, user_id: str, now: datetime) -> int:
         with connect() as connection:
             cursor = connection.execute(
                 """UPDATE user_sessions
@@ -196,7 +276,7 @@ class SQLiteAccountRepository:
             )
             return cursor.rowcount
 
-    def delete_user(self, user_id: str) -> bool:
+    async def delete_user(self, user_id: str) -> bool:
         with connect() as connection:
             connection.execute(
                 "DELETE FROM user_sessions WHERE user_id = ?",
@@ -208,7 +288,7 @@ class SQLiteAccountRepository:
             )
             return cursor.rowcount > 0
 
-    def record_successful_login(self, user_id: str, now: datetime) -> None:
+    async def record_successful_login(self, user_id: str, now: datetime) -> None:
         value = now.isoformat()
         with connect() as connection:
             connection.execute(
@@ -218,7 +298,7 @@ class SQLiteAccountRepository:
                 (value, value, user_id),
             )
 
-    def record_failed_login(self, user_id: str, now: datetime) -> None:
+    async def record_failed_login(self, user_id: str, now: datetime) -> None:
         value = now.isoformat()
         with connect() as connection:
             connection.execute(
@@ -234,13 +314,16 @@ class SQLiteAccountRepository:
 class PostgresAccountRepository:
     """PostgreSQL-backed account repository for production auth mode."""
 
-    def __init__(self, database_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+    def __init__(
+        self,
+        database_url: str | None = None,
+        engine: AsyncEngine | None = None,
+    ) -> None:
+        self.engine = engine or shared_postgres_async_engine(
+            database_url or database_settings().database_url
         )
 
-    def create_user(
+    async def create_user(
         self,
         *,
         user_id: str,
@@ -248,8 +331,8 @@ class PostgresAccountRepository:
         password_hash: str,
         now: datetime,
     ) -> None:
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """INSERT INTO users (user_id, email, password_hash, created_at, updated_at)
                     VALUES (:user_id, :email, :password_hash, :created_at, :updated_at)"""
@@ -263,16 +346,16 @@ class PostgresAccountRepository:
                 },
             )
 
-    def get_by_email(self, email: str) -> AccountRecord | None:
-        with self.engine.connect() as connection:
-            row = connection.execute(
+    async def get_by_email(self, email: str) -> AccountRecord | None:
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                     text(
                         """SELECT user_id, email, password_hash,
                         failed_login_count, last_failed_login_at
                         FROM users WHERE email = :email"""
                     ),
                 {"email": email},
-            ).mappings().first()
+            )).mappings().first()
         if row is None:
             return None
         return AccountRecord(
@@ -287,7 +370,7 @@ class PostgresAccountRepository:
             ),
         )
 
-    def create_session(
+    async def create_session(
         self,
         *,
         session_id: str,
@@ -297,8 +380,8 @@ class PostgresAccountRepository:
         expires_at: datetime,
         now: datetime,
     ) -> None:
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """INSERT INTO user_sessions (
                         session_id, user_id, refresh_token_hash, access_token_id,
@@ -319,9 +402,9 @@ class PostgresAccountRepository:
                 },
             )
 
-    def get_session_by_refresh_hash(self, refresh_hash: str) -> SessionRecord | None:
-        with self.engine.connect() as connection:
-            row = connection.execute(
+    async def get_session_by_refresh_hash(self, refresh_hash: str) -> SessionRecord | None:
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT s.session_id, s.user_id, s.expires_at, s.revoked_at, u.email
                     FROM user_sessions s
@@ -329,7 +412,7 @@ class PostgresAccountRepository:
                     WHERE s.refresh_token_hash = :refresh_hash"""
                 ),
                 {"refresh_hash": refresh_hash},
-            ).mappings().first()
+            )).mappings().first()
         if row is None:
             return None
         return SessionRecord(
@@ -340,24 +423,95 @@ class PostgresAccountRepository:
             revoked_at=_datetime_to_string(row["revoked_at"]) if row["revoked_at"] else None,
         )
 
-    def get_session_id_by_refresh_hash(self, refresh_hash: str) -> str | None:
-        with self.engine.connect() as connection:
-            row = connection.execute(
+    async def rotate_session(
+        self,
+        *,
+        refresh_hash: str,
+        new_session_id: str,
+        new_refresh_token_hash: str,
+        new_access_token_id: str,
+        new_expires_at: datetime,
+        now: datetime,
+    ) -> SessionRecord | None:
+        """Consume one locked refresh session and insert its replacement."""
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(
+                text(
+                    """SELECT s.session_id, s.user_id, s.expires_at, s.revoked_at, u.email
+                    FROM user_sessions s
+                    JOIN users u ON u.user_id = s.user_id
+                    WHERE s.refresh_token_hash = :refresh_hash
+                    FOR UPDATE"""
+                ),
+                {"refresh_hash": refresh_hash},
+            )).mappings().first()
+            if row is None or row["revoked_at"] is not None:
+                return None
+            if row["expires_at"] <= now:
+                await connection.execute(
+                    text(
+                        """UPDATE user_sessions
+                        SET revoked_at = :now, updated_at = :now
+                        WHERE session_id = :session_id"""
+                    ),
+                    {"now": now, "session_id": row["session_id"]},
+                )
+                return None
+            updated = await connection.execute(
+                text(
+                    """UPDATE user_sessions
+                    SET revoked_at = :now, updated_at = :now
+                    WHERE session_id = :session_id AND revoked_at IS NULL"""
+                ),
+                {"now": now, "session_id": row["session_id"]},
+            )
+            if updated.rowcount != 1:
+                return None
+            await connection.execute(
+                text(
+                    """INSERT INTO user_sessions (
+                        session_id, user_id, refresh_token_hash, access_token_id,
+                        expires_at, revoked_at, created_at, updated_at
+                    ) VALUES (
+                        :session_id, :user_id, :refresh_token_hash, :access_token_id,
+                        :expires_at, NULL, :now, :now
+                    )"""
+                ),
+                {
+                    "session_id": new_session_id,
+                    "user_id": row["user_id"],
+                    "refresh_token_hash": new_refresh_token_hash,
+                    "access_token_id": new_access_token_id,
+                    "expires_at": new_expires_at,
+                    "now": now,
+                },
+            )
+            return SessionRecord(
+                session_id=row["session_id"],
+                user_id=row["user_id"],
+                email=row["email"],
+                expires_at=_datetime_to_string(row["expires_at"]),
+                revoked_at=None,
+            )
+
+    async def get_session_id_by_refresh_hash(self, refresh_hash: str) -> str | None:
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     "SELECT session_id FROM user_sessions WHERE refresh_token_hash = :refresh_hash"
                 ),
                 {"refresh_hash": refresh_hash},
-            ).mappings().first()
+            )).mappings().first()
         return row["session_id"] if row else None
 
-    def get_access_token_session(self, token_id: str) -> AccessTokenSession | None:
-        with self.engine.connect() as connection:
-            row = connection.execute(
+    async def get_access_token_session(self, token_id: str) -> AccessTokenSession | None:
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     "SELECT expires_at, revoked_at FROM user_sessions WHERE access_token_id = :token_id"
                 ),
                 {"token_id": token_id},
-            ).mappings().first()
+            )).mappings().first()
         if row is None:
             return None
         return AccessTokenSession(
@@ -365,9 +519,9 @@ class PostgresAccountRepository:
             revoked_at=_datetime_to_string(row["revoked_at"]) if row["revoked_at"] else None,
         )
 
-    def revoke_session(self, session_id: str, now: datetime) -> None:
-        with self.engine.begin() as connection:
-            connection.execute(
+    async def revoke_session(self, session_id: str, now: datetime) -> None:
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """UPDATE user_sessions
                     SET revoked_at = :revoked_at, updated_at = :updated_at
@@ -376,9 +530,9 @@ class PostgresAccountRepository:
                 {"revoked_at": now, "updated_at": now, "session_id": session_id},
             )
 
-    def revoke_user_sessions(self, user_id: str, now: datetime) -> int:
-        with self.engine.begin() as connection:
-            result = connection.execute(
+    async def revoke_user_sessions(self, user_id: str, now: datetime) -> int:
+        async with self.engine.begin() as connection:
+            result = await connection.execute(
                 text(
                     """UPDATE user_sessions
                     SET revoked_at = :revoked_at, updated_at = :updated_at
@@ -388,21 +542,21 @@ class PostgresAccountRepository:
             )
             return int(result.rowcount or 0)
 
-    def delete_user(self, user_id: str) -> bool:
-        with self.engine.begin() as connection:
-            connection.execute(
+    async def delete_user(self, user_id: str) -> bool:
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text("DELETE FROM user_sessions WHERE user_id = :user_id"),
                 {"user_id": user_id},
             )
-            result = connection.execute(
+            result = await connection.execute(
                 text("DELETE FROM users WHERE user_id = :user_id"),
                 {"user_id": user_id},
             )
             return bool(result.rowcount)
 
-    def record_successful_login(self, user_id: str, now: datetime) -> None:
-        with self.engine.begin() as connection:
-            connection.execute(
+    async def record_successful_login(self, user_id: str, now: datetime) -> None:
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """UPDATE users
                     SET last_login_at = :last_login_at,
@@ -413,9 +567,9 @@ class PostgresAccountRepository:
                 {"last_login_at": now, "updated_at": now, "user_id": user_id},
             )
 
-    def record_failed_login(self, user_id: str, now: datetime) -> None:
-        with self.engine.begin() as connection:
-            connection.execute(
+    async def record_failed_login(self, user_id: str, now: datetime) -> None:
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """UPDATE users
                     SET last_failed_login_at = :last_failed_login_at,

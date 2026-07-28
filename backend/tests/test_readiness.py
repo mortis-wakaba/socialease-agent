@@ -1,15 +1,19 @@
-"""Deterministic readiness adapter tests."""
+"""Deterministic async PostgreSQL engine URL tests."""
 
-from app.observability.readiness import _psycopg_dsn
+from app.db.postgres.engine import _async_psycopg_url
 
 
-def test_psycopg_dsn_removes_sqlalchemy_driver_qualifier() -> None:
-    assert _psycopg_dsn(
+def test_async_psycopg_url_preserves_driver_qualifier() -> None:
+    qualified = (
         "postgresql+psycopg://user:password@postgres:5432/socialease"
-    ) == "postgresql://user:password@postgres:5432/socialease"
+    )
+
+    assert _async_psycopg_url(qualified) == qualified
 
 
-def test_psycopg_dsn_preserves_native_postgres_url() -> None:
+def test_async_psycopg_url_adds_driver_qualifier() -> None:
     native = "postgresql://user:password@postgres:5432/socialease"
 
-    assert _psycopg_dsn(native) == native
+    assert _async_psycopg_url(native) == (
+        "postgresql+psycopg://user:password@postgres:5432/socialease"
+    )

@@ -118,11 +118,3 @@ class ConversationExportCollectionResponse(StrictConversationModel):
     user_id: str = Field(min_length=1)
     conversations: list[ConversationExportResponse] = Field(default_factory=list)
     exported_at: datetime
-
-
-class LegacyRoleplayImportResponse(StrictConversationModel):
-    """Idempotent result for one owner's legacy role-play backfill."""
-
-    user_id: str = Field(min_length=1)
-    scanned_count: int = Field(ge=0)
-    imported_count: int = Field(ge=0)

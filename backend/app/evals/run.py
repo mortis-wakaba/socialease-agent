@@ -910,10 +910,12 @@ def _eval_privacy_redaction(case: ProductBoundaryEvalCase) -> bool:
     if isinstance(configured_trace_output_mode, str):
         os.environ["SOCIALEASE_TRACE_OUTPUT_MODE"] = configured_trace_output_mode
     try:
-        decision = gate.persist_text(
-            user_id=f"eval_privacy_{uuid4().hex}",
-            kind=kind,
-            text=text,
+        decision = asyncio.run(
+            gate.persist_text(
+                user_id=f"eval_privacy_{uuid4().hex}",
+                kind=kind,
+                text=text,
+            )
         )
     finally:
         if isinstance(configured_trace_output_mode, str):
@@ -938,11 +940,18 @@ def _eval_privacy_redaction(case: ProductBoundaryEvalCase) -> bool:
 
 def _eval_consent_replay(case: ProductBoundaryEvalCase) -> bool:
     """Evaluate that consent can be consumed only once."""
+    return asyncio.run(_eval_consent_replay_async(case))
+
+
+async def _eval_consent_replay_async(
+    case: ProductBoundaryEvalCase,
+) -> bool:
+    """Run the async consent repository contract from the synchronous CLI."""
     service = ProtocolService()
     user_id = f"eval_consent_{uuid4().hex}"
     request_hash = str(case.input.get("request_hash", "eval-hash"))
     harness_action = HarnessAction(str(case.input.get("harness_action", "start_roleplay")))
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=harness_action,
         reason="eval",
@@ -950,15 +959,19 @@ def _eval_consent_replay(case: ProductBoundaryEvalCase) -> bool:
         session_id=None,
         request_hash=request_hash,
     )
-    service.respond(protocol_id=protocol.protocol_id, user_id=user_id, approved=True)
-    first = service.consume_for_action(
+    await service.respond(
+        protocol_id=protocol.protocol_id,
+        user_id=user_id,
+        approved=True,
+    )
+    first = await service.consume_for_action(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         harness_action=harness_action,
         request_hash=request_hash,
         session_id=None,
     )
-    second = service.consume_for_action(
+    second = await service.consume_for_action(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         harness_action=harness_action,
@@ -972,10 +985,17 @@ def _eval_consent_replay(case: ProductBoundaryEvalCase) -> bool:
 
 def _eval_cross_user_access(case: ProductBoundaryEvalCase) -> bool:
     """Evaluate owner-scoped protocol access semantics."""
+    return asyncio.run(_eval_cross_user_access_async(case))
+
+
+async def _eval_cross_user_access_async(
+    case: ProductBoundaryEvalCase,
+) -> bool:
+    """Run async owner-scope checks from the synchronous eval CLI."""
     service = ProtocolService()
     owner = f"{case.input.get('owner', 'owner')}_{uuid4().hex}"
     other = f"{case.input.get('other', 'other')}_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=owner,
         harness_action=HarnessAction.START_ROLEPLAY,
         reason="eval",
@@ -983,17 +1003,27 @@ def _eval_cross_user_access(case: ProductBoundaryEvalCase) -> bool:
         session_id=None,
         request_hash="cross-user-hash",
     )
-    other_record = service.store.get_for_user(protocol.protocol_id, other)
+    other_record = await service.store.get_for_user(
+        protocol.protocol_id,
+        other,
+    )
     return (other_record is not None) is case.expected.get("other_can_access")
 
 
 def _eval_stale_plan_cancellation(case: ProductBoundaryEvalCase) -> bool:
     """Evaluate abandoned plan cleanup path at the retention-service boundary."""
+    return asyncio.run(_eval_stale_plan_cancellation_async(case))
+
+
+async def _eval_stale_plan_cancellation_async(
+    case: ProductBoundaryEvalCase,
+) -> bool:
+    """Run the async retention path from the synchronous eval CLI."""
     from app.memory.intervention_plan_store import intervention_plan_store
     from app.models_intervention import InterventionStep
 
     user_id = f"eval_stale_plan_{uuid4().hex}"
-    plan = intervention_plan_store.create(
+    plan = await intervention_plan_store.create(
         user_id=user_id,
         session_id=f"eval-session-{uuid4().hex}",
         status="pending_consent",
@@ -1008,14 +1038,19 @@ def _eval_stale_plan_cancellation(case: ProductBoundaryEvalCase) -> bool:
             )
         ],
     )
-    plan = intervention_plan_store.save(
+    plan = await intervention_plan_store.save(
         plan.model_copy(update={"updated_at": datetime.now(timezone.utc) - timedelta(hours=2)})
     )
-    cancelled = retention_service.cancel_abandoned_intervention_plans(
-        older_than_minutes=int(case.input.get("older_than_minutes", 60)),
+    cancelled = await retention_service.cancel_abandoned_intervention_plans(
+        older_than_minutes=int(
+            case.input.get("older_than_minutes", 60)
+        ),
         now=datetime.now(timezone.utc),
     )
-    updated = intervention_plan_store.get_by_id_for_user(plan.plan_id, user_id)
+    updated = await intervention_plan_store.get_by_id_for_user(
+        plan.plan_id,
+        user_id,
+    )
     return (
         cancelled >= 1
         and updated is not None

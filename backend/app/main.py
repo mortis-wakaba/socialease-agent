@@ -10,7 +10,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth.csrf import CsrfProtectionMiddleware
+from app.auth.tokens import validate_auth_configuration
 from app.db.capabilities import validate_runtime_database_support
+from app.db.postgres.engine import dispose_shared_postgres_engines
 from app.memory.runtime_requirements import (
     task_state_runtime_report,
     validate_task_state_runtime,
@@ -23,12 +25,13 @@ from app.rate_limit import RateLimitMiddleware
 from app.request_context import REQUEST_ID_HEADER, get_request_id
 from app.memory.redis_settings import redis_task_state_settings
 
+validate_auth_configuration()
 validate_runtime_database_support()
 validate_task_state_runtime()
 
 from app.api.routes import router as api_router
-from app.api.conversations import (
-    close_cached_conversation_service,
+from app.services.conversation_runtime import (
+    close_conversation_service,
     conversation_service,
 )
 from app.services.support_resource_service import support_resource_service
@@ -41,7 +44,8 @@ async def lifespan(_app: FastAPI):
     yield
     await worksheet_service.close()
     await support_resource_service.close()
-    await close_cached_conversation_service()
+    await close_conversation_service()
+    await dispose_shared_postgres_engines()
 
 app = FastAPI(
     title="SocialEase Agent API",
@@ -124,7 +128,7 @@ async def health_check() -> dict[str, str]:
 @app.get("/ready")
 async def readiness_check() -> JSONResponse:
     """Return deployment readiness checks without exposing secrets."""
-    status_code, payload = readiness_snapshot()
+    status_code, payload = await readiness_snapshot()
     context_settings = redis_task_state_settings()
     task_state = task_state_runtime_report()
     component_health = {

@@ -189,7 +189,7 @@ async def test_openai_compatible_client_enforces_global_concurrency_limit(
 ) -> None:
     saturation_events = 0
 
-    def fake_record_llm_concurrency_saturation() -> None:
+    async def fake_record_llm_concurrency_saturation() -> None:
         nonlocal saturation_events
         saturation_events += 1
 

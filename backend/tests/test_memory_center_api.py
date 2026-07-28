@@ -101,12 +101,12 @@ async def test_memory_center_separates_layers_and_explains_history(
 ) -> None:
     user_id = f"memory_center_snapshot_{uuid4().hex}"
     factory = repository_factory()
-    factory.user_memory_settings_repository().save(
+    await factory.user_memory_settings_repository().save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_practice_summary=True),
     )
     memory = _memory(user_id)
-    factory.long_term_memory_repository().create_memory(
+    await factory.long_term_memory_repository().create_memory(
         memory,
         reason_code="user_confirmed_proposal",
     )
@@ -120,13 +120,13 @@ async def test_memory_center_separates_layers_and_explains_history(
         created_at=NOW,
         updated_at=NOW,
     )
-    factory.long_term_memory_repository().save_checkpoint(
+    await factory.long_term_memory_repository().save_checkpoint(
         checkpoint,
         expected_version=None,
         reason_code="practice_paused",
     )
     proposal = _proposal(user_id, summary="小组讨论通常安排在课程结束后。")
-    factory.memory_proposal_repository().save_pending(proposal)
+    await factory.memory_proposal_repository().save_pending(proposal)
 
     response = await client.get(
         f"/api/users/{user_id}/memories",
@@ -155,7 +155,7 @@ async def test_memory_edit_archive_restore_delete_are_versioned_and_scoped(
     other_id = f"memory_center_other_{uuid4().hex}"
     repository = repository_factory().long_term_memory_repository()
     memory = _memory(user_id)
-    repository.create_memory(memory, reason_code="user_confirmed_proposal")
+    await repository.create_memory(memory, reason_code="user_confirmed_proposal")
 
     forbidden = await client.post(
         f"/api/users/{user_id}/memories/{memory.memory_id}/archive",
@@ -199,13 +199,12 @@ async def test_memory_edit_archive_restore_delete_are_versioned_and_scoped(
     assert stale.status_code == 409
     assert restored.json()["memory"]["status"] == "active"
     assert deleted.json()["deleted"] is True
-    assert repository.get_memory(memory.memory_id, user_id) is None
+    assert await repository.get_memory(memory.memory_id, user_id) is None
     serialized_events = str(
         [
             event.model_dump(mode="json")
-            for event in repository.list_events(
-                user_id=user_id,
-                subject_id=memory.memory_id,
+            for event in await repository.list_events(
+                user_id=user_id, subject_id=memory.memory_id
             )
         ]
     )
@@ -218,7 +217,7 @@ async def test_memory_edit_rejects_unsafe_content(
 ) -> None:
     user_id = f"memory_center_safe_edit_{uuid4().hex}"
     memory = _memory(user_id)
-    repository_factory().long_term_memory_repository().create_memory(
+    await repository_factory().long_term_memory_repository().create_memory(
         memory,
         reason_code="user_confirmed_proposal",
     )
@@ -233,7 +232,7 @@ async def test_memory_edit_rejects_unsafe_content(
     )
 
     assert response.status_code == 422
-    unchanged = repository_factory().long_term_memory_repository().get_memory(
+    unchanged = await repository_factory().long_term_memory_repository().get_memory(
         memory.memory_id,
         user_id,
     )
@@ -248,13 +247,13 @@ async def test_disabling_one_type_blocks_future_retrieval_without_deleting_recor
     user_id = f"memory_center_disable_type_{uuid4().hex}"
     factory = repository_factory()
     settings_repository = factory.user_memory_settings_repository()
-    settings_repository.save(
+    await settings_repository.save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_practice_summary=True),
     )
     memory = _memory(user_id)
     memory_repository = factory.long_term_memory_repository()
-    memory_repository.create_memory(
+    await memory_repository.create_memory(
         memory,
         reason_code="user_confirmed_proposal",
     )
@@ -268,20 +267,20 @@ async def test_disabling_one_type_blocks_future_retrieval_without_deleting_recor
         allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
         scenario_type="group_discussion",
     )
-    before = retriever.retrieve(request, record_usage=False)
+    before = await retriever.retrieve(request, record_usage=False)
 
     response = await client.put(
         f"/api/users/{user_id}/memory/personalization/helpful_strategy",
         headers=_headers(user_id),
         json={"enabled": False},
     )
-    result = retriever.retrieve(request, record_usage=False)
+    result = await retriever.retrieve(request, record_usage=False)
 
     assert response.status_code == 200
     assert response.json()["disabled_memory_types"] == ["helpful_strategy"]
     assert [hit.memory_id for hit in before.hits] == [memory.memory_id]
     assert result.hits == []
-    assert memory_repository.get_memory(memory.memory_id, user_id) is not None
+    assert await memory_repository.get_memory(memory.memory_id, user_id) is not None
 
 
 @pytest.mark.anyio
@@ -290,15 +289,15 @@ async def test_confirm_and_reject_proposals_erase_pending_bodies(
 ) -> None:
     user_id = f"memory_center_proposal_{uuid4().hex}"
     factory = repository_factory()
-    factory.user_memory_settings_repository().save(
+    await factory.user_memory_settings_repository().save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_practice_summary=True),
     )
     confirmed = _proposal(user_id, summary="我更常在课程结束后参加小组讨论。")
     rejected = _proposal(user_id, summary="我通常在周末参加社团活动。")
     proposal_repository = factory.memory_proposal_repository()
-    proposal_repository.save_pending(confirmed)
-    proposal_repository.save_pending(rejected)
+    await proposal_repository.save_pending(confirmed)
+    await proposal_repository.save_pending(rejected)
 
     confirm_response = await client.post(
         f"/api/users/{user_id}/memory-proposals/{confirmed.proposal_id}/confirm",
@@ -321,8 +320,12 @@ async def test_confirm_and_reject_proposals_erase_pending_bodies(
     assert reject_response.status_code == 200
     assert reject_response.json()["status"] == "rejected"
     assert pending_response.json()["proposals"] == []
-    assert proposal_repository.get_for_user(confirmed.proposal_id, user_id) is None
-    assert proposal_repository.get_for_user(rejected.proposal_id, user_id) is None
+    assert (
+        await proposal_repository.get_for_user(confirmed.proposal_id, user_id) is None
+    )
+    assert (
+        await proposal_repository.get_for_user(rejected.proposal_id, user_id) is None
+    )
 
 
 @pytest.mark.anyio

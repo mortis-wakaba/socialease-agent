@@ -14,15 +14,15 @@ from app.workflow.engine import AgentHarness
 class FailingTraceRepository:
     """Trace repository double that simulates an unavailable diagnostics backend."""
 
-    def save(self, record: TraceRecord) -> TraceRecord:
+    async def save(self, record: TraceRecord) -> TraceRecord:
         del record
         raise RuntimeError("api_key=sk-fake-test-value")
 
-    def get(self, run_id: str) -> TraceRecord | None:
+    async def get(self, run_id: str) -> TraceRecord | None:
         del run_id
         return None
 
-    def list_recent(self, limit: int = 100) -> list[TraceRecord]:
+    async def list_recent(self, limit: int = 100) -> list[TraceRecord]:
         del limit
         return []
 
@@ -93,12 +93,13 @@ def test_trace_sanitizer_redacts_all_supported_free_text_metadata() -> None:
     }
 
 
-def test_trace_logger_sanitizes_before_repository_write() -> None:
+@pytest.mark.anyio
+async def test_trace_logger_sanitizes_before_repository_write() -> None:
     repository = InMemoryTraceRepository()
     logger = TraceLogger(repository=repository)
 
-    saved = logger.save(_trace_record())
-    fetched = repository.get(saved.run_id)
+    saved = await logger.save(_trace_record())
+    fetched = await repository.get(saved.run_id)
 
     assert fetched is not None
     assert "trace-safety@example.com" not in fetched.model_dump_json()
@@ -145,4 +146,4 @@ async def test_after_trace_hook_failure_is_isolated_from_business_response() -> 
     assert response.trace.execution_version.trace_schema_version == "trace-v2"
     assert response.trace.execution_version.prompt_versions == {}
     assert "trace-hook@example.com" not in response.model_dump_json()
-    assert repository.get(response.run_id) is not None
+    assert await repository.get(response.run_id) is not None

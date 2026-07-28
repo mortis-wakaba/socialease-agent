@@ -1,11 +1,12 @@
 """PostgreSQL adapter for ordered, encrypted-capable conversation timelines."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 from uuid import uuid4
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.engine import Connection, Engine, RowMapping
+from sqlalchemy.engine import RowMapping
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.conversation.content_protector import (
     ConversationContentProtector,
@@ -13,7 +14,11 @@ from app.conversation.content_protector import (
     configured_content_protector,
 )
 from app.conversation.repository import (
+    ConversationCommandClaim,
     ConversationConcurrencyError,
+    ConversationIdempotencyError,
+    ModuleStartJob,
+    _command_associated_data,
     _decode_conversation_cursor,
     _decode_event_cursor,
     _encode_conversation_cursor,
@@ -22,7 +27,12 @@ from app.conversation.repository import (
     _validate_idempotent_event,
     _validated_limit,
 )
-from app.db.postgres.engine import shared_postgres_engine
+from app.db.postgres.engine import (
+    postgres_read_connection,
+    postgres_transaction,
+    postgres_write_connection,
+    shared_postgres_async_engine,
+)
 from app.db.config import database_settings
 from app.models_conversation import (
     HISTORY_NOTICE_VERSION,
@@ -32,7 +42,6 @@ from app.models_conversation import (
     ConversationEventPayload,
     ConversationEventRole,
     ConversationEventType,
-    ConversationImportSnapshot,
     ConversationPage,
     ConversationStatus,
     ModuleProposal,
@@ -51,14 +60,18 @@ class PostgresConversationRepository:
         self,
         *,
         database_url: str | None = None,
-        engine: Engine | None = None,
+        engine: AsyncEngine | None = None,
         protector: ConversationContentProtector | None = None,
     ) -> None:
         resolved_url = database_url or database_settings().database_url
-        self.engine = engine or shared_postgres_engine(resolved_url)
+        self.engine = engine or shared_postgres_async_engine(resolved_url)
         self._protector = protector or configured_content_protector()
 
-    def create(
+    def module_start_transaction(self):
+        """Bind one transaction across conversation and domain repositories."""
+        return postgres_transaction(self.engine)
+
+    async def create(
         self,
         *,
         user_id: str,
@@ -75,8 +88,8 @@ class PostgresConversationRepository:
             created_at=now,
             updated_at=now,
         )
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with self.engine.begin() as connection:
+            (await connection.execute(
                 text(
                     """INSERT INTO conversations
                     (conversation_id, user_id, title, status,
@@ -88,106 +101,17 @@ class PostgresConversationRepository:
                      :created_at, :updated_at)"""
                 ),
                 _conversation_params(conversation),
-            )
+            ))
         return conversation
 
-    def import_snapshot(
-        self,
-        snapshot: ConversationImportSnapshot,
-    ) -> Conversation:
-        """Atomically insert one deterministic, read-only legacy timeline."""
-        conversation = snapshot.conversation
-        protected_events = [
-            (
-                event,
-                self._protector.protect(
-                    event.content,
-                    associated_data=_event_associated_data(
-                        event.event_id,
-                        event.conversation_id,
-                        event.user_id,
-                        event.sequence_no,
-                    ),
-                ),
-            )
-            for event in snapshot.events
-        ]
-        with self.engine.begin() as connection:
-            result = connection.execute(
-                text(
-                    """INSERT INTO conversations
-                    (conversation_id, user_id, title, status,
-                     active_module_depth, version, history_notice_version,
-                     created_at, updated_at)
-                    VALUES
-                    (:conversation_id, :user_id, :title, :status,
-                     :active_module_depth, :version, :history_notice_version,
-                     :created_at, :updated_at)
-                    ON CONFLICT (conversation_id) DO NOTHING"""
-                ),
-                _conversation_params(conversation),
-            )
-            if result.rowcount == 0:
-                row = connection.execute(
-                    text(
-                        """SELECT * FROM conversations
-                        WHERE conversation_id = :conversation_id
-                          AND user_id = :user_id"""
-                    ),
-                    {
-                        "conversation_id": conversation.conversation_id,
-                        "user_id": conversation.user_id,
-                    },
-                ).mappings().first()
-                if row is None:
-                    raise ConversationConcurrencyError(
-                        "legacy import id belongs to another owner"
-                    )
-                return _conversation_from_row(row)
-            for event, protected in protected_events:
-                connection.execute(
-                    text(
-                        """INSERT INTO conversation_events
-                        (event_id, conversation_id, user_id, sequence_no,
-                         event_type, role, content_plaintext,
-                         content_ciphertext, content_nonce, content_key_version,
-                         structured_payload, module_run_id,
-                         parent_module_run_id, idempotency_key, created_at)
-                        VALUES
-                        (:event_id, :conversation_id, :user_id, :sequence_no,
-                         :event_type, :role, :content_plaintext,
-                         :content_ciphertext, :content_nonce,
-                         :content_key_version,
-                         CAST(:structured_payload AS jsonb), :module_run_id,
-                         :parent_module_run_id, :idempotency_key, :created_at)"""
-                    ),
-                    _event_params(event, protected),
-                )
-            for run in snapshot.module_runs:
-                connection.execute(
-                    text(
-                        """INSERT INTO conversation_module_runs
-                        (module_run_id, conversation_id, user_id, module_type,
-                         parent_module_run_id, depth, status, domain_session_id,
-                         version, payload, started_at, ended_at)
-                        VALUES
-                        (:module_run_id, :conversation_id, :user_id,
-                         :module_type, :parent_module_run_id, :depth, :status,
-                         :domain_session_id, :version, CAST(:payload AS jsonb),
-                         :started_at, :ended_at)"""
-                    ),
-                    _run_params(run),
-                )
-        return conversation
-
-    def get_for_user(
+    async def get_for_user(
         self,
         conversation_id: str,
         user_id: str,
     ) -> Conversation | None:
         """Return an undeleted conversation only to its owner."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT * FROM conversations
                     WHERE conversation_id = :conversation_id
@@ -199,10 +123,144 @@ class PostgresConversationRepository:
                     "user_id": user_id,
                     "deleted": ConversationStatus.DELETED.value,
                 },
-            ).mappings().first()
+            )).mappings().first()
         return _conversation_from_row(row) if row else None
 
-    def list_for_user(
+    async def claim_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ConversationCommandClaim:
+        """Atomically acquire one logical command or return its saved result."""
+        now = datetime.now(UTC)
+        async with self.engine.begin() as connection:
+            owner = (await connection.execute(
+                text(
+                    """SELECT 1 FROM conversations
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id AND status != :deleted
+                    FOR UPDATE"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "deleted": ConversationStatus.DELETED.value,
+                },
+            )).first()
+            if owner is None:
+                raise LookupError("conversation not found")
+            inserted = (await connection.execute(
+                text(
+                    """INSERT INTO conversation_commands
+                    (conversation_id, user_id, idempotency_key, request_hash,
+                     status, created_at)
+                    VALUES (:conversation_id, :user_id, :idempotency_key,
+                            :request_hash, 'processing', :created_at)
+                    ON CONFLICT (conversation_id, idempotency_key) DO NOTHING
+                    RETURNING conversation_id"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                    "request_hash": request_hash,
+                    "created_at": now,
+                },
+            )).first()
+            if inserted is not None:
+                return ConversationCommandClaim(acquired=True)
+            row = (await connection.execute(
+                text(
+                    """SELECT * FROM conversation_commands
+                    WHERE conversation_id = :conversation_id
+                      AND idempotency_key = :idempotency_key
+                    FOR UPDATE"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "idempotency_key": idempotency_key,
+                },
+            )).mappings().first()
+        if row is None or row["user_id"] != user_id:
+            raise ConversationIdempotencyError(
+                "idempotency key belongs to another command"
+            )
+        if row["request_hash"] != request_hash:
+            raise ConversationIdempotencyError(
+                "idempotency key was reused with different input"
+            )
+        if row["status"] != "completed":
+            return ConversationCommandClaim(acquired=False)
+        result = self._protector.recover(
+            ProtectedContent(
+                plaintext=row["result_plaintext"],
+                ciphertext=row["result_ciphertext"],
+                nonce=row["result_nonce"],
+                key_version=row["result_key_version"],
+            ),
+            associated_data=_command_associated_data(
+                conversation_id,
+                user_id,
+                idempotency_key,
+            ),
+        )
+        return ConversationCommandClaim(
+            acquired=False,
+            completed_result=result,
+        )
+
+    async def complete_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        result: str,
+    ) -> None:
+        """Persist the final encrypted-capable result exactly once."""
+        protected = self._protector.protect(
+            result,
+            associated_data=_command_associated_data(
+                conversation_id,
+                user_id,
+                idempotency_key,
+            ),
+        )
+        async with self.engine.begin() as connection:
+            updated = (await connection.execute(
+                text(
+                    """UPDATE conversation_commands
+                    SET status = 'completed',
+                        result_plaintext = :result_plaintext,
+                        result_ciphertext = :result_ciphertext,
+                        result_nonce = :result_nonce,
+                        result_key_version = :result_key_version,
+                        completed_at = :completed_at
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND idempotency_key = :idempotency_key
+                      AND status = 'processing'"""
+                ),
+                {
+                    "result_plaintext": protected.plaintext,
+                    "result_ciphertext": protected.ciphertext,
+                    "result_nonce": protected.nonce,
+                    "result_key_version": protected.key_version,
+                    "completed_at": datetime.now(UTC),
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                },
+            ))
+        if updated.rowcount != 1:
+            raise ConversationConcurrencyError(
+                "conversation command is no longer claimable"
+            )
+
+    async def list_for_user(
         self,
         user_id: str,
         *,
@@ -230,8 +288,8 @@ class PostgresConversationRepository:
                     "cursor_id": cursor_values[1],
                 }
             )
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     f"""SELECT * FROM conversations
                     WHERE user_id = :user_id AND status != :deleted
@@ -240,7 +298,7 @@ class PostgresConversationRepository:
                     LIMIT :limit"""
                 ),
                 params,
-            ).mappings().all()
+            )).mappings().all()
         has_more = len(rows) > limit
         page_rows = rows[:limit]
         items = [_conversation_from_row(row) for row in page_rows]
@@ -253,7 +311,7 @@ class PostgresConversationRepository:
             )
         return ConversationPage(items=items, next_cursor=next_cursor)
 
-    def update_metadata(
+    async def update_metadata(
         self,
         *,
         conversation_id: str,
@@ -280,8 +338,8 @@ class PostgresConversationRepository:
             if value is not None:
                 assignments.append(f"{column} = :{column}")
                 params[column] = value
-        with self.engine.begin() as connection:
-            result = connection.execute(
+        async with self.engine.begin() as connection:
+            result = (await connection.execute(
                 text(
                     f"""UPDATE conversations
                     SET {", ".join(assignments)}
@@ -291,14 +349,14 @@ class PostgresConversationRepository:
                       AND status != :deleted"""
                 ),
                 params,
-            )
+            ))
         if result.rowcount == 0:
-            if self.get_for_user(conversation_id, user_id) is None:
+            if await self.get_for_user(conversation_id, user_id) is None:
                 return None
             raise ConversationConcurrencyError("conversation version changed")
-        return self.get_for_user(conversation_id, user_id)
+        return await self.get_for_user(conversation_id, user_id)
 
-    def append_event(
+    async def append_event(
         self,
         *,
         conversation_id: str,
@@ -312,8 +370,8 @@ class PostgresConversationRepository:
         parent_module_run_id: str | None = None,
     ) -> ConversationEvent:
         """Lock one conversation and append the next ordered event."""
-        with self.engine.begin() as connection:
-            owner = connection.execute(
+        async with self.engine.begin() as connection:
+            owner = (await connection.execute(
                 text(
                     """SELECT conversation_id FROM conversations
                     WHERE conversation_id = :conversation_id
@@ -326,11 +384,11 @@ class PostgresConversationRepository:
                     "user_id": user_id,
                     "active": ConversationStatus.ACTIVE.value,
                 },
-            ).mappings().first()
+            )).mappings().first()
             if owner is None:
                 raise LookupError("active conversation not found")
 
-            existing_row = connection.execute(
+            existing_row = (await connection.execute(
                 text(
                     """SELECT * FROM conversation_events
                     WHERE conversation_id = :conversation_id
@@ -342,7 +400,7 @@ class PostgresConversationRepository:
                     "user_id": user_id,
                     "idempotency_key": idempotency_key,
                 },
-            ).mappings().first()
+            )).mappings().first()
             if existing_row:
                 existing = self._event_from_row(existing_row)
                 _validate_idempotent_event(
@@ -356,14 +414,14 @@ class PostgresConversationRepository:
                 )
                 return existing
 
-            sequence_no = connection.execute(
+            sequence_no = (await connection.execute(
                 text(
                     """SELECT COALESCE(MAX(sequence_no), 0) + 1 AS next_sequence
                     FROM conversation_events
                     WHERE conversation_id = :conversation_id"""
                 ),
                 {"conversation_id": conversation_id},
-            ).scalar_one()
+            )).scalar_one()
             now = datetime.now(UTC)
             event_id = uuid4().hex
             protected = self._protector.protect(
@@ -389,7 +447,7 @@ class PostgresConversationRepository:
                 idempotency_key=idempotency_key,
                 created_at=now,
             )
-            connection.execute(
+            (await connection.execute(
                 text(
                     """INSERT INTO conversation_events
                     (event_id, conversation_id, user_id, sequence_no,
@@ -405,8 +463,8 @@ class PostgresConversationRepository:
                      :parent_module_run_id, :idempotency_key, :created_at)"""
                 ),
                 _event_params(event, protected),
-            )
-            connection.execute(
+            ))
+            (await connection.execute(
                 text(
                     """UPDATE conversations
                     SET version = version + 1, updated_at = :updated_at
@@ -418,10 +476,10 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            )
+            ))
         return event
 
-    def list_events(
+    async def list_events(
         self,
         *,
         conversation_id: str,
@@ -432,8 +490,8 @@ class PostgresConversationRepository:
         """List owner-scoped events in ascending timeline order."""
         limit = _validated_limit(limit, maximum=200)
         after_sequence = _decode_event_cursor(cursor) if cursor else 0
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT events.*
                     FROM conversation_events AS events
@@ -454,7 +512,7 @@ class PostgresConversationRepository:
                     "after_sequence": after_sequence,
                     "limit": limit + 1,
                 },
-            ).mappings().all()
+            )).mappings().all()
         has_more = len(rows) > limit
         items = [self._event_from_row(row) for row in rows[:limit]]
         next_cursor = (
@@ -464,7 +522,7 @@ class PostgresConversationRepository:
         )
         return ConversationEventPage(items=items, next_cursor=next_cursor)
 
-    def list_recent_events(
+    async def list_recent_events(
         self,
         *,
         conversation_id: str,
@@ -473,8 +531,8 @@ class PostgresConversationRepository:
     ) -> list[ConversationEvent]:
         """Return the newest bounded window in ascending timeline order."""
         limit = _validated_limit(limit, maximum=200)
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT events.* FROM conversation_events AS events
                     JOIN conversations AS conversations
@@ -492,10 +550,10 @@ class PostgresConversationRepository:
                     "deleted": ConversationStatus.DELETED.value,
                     "limit": limit,
                 },
-            ).mappings().all()
+            )).mappings().all()
         return [self._event_from_row(row) for row in reversed(rows)]
 
-    def get_event_by_idempotency(
+    async def get_event_by_idempotency(
         self,
         *,
         conversation_id: str,
@@ -503,8 +561,8 @@ class PostgresConversationRepository:
         idempotency_key: str,
     ) -> ConversationEvent | None:
         """Return one event inside its complete owner scope."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT events.* FROM conversation_events AS events
                     JOIN conversations AS conversations
@@ -521,18 +579,18 @@ class PostgresConversationRepository:
                     "idempotency_key": idempotency_key,
                     "deleted": ConversationStatus.DELETED.value,
                 },
-            ).mappings().first()
+            )).mappings().first()
         return self._event_from_row(row) if row else None
 
-    def get_compact_summary(
+    async def get_compact_summary(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> ConversationCompactSummary | None:
         """Return the durable summary only inside its owner scope."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT summaries.payload
                     FROM conversation_context_summaries AS summaries
@@ -549,14 +607,14 @@ class PostgresConversationRepository:
                     "user_id": user_id,
                     "deleted": ConversationStatus.DELETED.value,
                 },
-            ).mappings().first()
+            )).mappings().first()
         return (
             ConversationCompactSummary.model_validate(row["payload"])
             if row
             else None
         )
 
-    def save_compact_summary(
+    async def save_compact_summary(
         self,
         summary: ConversationCompactSummary,
         *,
@@ -572,9 +630,9 @@ class PostgresConversationRepository:
             "updated_at": summary.updated_at,
             "deleted": ConversationStatus.DELETED.value,
         }
-        with self.engine.begin() as connection:
+        async with self.engine.begin() as connection:
             if expected_version is None:
-                result = connection.execute(
+                result = (await connection.execute(
                     text(
                         """INSERT INTO conversation_context_summaries
                         (conversation_id, user_id,
@@ -591,10 +649,10 @@ class PostgresConversationRepository:
                         ON CONFLICT (conversation_id) DO NOTHING"""
                     ),
                     params,
-                )
+                ))
             else:
                 params["expected_version"] = expected_version
-                result = connection.execute(
+                result = (await connection.execute(
                     text(
                         """UPDATE conversation_context_summaries
                         SET compacted_through_sequence = :sequence,
@@ -606,15 +664,15 @@ class PostgresConversationRepository:
                           AND version = :expected_version"""
                     ),
                     params,
-                )
+                ))
         if result.rowcount == 0:
             raise ConversationConcurrencyError("conversation summary state changed")
         return summary
 
-    def save_proposal(self, proposal: ModuleProposal) -> ModuleProposal:
+    async def save_proposal(self, proposal: ModuleProposal) -> ModuleProposal:
         """Persist a proposal or return its request-hash replay."""
-        with self.engine.begin() as connection:
-            row = connection.execute(
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(
                 text(
                     """INSERT INTO conversation_module_proposals
                     (proposal_id, conversation_id, user_id, proposed_module,
@@ -639,10 +697,10 @@ class PostgresConversationRepository:
                     RETURNING payload"""
                 ),
                 {**_proposal_params(proposal), "active": "active"},
-            ).mappings().first()
+            )).mappings().first()
             if row:
                 return ModuleProposal.model_validate(row["payload"])
-            existing = connection.execute(
+            existing = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_proposals
                     WHERE conversation_id = :conversation_id
@@ -654,12 +712,12 @@ class PostgresConversationRepository:
                     "user_id": proposal.user_id,
                     "request_hash": proposal.request_hash,
                 },
-            ).mappings().first()
+            )).mappings().first()
         if existing:
             return ModuleProposal.model_validate(existing["payload"])
         raise LookupError("active conversation not found")
 
-    def get_proposal_for_user(
+    async def get_proposal_for_user(
         self,
         *,
         proposal_id: str,
@@ -667,8 +725,8 @@ class PostgresConversationRepository:
         user_id: str,
     ) -> ModuleProposal | None:
         """Return one proposal only inside its complete owner scope."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_proposals
                     WHERE proposal_id = :proposal_id
@@ -680,10 +738,10 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().first()
+            )).mappings().first()
         return ModuleProposal.model_validate(row["payload"]) if row else None
 
-    def get_proposal_by_request(
+    async def get_proposal_by_request(
         self,
         *,
         conversation_id: str,
@@ -691,8 +749,8 @@ class PostgresConversationRepository:
         request_hash: str,
     ) -> ModuleProposal | None:
         """Return a deduplicated proposal by scoped request hash."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_proposals
                     WHERE conversation_id = :conversation_id
@@ -704,10 +762,10 @@ class PostgresConversationRepository:
                     "user_id": user_id,
                     "request_hash": request_hash,
                 },
-            ).mappings().first()
+            )).mappings().first()
         return ModuleProposal.model_validate(row["payload"]) if row else None
 
-    def transition_proposal(
+    async def transition_proposal(
         self,
         *,
         proposal_id: str,
@@ -717,8 +775,8 @@ class PostgresConversationRepository:
         target_status: ModuleProposalStatus,
     ) -> ModuleProposal | None:
         """Atomically consume one proposal decision."""
-        with self.engine.begin() as connection:
-            row = connection.execute(
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_proposals
                     WHERE proposal_id = :proposal_id
@@ -731,7 +789,7 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().first()
+            )).mappings().first()
             if row is None:
                 return None
             current = ModuleProposal.model_validate(row["payload"])
@@ -740,7 +798,7 @@ class PostgresConversationRepository:
                     "module proposal state changed"
                 )
             updated = current.model_copy(update={"status": target_status})
-            connection.execute(
+            (await connection.execute(
                 text(
                     """UPDATE conversation_module_proposals
                     SET status = :status, payload = CAST(:payload AS jsonb)
@@ -751,13 +809,13 @@ class PostgresConversationRepository:
                     "payload": updated.model_dump_json(),
                     "proposal_id": proposal_id,
                 },
-            )
+            ))
         return updated
 
-    def create_module_run(self, run: ModuleRun) -> ModuleRun:
+    async def create_module_run(self, run: ModuleRun) -> ModuleRun:
         """Persist a new module frame in an active owner conversation."""
-        with self.engine.begin() as connection:
-            result = connection.execute(
+        async with self.engine.begin() as connection:
+            result = (await connection.execute(
                 text(
                     """INSERT INTO conversation_module_runs
                     (module_run_id, conversation_id, user_id, module_type,
@@ -777,20 +835,283 @@ class PostgresConversationRepository:
                     )"""
                 ),
                 {**_run_params(run), "active": ConversationStatus.ACTIVE.value},
-            )
+            ))
         if result.rowcount == 0:
             raise LookupError("active conversation not found")
         return run
 
-    def list_module_stack(
+    async def begin_module_start(
+        self,
+        *,
+        proposal: ModuleProposal,
+        run: ModuleRun,
+        parent: ModuleRun | None,
+    ) -> ModuleRun:
+        """Atomically consume a proposal, reserve its frame, and enqueue startup."""
+        accepted = proposal.model_copy(
+            update={"status": ModuleProposalStatus.ACCEPTED}
+        )
+        now = datetime.now(UTC)
+        async with postgres_write_connection(self.engine) as connection:
+            proposal_result = await connection.execute(
+                text(
+                    """UPDATE conversation_module_proposals
+                    SET status = :accepted, payload = CAST(:payload AS jsonb)
+                    WHERE proposal_id = :proposal_id
+                      AND conversation_id = :conversation_id
+                      AND user_id = :user_id AND status = :pending"""
+                ),
+                {
+                    "accepted": ModuleProposalStatus.ACCEPTED.value,
+                    "payload": accepted.model_dump_json(),
+                    "proposal_id": proposal.proposal_id,
+                    "conversation_id": proposal.conversation_id,
+                    "user_id": proposal.user_id,
+                    "pending": ModuleProposalStatus.PENDING.value,
+                },
+            )
+            if proposal_result.rowcount == 0:
+                raise ConversationConcurrencyError("module proposal state changed")
+            if parent is not None:
+                suspended = parent.model_copy(
+                    update={
+                        "status": ModuleRunStatus.SUSPENDED,
+                        "version": parent.version + 1,
+                    }
+                )
+                parent_result = await connection.execute(
+                    text(
+                        """UPDATE conversation_module_runs
+                        SET status = :suspended, version = :new_version,
+                            payload = CAST(:payload AS jsonb)
+                        WHERE module_run_id = :module_run_id
+                          AND conversation_id = :conversation_id
+                          AND user_id = :user_id
+                          AND status = :active AND version = :expected_version"""
+                    ),
+                    {
+                        "suspended": ModuleRunStatus.SUSPENDED.value,
+                        "new_version": suspended.version,
+                        "payload": suspended.model_dump_json(),
+                        "module_run_id": parent.module_run_id,
+                        "conversation_id": parent.conversation_id,
+                        "user_id": parent.user_id,
+                        "active": ModuleRunStatus.ACTIVE.value,
+                        "expected_version": parent.version,
+                    },
+                )
+                if parent_result.rowcount == 0:
+                    raise ConversationConcurrencyError("parent module state changed")
+            await connection.execute(
+                text(
+                    """INSERT INTO conversation_module_runs
+                    (module_run_id, conversation_id, user_id, module_type,
+                     parent_module_run_id, depth, status, domain_session_id,
+                     version, payload, started_at, ended_at)
+                    VALUES
+                    (:module_run_id, :conversation_id, :user_id, :module_type,
+                     :parent_module_run_id, :depth, :status, :domain_session_id,
+                     :version, CAST(:payload AS jsonb), :started_at, :ended_at)"""
+                ),
+                _run_params(run),
+            )
+            conversation_result = await connection.execute(
+                text(
+                    """UPDATE conversations
+                    SET active_module_depth = :depth, version = version + 1,
+                        updated_at = :updated_at
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id AND status = :active"""
+                ),
+                {
+                    "depth": run.depth,
+                    "updated_at": now,
+                    "conversation_id": run.conversation_id,
+                    "user_id": run.user_id,
+                    "active": ConversationStatus.ACTIVE.value,
+                },
+            )
+            if conversation_result.rowcount == 0:
+                raise LookupError("active conversation not found")
+            await connection.execute(
+                text(
+                    """INSERT INTO conversation_module_start_outbox
+                    (module_run_id, conversation_id, user_id, proposal_id,
+                     status, attempt_count, next_attempt_at, created_at, updated_at)
+                    VALUES (:module_run_id, :conversation_id, :user_id,
+                            :proposal_id, 'pending', 0, :created_at,
+                            :created_at, :updated_at)"""
+                ),
+                {
+                    "module_run_id": run.module_run_id,
+                    "conversation_id": run.conversation_id,
+                    "user_id": run.user_id,
+                    "proposal_id": proposal.proposal_id,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        return run
+
+    async def claim_module_start(self, *, module_run_id: str) -> bool:
+        """Claim a pending/recoverable module startup."""
+        now = datetime.now(UTC)
+        async with postgres_write_connection(self.engine) as connection:
+            result = await connection.execute(
+                text(
+                    """UPDATE conversation_module_start_outbox
+                    SET status = 'processing',
+                        attempt_count = attempt_count + 1,
+                        lease_owner = :lease_owner,
+                        lease_expires_at = :lease_expires_at,
+                        updated_at = :updated_at
+                    WHERE module_run_id = :module_run_id
+                      AND (
+                        status = 'pending'
+                        OR (
+                          status = 'processing'
+                          AND lease_expires_at <= :updated_at
+                        )
+                      )"""
+                ),
+                {
+                    "module_run_id": module_run_id,
+                    "lease_owner": f"request:{uuid4().hex}",
+                    "lease_expires_at": now + timedelta(seconds=60),
+                    "updated_at": now,
+                },
+            )
+        return result.rowcount == 1
+
+    async def claim_due_module_starts(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[ModuleStartJob]:
+        """Lease due jobs with SKIP LOCKED for safe multi-replica workers."""
+        now = datetime.now(UTC)
+        async with self.engine.begin() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        """WITH due AS (
+                            SELECT module_run_id
+                            FROM conversation_module_start_outbox
+                            WHERE (
+                              (status = 'pending' AND next_attempt_at <= :now)
+                              OR (
+                                status = 'processing'
+                                AND lease_expires_at <= :now
+                              )
+                            )
+                            ORDER BY next_attempt_at, created_at
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT :limit
+                        )
+                        UPDATE conversation_module_start_outbox AS outbox
+                        SET status = 'processing',
+                            attempt_count = outbox.attempt_count + 1,
+                            lease_owner = :worker_id,
+                            lease_expires_at = :lease_expires_at,
+                            updated_at = :now
+                        FROM due
+                        WHERE outbox.module_run_id = due.module_run_id
+                        RETURNING outbox.module_run_id, outbox.conversation_id,
+                                  outbox.user_id, outbox.proposal_id,
+                                  outbox.attempt_count, outbox.max_attempts"""
+                    ),
+                    {
+                        "now": now,
+                        "limit": max(1, min(limit, 100)),
+                        "worker_id": worker_id,
+                        "lease_expires_at": now
+                        + timedelta(seconds=max(1, lease_seconds)),
+                    },
+                )
+            ).mappings().all()
+        return [
+            ModuleStartJob(
+                module_run_id=row["module_run_id"],
+                conversation_id=row["conversation_id"],
+                user_id=row["user_id"],
+                proposal_id=row["proposal_id"],
+                attempt_count=int(row["attempt_count"]),
+                max_attempts=int(row["max_attempts"]),
+                lease_owner=worker_id,
+            )
+            for row in rows
+        ]
+
+    async def complete_module_start(self, *, module_run_id: str) -> None:
+        """Mark a module startup side effect reconciled."""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """UPDATE conversation_module_start_outbox
+                    SET status = 'completed', last_error_code = NULL,
+                        lease_owner = NULL, lease_expires_at = NULL,
+                        completed_at = :updated_at,
+                        updated_at = :updated_at
+                    WHERE module_run_id = :module_run_id"""
+                ),
+                {"module_run_id": module_run_id, "updated_at": datetime.now(UTC)},
+            )
+
+    async def retry_module_start(
+        self, *, module_run_id: str, error_code: str
+    ) -> None:
+        """Return a failed startup to the replay queue without storing details."""
+        async with self.engine.begin() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        """SELECT attempt_count, max_attempts
+                        FROM conversation_module_start_outbox
+                        WHERE module_run_id = :module_run_id
+                        FOR UPDATE"""
+                    ),
+                    {"module_run_id": module_run_id},
+                )
+            ).mappings().first()
+            if row is None:
+                return
+            now = datetime.now(UTC)
+            dead_letter = int(row["attempt_count"]) >= int(row["max_attempts"])
+            await connection.execute(
+                text(
+                    """UPDATE conversation_module_start_outbox
+                    SET status = :status, last_error_code = :error_code,
+                        next_attempt_at = :next_attempt_at,
+                        lease_owner = NULL, lease_expires_at = NULL,
+                        updated_at = :updated_at
+                    WHERE module_run_id = :module_run_id"""
+                ),
+                {
+                    "module_run_id": module_run_id,
+                    "status": "dead_letter" if dead_letter else "pending",
+                    "error_code": error_code[:64],
+                    "next_attempt_at": now
+                    + timedelta(
+                        seconds=min(
+                            300,
+                            2 ** max(0, int(row["attempt_count"]) - 1),
+                        )
+                    ),
+                    "updated_at": now,
+                },
+            )
+
+    async def list_module_stack(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> list[ModuleRun]:
         """Return nonterminal module frames in depth order."""
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
                     WHERE conversation_id = :conversation_id
@@ -804,10 +1125,10 @@ class PostgresConversationRepository:
                     "active": ModuleRunStatus.ACTIVE.value,
                     "suspended": ModuleRunStatus.SUSPENDED.value,
                 },
-            ).mappings().all()
+            )).mappings().all()
         return [ModuleRun.model_validate(row["payload"]) for row in rows]
 
-    def get_module_run_for_user(
+    async def get_module_run_for_user(
         self,
         *,
         module_run_id: str,
@@ -815,8 +1136,8 @@ class PostgresConversationRepository:
         user_id: str,
     ) -> ModuleRun | None:
         """Return one module run only inside its complete owner scope."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with postgres_read_connection(self.engine) as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
                     WHERE module_run_id = :module_run_id
@@ -828,18 +1149,18 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().first()
+            )).mappings().first()
         return ModuleRun.model_validate(row["payload"]) if row else None
 
-    def list_all_module_runs(
+    async def list_all_module_runs(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> list[ModuleRun]:
         """Return all active and terminal module runs for export/deletion."""
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
                     WHERE conversation_id = :conversation_id
@@ -850,10 +1171,10 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().all()
+            )).mappings().all()
         return [ModuleRun.model_validate(row["payload"]) for row in rows]
 
-    def get_conversation_for_domain_session(
+    async def get_conversation_for_domain_session(
         self,
         *,
         user_id: str,
@@ -861,8 +1182,8 @@ class PostgresConversationRepository:
         domain_session_id: str,
     ) -> Conversation | None:
         """Return the conversation already owning one domain session."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT c.* FROM conversations AS c
                     JOIN conversation_module_runs AS r
@@ -877,18 +1198,18 @@ class PostgresConversationRepository:
                     "module_type": module_type.value,
                     "domain_session_id": domain_session_id,
                 },
-            ).mappings().first()
+            )).mappings().first()
         return _conversation_from_row(row) if row else None
 
-    def list_proposals(
+    async def list_proposals(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> list[ModuleProposal]:
         """Return all owner-scoped proposals for export."""
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_proposals
                     WHERE conversation_id = :conversation_id
@@ -899,18 +1220,18 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().all()
+            )).mappings().all()
         return [ModuleProposal.model_validate(row["payload"]) for row in rows]
 
-    def delete_for_user(
+    async def delete_for_user(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> dict[str, int] | None:
         """Delete one conversation and its directly attributable records."""
-        with self.engine.begin() as connection:
-            receipt = connection.execute(
+        async with self.engine.begin() as connection:
+            receipt = (await connection.execute(
                 text(
                     """SELECT deleted_counts
                     FROM conversation_deletion_receipts
@@ -921,13 +1242,13 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().first()
+            )).mappings().first()
             if receipt is not None:
                 return {
                     key: int(value)
                     for key, value in receipt["deleted_counts"].items()
                 }
-            owner = connection.execute(
+            owner = (await connection.execute(
                 text(
                     """SELECT 1 FROM conversations
                     WHERE conversation_id = :conversation_id
@@ -938,11 +1259,11 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).first()
+            )).first()
             if owner is None:
                 return None
             event_ids = list(
-                connection.execute(
+                (await connection.execute(
                     text(
                         """SELECT event_id FROM conversation_events
                         WHERE conversation_id = :conversation_id
@@ -952,9 +1273,9 @@ class PostgresConversationRepository:
                         "conversation_id": conversation_id,
                         "user_id": user_id,
                     },
-                ).scalars()
+                )).scalars()
             )
-            run_rows = connection.execute(
+            run_rows = (await connection.execute(
                 text(
                     """SELECT module_type, domain_session_id
                     FROM conversation_module_runs
@@ -965,7 +1286,7 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().all()
+            )).mappings().all()
             domain_ids = [
                 row["domain_session_id"]
                 for row in run_rows
@@ -976,7 +1297,7 @@ class PostgresConversationRepository:
                 "events": len(event_ids),
                 "module_runs": len(run_rows),
                 "module_proposals": int(
-                    connection.execute(
+                    (await connection.execute(
                         text(
                             """SELECT COUNT(*)
                             FROM conversation_module_proposals
@@ -987,10 +1308,10 @@ class PostgresConversationRepository:
                             "conversation_id": conversation_id,
                             "user_id": user_id,
                         },
-                    ).scalar_one()
+                    )).scalar_one()
                 ),
                 "compact_summaries": int(
-                    connection.execute(
+                    (await connection.execute(
                         text(
                             """SELECT COUNT(*)
                             FROM conversation_context_summaries
@@ -1001,7 +1322,21 @@ class PostgresConversationRepository:
                             "conversation_id": conversation_id,
                             "user_id": user_id,
                         },
-                    ).scalar_one()
+                    )).scalar_one()
+                ),
+                "commands": int(
+                    (await connection.execute(
+                        text(
+                            """SELECT COUNT(*)
+                            FROM conversation_commands
+                            WHERE conversation_id = :conversation_id
+                              AND user_id = :user_id"""
+                        ),
+                        {
+                            "conversation_id": conversation_id,
+                            "user_id": user_id,
+                        },
+                    )).scalar_one()
                 ),
                 "episodic_memories": 0,
                 "memory_proposals": 0,
@@ -1009,7 +1344,7 @@ class PostgresConversationRepository:
             }
             if source_ids:
                 memory_ids = list(
-                    connection.execute(
+                    (await connection.execute(
                         _expanding_text(
                             """SELECT memory_id FROM episodic_memories
                             WHERE user_id = :user_id
@@ -1017,10 +1352,10 @@ class PostgresConversationRepository:
                             "source_ids",
                         ),
                         {"user_id": user_id, "source_ids": source_ids},
-                    ).scalars()
+                    )).scalars()
                 )
                 proposal_ids = list(
-                    connection.execute(
+                    (await connection.execute(
                         _expanding_text(
                             """SELECT proposal_id FROM memory_proposals
                             WHERE user_id = :user_id
@@ -1028,11 +1363,11 @@ class PostgresConversationRepository:
                             "source_ids",
                         ),
                         {"user_id": user_id, "source_ids": source_ids},
-                    ).scalars()
+                    )).scalars()
                 )
                 subject_ids = [*memory_ids, *proposal_ids]
                 if subject_ids:
-                    connection.execute(
+                    (await connection.execute(
                         _expanding_text(
                             """DELETE FROM memory_events
                             WHERE user_id = :user_id
@@ -1040,9 +1375,9 @@ class PostgresConversationRepository:
                             "subject_ids",
                         ),
                         {"user_id": user_id, "subject_ids": subject_ids},
-                    )
+                    ))
                 counts["memory_proposals"] = int(
-                    connection.execute(
+                    (await connection.execute(
                         _expanding_text(
                             """DELETE FROM memory_proposals
                             WHERE user_id = :user_id
@@ -1050,11 +1385,11 @@ class PostgresConversationRepository:
                             "source_ids",
                         ),
                         {"user_id": user_id, "source_ids": source_ids},
-                    ).rowcount
+                    )).rowcount
                     or 0
                 )
                 counts["episodic_memories"] = int(
-                    connection.execute(
+                    (await connection.execute(
                         _expanding_text(
                             """DELETE FROM episodic_memories
                             WHERE user_id = :user_id
@@ -1062,15 +1397,15 @@ class PostgresConversationRepository:
                             "source_ids",
                         ),
                         {"user_id": user_id, "source_ids": source_ids},
-                    ).rowcount
+                    )).rowcount
                     or 0
                 )
-            counts["domain_sessions"] = _delete_postgres_domain_sessions(
+            counts["domain_sessions"] = await _delete_postgres_domain_sessions(
                 connection,
                 user_id=user_id,
                 run_rows=run_rows,
             )
-            connection.execute(
+            (await connection.execute(
                 text(
                     """DELETE FROM conversations
                     WHERE conversation_id = :conversation_id
@@ -1080,9 +1415,9 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            )
+            ))
             counts["conversations"] = 1
-            connection.execute(
+            (await connection.execute(
                 text(
                     """INSERT INTO conversation_deletion_receipts
                     (conversation_id, user_id, deleted_counts, deleted_at)
@@ -1096,18 +1431,18 @@ class PostgresConversationRepository:
                     "deleted_counts": json.dumps(counts),
                     "deleted_at": datetime.now(UTC),
                 },
-            )
+            ))
         return counts
 
-    def delete_all_for_user(self, *, user_id: str) -> dict[str, int]:
+    async def delete_all_for_user(self, *, user_id: str) -> dict[str, int]:
         """Delete every user conversation through the scoped delete path."""
         totals: dict[str, int] = {}
         while True:
-            page = self.list_for_user(user_id, limit=100)
+            page = await self.list_for_user(user_id, limit=100)
             if not page.items:
                 break
             for conversation in page.items:
-                counts = self.delete_for_user(
+                counts = await self.delete_for_user(
                     conversation_id=conversation.conversation_id,
                     user_id=user_id,
                 )
@@ -1115,7 +1450,7 @@ class PostgresConversationRepository:
                     totals[key] = totals.get(key, 0) + value
         return totals
 
-    def update_module_domain_session(
+    async def update_module_domain_session(
         self,
         *,
         module_run_id: str,
@@ -1125,8 +1460,8 @@ class PostgresConversationRepository:
         domain_session_id: str,
     ) -> ModuleRun:
         """Attach a lazily created domain session with optimistic locking."""
-        with self.engine.begin() as connection:
-            row = connection.execute(
+        async with postgres_write_connection(self.engine) as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
                     WHERE module_run_id = :module_run_id
@@ -1139,7 +1474,7 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().first()
+            )).mappings().first()
             if row is None:
                 raise LookupError("module run not found")
             current = ModuleRun.model_validate(row["payload"])
@@ -1151,7 +1486,7 @@ class PostgresConversationRepository:
                     "version": current.version + 1,
                 }
             )
-            connection.execute(
+            (await connection.execute(
                 text(
                     """UPDATE conversation_module_runs
                     SET domain_session_id = :domain_session_id,
@@ -1165,10 +1500,10 @@ class PostgresConversationRepository:
                     "payload": updated.model_dump_json(),
                     "module_run_id": module_run_id,
                 },
-            )
+            ))
         return updated
 
-    def advance_module_run_version(
+    async def advance_module_run_version(
         self,
         *,
         module_run_id: str,
@@ -1177,8 +1512,8 @@ class PostgresConversationRepository:
         expected_version: int,
     ) -> ModuleRun:
         """Advance the durable overlay watermark after one module action."""
-        with self.engine.begin() as connection:
-            row = connection.execute(
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
                     WHERE module_run_id = :module_run_id
@@ -1191,7 +1526,7 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().first()
+            )).mappings().first()
             if row is None:
                 raise LookupError("module run not found")
             current = ModuleRun.model_validate(row["payload"])
@@ -1200,7 +1535,7 @@ class PostgresConversationRepository:
             updated = current.model_copy(
                 update={"version": current.version + 1}
             )
-            connection.execute(
+            (await connection.execute(
                 text(
                     """UPDATE conversation_module_runs
                     SET version = :version, payload = CAST(:payload AS jsonb)
@@ -1211,10 +1546,10 @@ class PostgresConversationRepository:
                     "payload": updated.model_dump_json(),
                     "module_run_id": module_run_id,
                 },
-            )
+            ))
         return updated
 
-    def transition_module_run(
+    async def transition_module_run(
         self,
         *,
         module_run_id: str,
@@ -1226,8 +1561,8 @@ class PostgresConversationRepository:
         ended_at: datetime | None,
     ) -> ModuleRun | None:
         """Optimistically transition one module frame."""
-        with self.engine.begin() as connection:
-            row = connection.execute(
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
                     WHERE module_run_id = :module_run_id
@@ -1240,7 +1575,7 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                 },
-            ).mappings().first()
+            )).mappings().first()
             if row is None:
                 return None
             current = ModuleRun.model_validate(row["payload"])
@@ -1256,7 +1591,7 @@ class PostgresConversationRepository:
                     "version": current.version + 1,
                 }
             )
-            connection.execute(
+            (await connection.execute(
                 text(
                     """UPDATE conversation_module_runs
                     SET status = :status, version = :version,
@@ -1270,7 +1605,7 @@ class PostgresConversationRepository:
                     "payload": updated.model_dump_json(),
                     "module_run_id": module_run_id,
                 },
-            )
+            ))
         return updated
 
     def _event_from_row(self, row: RowMapping) -> ConversationEvent:
@@ -1396,8 +1731,8 @@ def _expanding_text(statement: str, parameter: str):
     return text(statement).bindparams(bindparam(parameter, expanding=True))
 
 
-def _delete_postgres_domain_sessions(
-    connection: Connection,
+async def _delete_postgres_domain_sessions(
+    connection: AsyncConnection,
     *,
     user_id: str,
     run_rows: list[RowMapping],
@@ -1417,7 +1752,7 @@ def _delete_postgres_domain_sessions(
         if not identifiers:
             continue
         deleted += int(
-            connection.execute(
+            (await connection.execute(
                 _expanding_text(
                     f"""DELETE FROM {table}
                     WHERE user_id = :user_id
@@ -1425,28 +1760,28 @@ def _delete_postgres_domain_sessions(
                     "identifiers",
                 ),
                 {"user_id": user_id, "identifiers": identifiers},
-            ).rowcount
+            )).rowcount
             or 0
         )
     exposure_ids = grouped.get("exposure", [])
     if exposure_ids:
-        connection.execute(
+        (await connection.execute(
             _expanding_text(
                 """DELETE FROM exposure_attempts
                 WHERE user_id = :user_id AND plan_id IN :identifiers""",
                 "identifiers",
             ),
             {"user_id": user_id, "identifiers": exposure_ids},
-        )
+        ))
         deleted += int(
-            connection.execute(
+            (await connection.execute(
                 _expanding_text(
                     """DELETE FROM exposure_plans
                     WHERE user_id = :user_id AND plan_id IN :identifiers""",
                     "identifiers",
                 ),
                 {"user_id": user_id, "identifiers": exposure_ids},
-            ).rowcount
+            )).rowcount
             or 0
         )
     return deleted
