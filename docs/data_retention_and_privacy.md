@@ -9,7 +9,8 @@
 |---|---|---:|---|---|
 | 账号数据 | email、密码哈希、session/token id | 否 | 密码只保存哈希；refresh token 保存 hash | 可退出登录；可删除账号并撤销会话 |
 | 对话历史 | unified conversation timeline、模块生命周期与结果 | 是 | owner scope、顺序/幂等约束；生产环境 AES-256-GCM，缺少密钥时拒绝启动持久化 | 首次持久化告知；可按单个会话或全部导出和删除 |
-| 练习记录 | roleplay session、worksheet、exposure plan | 部分字段可能来自用户输入 | privacy persistence gate、敏感信息脱敏、raw text 最小化 | `/settings` 导出/删除 |
+| 练习记录 | roleplay session、worksheet、exposure plan | 部分字段可能来自用户输入 | privacy persistence gate、敏感信息脱敏、raw text 最小化 | 随 Conversation 或 Account 删除 |
+| Agent Memory | episodic memory、thread checkpoint、候选记忆、个性化设置 | 仅保存经过策略筛选的内容 | consent gate、类型策略、敏感信息脱敏 | `/settings` 独立导出/删除 |
 | Trace | safety、intent、permission、selected agent、输出摘要 | 默认不应保存完整原始心理文本 | trace field policy、最小化 input/output | retention cleanup |
 | Protocol | consent request、approval/rejection/consumed 状态 | 否，主要是动作和请求绑定 | protocol id、request hash、过期时间 | 过期/终态后 cleanup |
 | Intervention Plan | 练习动作步骤、状态、结果摘要 | 少量派生信息 | session-level plan，不作为治疗方案 | 终态后 cleanup |
@@ -39,16 +40,16 @@ cleanup job 会删除：
 - 终态 protocol rows：`expired`、`rejected`、`consumed`；
 - 终态 intervention plan rows：`completed`、`cancelled`、`blocked`。
 
-用户主动删除记忆时，会删除 user-owned records：
+用户主动删除 Agent Memory 时，只删除：
 
-- `runs`
-- `roleplay_sessions`
-- `worksheets`
-- `exposure_plans`
-- `exposure_attempts`
-- `protocols`
-- `intervention_plans`
+- `memory_events`
+- `memory_proposals`
+- `thread_checkpoints`
+- `episodic_memories`
 - `user_memory_settings`
+
+该操作不会删除 Conversation History、Role-play、Worksheet、Exposure、Trace、
+Protocol 或 Intervention Plan。完整账号删除才会清理全部用户数据面。
 
 用户主动删除单个 Conversation 时，会在一个数据库事务中删除该 Conversation 的事件、
 模块 Proposal/Run、Compact Summary、领域 Session，以及以 Conversation Event 或领域
@@ -58,8 +59,8 @@ Adapter 同步清理。系统仅保留不含正文的 owner-scoped 删除回执�
 
 三类删除路径的语义不同：
 
-- Memory Delete：删除用户拥有的练习记录、Trace、Protocol、Intervention Plan、长期设置以及 Redis Task State，但保留账号本身；
-- Account Delete：先执行 Memory Delete，再撤销账号 Session 并删除账号记录；
+- Memory Delete：仅删除跨会话 Agent Memory、候选记忆和个性化设置；
+- Account Delete：删除全部用户数据、清理 Redis Runtime State、撤销 Session 并删除账号记录；
 - Retention Cleanup：按运维窗口删除过期 Trace 和终态 Protocol/Intervention Plan，不等价于用户主动删除。
 
 ## 用户控制
@@ -67,10 +68,10 @@ Adapter 同步清理。系统仅保留不含正文的 owner-scoped 删除回执�
 用户应能在产品中完成：
 
 - 查看轻量 profile summary；
-- 导出本人练习记录；
+- 导出本人 Agent Memory；
 - 查看、继续、重命名、归档和导出完整对话历史；
 - 删除单个或全部对话历史；
-- 删除本人练习记录；
+- 独立删除本人 Agent Memory；
 - 删除账号并撤销现有会话；
 - 关闭长期练习偏好；
 - 了解系统不是医疗产品、不做诊断、不承诺效果。

@@ -181,6 +181,14 @@ Redis-backed task state CI: passed
 - unified conversation state machine、Proposal confirmation、module nesting、crisis
   preemption、ownership、encryption、deletion cascade 和 legacy import 回归；
 - heavier local load regression tests for 50-user requests、Consent 原子消费、Calendar 幂等副作用和 migration readiness;
+
+## Dependency and worker operations
+
+- `make lock-python` 使用 pip-tools 解析 Python 3.13 依赖并为 runtime/test 两份锁文件写入 wheel 哈希；
+- 生产镜像只安装 runtime lock，CI 对完整 test lock 执行 `pip-audit`；
+- supply-chain workflow 构建前后端镜像、生成 SPDX JSON SBOM，并以完整 commit SHA 固定 Trivy Action；
+- reconciliation worker 同时处理 module-start 与 Calendar outbox。`/ready` 的
+  `checks.outbox` 提供不含用户数据的 pending、processing、dead-letter 和队列年龄视图。
 - PostgreSQL 完整 Repository/Runtime CI，以及 fresh-process 重启持久化验证；
 - Redis 对 Context Projection、Module Overlay 和短期 Task State 的统一 readiness 探针；
 - tracked-file privacy check，阻止本地 `.env`、凭据、简历和面试准备目录进入 Git；

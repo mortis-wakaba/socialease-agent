@@ -36,6 +36,8 @@
 |---|---|---|
 | `SOCIALEASE_AUTH_MODE` | backend | `demo` 用于本地开发，`production` 启用认证模式 |
 | `SOCIALEASE_AUTH_TOKEN_SECRET` | production | 当前自建 HS256 JWT/session 的签名 secret |
+| `SOCIALEASE_AUTH_TOKEN_KEYS` | production rotation | JSON key ring，例如 `{"2026-01":"...","2026-07":"..."}`；配置后替代单一 secret |
+| `SOCIALEASE_AUTH_TOKEN_ACTIVE_KID` | production rotation | 新签发 token 使用的 key id；轮换时先加入新 key，再切换 active id，最后等待旧 token 过期后删除旧 key |
 | `SOCIALEASE_ENABLE_SIGNUP` | staging/production | 后端强制的公开注册开关；production auth 下未设置时默认关闭 |
 | `SOCIALEASE_SIGNUP_ALLOWED_EMAILS` | staging/pilot | 关闭公开注册时允许注册的邮箱 allowlist |
 | `SOCIALEASE_SIGNUP_INVITE_CODES` | staging/pilot | 关闭公开注册时 `/api/auth/register` 接受的邀请码 |
@@ -57,6 +59,14 @@ Production cookie 模式还会设置非 HttpOnly 的 `socialease_csrf_token`，�
 | 变量 | 必需场景 | 含义 |
 |---|---|---|
 | `SOCIALEASE_CALENDAR_MCP_URL` | remote MCP | Calendar MCP Streamable HTTP URL；为空时使用明确标注的进程内 Demo Provider |
+| `SOCIALEASE_OUTBOX_INTERVAL_SECONDS` | `2` | module/Calendar reconciliation worker 轮询间隔 |
+| `SOCIALEASE_OUTBOX_BATCH_SIZE` | `20` | 每次租约领取上限，最大 100 |
+| `SOCIALEASE_OUTBOX_LEASE_SECONDS` | `60` | worker 崩溃后可被其他副本重新领取的租约时长 |
+
+Calendar create/update/delete 不再在 API 请求内直接消费协议后裸调用 MCP。批准协议的消费与
+`calendar_action_outbox` 入队位于同一 PostgreSQL 事务；API 会尝试一次低延迟执行，失败则由
+reconciliation worker 按指数退避重放。`/ready` 的 `checks.outbox` 仅暴露 pending、
+processing、dead-letter 数量和最老待处理时间，不包含用户或事件内容。
 | `SOCIALEASE_CALENDAR_MCP_HOST` | local MCP server | 独立 MCP Server 监听地址，默认仅本机 `127.0.0.1` |
 | `SOCIALEASE_CALENDAR_MCP_PORT` | local MCP server | 独立 MCP Server 端口，默认 `8010` |
 | `SOCIALEASE_CALENDAR_MCP_SERVER_TRANSPORT` | local MCP server | `streamable-http` 或 `stdio`；默认使用官方推荐的 Streamable HTTP |
