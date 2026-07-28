@@ -15,16 +15,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_postgres_cleanup_lock_allows_only_one_scheduler_replica() -> None:
+@pytest.mark.anyio
+async def test_postgres_cleanup_lock_allows_only_one_scheduler_replica() -> None:
     assert TEST_DATABASE_URL is not None
     first = PostgresAdvisoryCleanupRunLock(TEST_DATABASE_URL)
     second = PostgresAdvisoryCleanupRunLock(TEST_DATABASE_URL)
 
     try:
-        assert first.acquire() is True
-        assert second.acquire() is False
-        first.release()
-        assert second.acquire() is True
+        assert await first.acquire() is True
+        assert await second.acquire() is False
+        await first.release()
+        assert await second.acquire() is True
     finally:
-        first.release()
-        second.release()
+        await first.release()
+        await second.release()

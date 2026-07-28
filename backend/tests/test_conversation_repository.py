@@ -1,6 +1,6 @@
 """SQLite persistence tests for unified conversations."""
 
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -41,22 +41,23 @@ def repository(
     return SQLiteConversationRepository()
 
 
-def test_create_list_get_and_owner_scope(
+@pytest.mark.anyio
+async def test_create_list_get_and_owner_scope(
     repository: SQLiteConversationRepository,
 ) -> None:
-    first = repository.create(user_id="owner", title="First")
-    second = repository.create(user_id="owner", title="Second")
-    repository.create(user_id="other", title="Other")
+    first = await repository.create(user_id="owner", title="First")
+    second = await repository.create(user_id="owner", title="Second")
+    await repository.create(user_id="other", title="Other")
 
-    assert repository.get_for_user(first.conversation_id, "owner") == first
-    assert repository.get_for_user(first.conversation_id, "other") is None
+    assert await repository.get_for_user(first.conversation_id, "owner") == first
+    assert await repository.get_for_user(first.conversation_id, "other") is None
 
-    page = repository.list_for_user("owner", limit=1)
+    page = await repository.list_for_user("owner", limit=1)
     assert [item.conversation_id for item in page.items] == [
         second.conversation_id
     ]
     assert page.next_cursor is not None
-    next_page = repository.list_for_user(
+    next_page = await repository.list_for_user(
         "owner",
         cursor=page.next_cursor,
         limit=1,
@@ -66,11 +67,12 @@ def test_create_list_get_and_owner_scope(
     ]
 
 
-def test_append_is_ordered_paginated_and_idempotent(
+@pytest.mark.anyio
+async def test_append_is_ordered_paginated_and_idempotent(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Timeline")
-    first = repository.append_event(
+    conversation = await repository.create(user_id="owner", title="Timeline")
+    first = await repository.append_event(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         event_type=ConversationEventType.USER_MESSAGE,
@@ -78,7 +80,7 @@ def test_append_is_ordered_paginated_and_idempotent(
         content="hello",
         idempotency_key="request-1",
     )
-    replay = repository.append_event(
+    replay = await repository.append_event(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         event_type=ConversationEventType.USER_MESSAGE,
@@ -86,7 +88,7 @@ def test_append_is_ordered_paginated_and_idempotent(
         content="hello",
         idempotency_key="request-1",
     )
-    second = repository.append_event(
+    second = await repository.append_event(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         event_type=ConversationEventType.ASSISTANT_MESSAGE,
@@ -97,14 +99,14 @@ def test_append_is_ordered_paginated_and_idempotent(
 
     assert replay.event_id == first.event_id
     assert second.sequence_no == 2
-    page = repository.list_events(
+    page = await repository.list_events(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         limit=1,
     )
     assert [event.content for event in page.items] == ["hello"]
     assert page.next_cursor
-    next_page = repository.list_events(
+    next_page = await repository.list_events(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         cursor=page.next_cursor,
@@ -113,7 +115,7 @@ def test_append_is_ordered_paginated_and_idempotent(
     assert [event.content for event in next_page.items] == ["hi"]
 
     with pytest.raises(ConversationIdempotencyError):
-        repository.append_event(
+        await repository.append_event(
             conversation_id=conversation.conversation_id,
             user_id="owner",
             event_type=ConversationEventType.USER_MESSAGE,
@@ -123,13 +125,14 @@ def test_append_is_ordered_paginated_and_idempotent(
         )
 
 
-def test_concurrent_appends_allocate_unique_contiguous_sequences(
+@pytest.mark.anyio
+async def test_concurrent_appends_allocate_unique_contiguous_sequences(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Concurrent")
+    conversation = await repository.create(user_id="owner", title="Concurrent")
 
-    def append(index: int) -> int:
-        event = repository.append_event(
+    async def append(index: int) -> int:
+        event = await repository.append_event(
             conversation_id=conversation.conversation_id,
             user_id="owner",
             event_type=ConversationEventType.USER_MESSAGE,
@@ -139,11 +142,12 @@ def test_concurrent_appends_allocate_unique_contiguous_sequences(
         )
         return event.sequence_no
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        sequence_numbers = list(executor.map(append, range(20)))
+    sequence_numbers = await asyncio.gather(
+        *(append(index) for index in range(20))
+    )
 
     assert sorted(sequence_numbers) == list(range(1, 21))
-    events = repository.list_events(
+    events = await repository.list_events(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         limit=50,
@@ -151,13 +155,14 @@ def test_concurrent_appends_allocate_unique_contiguous_sequences(
     assert [event.sequence_no for event in events.items] == list(range(1, 21))
 
 
-def test_cross_user_append_and_list_are_denied(
+@pytest.mark.anyio
+async def test_cross_user_append_and_list_are_denied(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Private")
+    conversation = await repository.create(user_id="owner", title="Private")
 
     with pytest.raises(LookupError):
-        repository.append_event(
+        await repository.append_event(
             conversation_id=conversation.conversation_id,
             user_id="other",
             event_type=ConversationEventType.USER_MESSAGE,
@@ -165,17 +170,20 @@ def test_cross_user_append_and_list_are_denied(
             content="not allowed",
             idempotency_key="cross-owner",
         )
-    assert not repository.list_events(
-        conversation_id=conversation.conversation_id,
-        user_id="other",
+    assert not (
+        await repository.list_events(
+            conversation_id=conversation.conversation_id,
+            user_id="other",
+        )
     ).items
 
 
-def test_metadata_updates_use_optimistic_versions(
+@pytest.mark.anyio
+async def test_metadata_updates_use_optimistic_versions(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Original")
-    updated = repository.update_metadata(
+    conversation = await repository.create(user_id="owner", title="Original")
+    updated = await repository.update_metadata(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         expected_version=conversation.version,
@@ -186,7 +194,7 @@ def test_metadata_updates_use_optimistic_versions(
     assert updated.title == "Renamed"
     assert updated.version == 2
     with pytest.raises(ConversationConcurrencyError):
-        repository.update_metadata(
+        await repository.update_metadata(
             conversation_id=conversation.conversation_id,
             user_id="owner",
             expected_version=conversation.version,
@@ -194,10 +202,11 @@ def test_metadata_updates_use_optimistic_versions(
         )
 
 
-def test_proposals_are_owner_scoped_deduplicated_and_consumed_once(
+@pytest.mark.anyio
+async def test_proposals_are_owner_scoped_deduplicated_and_consumed_once(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Proposal")
+    conversation = await repository.create(user_id="owner", title="Proposal")
     now = datetime.now(UTC)
     proposal = ModuleProposal(
         proposal_id="proposal-1",
@@ -213,12 +222,12 @@ def test_proposals_are_owner_scoped_deduplicated_and_consumed_once(
         created_at=now,
     )
 
-    assert repository.save_proposal(proposal) == proposal
-    replay = repository.save_proposal(
+    assert await repository.save_proposal(proposal) == proposal
+    replay = await repository.save_proposal(
         proposal.model_copy(update={"proposal_id": "proposal-2"})
     )
     assert replay.proposal_id == "proposal-1"
-    accepted = repository.transition_proposal(
+    accepted = await repository.transition_proposal(
         proposal_id=proposal.proposal_id,
         conversation_id=conversation.conversation_id,
         user_id="owner",
@@ -228,7 +237,7 @@ def test_proposals_are_owner_scoped_deduplicated_and_consumed_once(
     assert accepted is not None
     assert accepted.status is ModuleProposalStatus.ACCEPTED
     with pytest.raises(ConversationConcurrencyError):
-        repository.transition_proposal(
+        await repository.transition_proposal(
             proposal_id=proposal.proposal_id,
             conversation_id=conversation.conversation_id,
             user_id="owner",
@@ -236,7 +245,7 @@ def test_proposals_are_owner_scoped_deduplicated_and_consumed_once(
             target_status=ModuleProposalStatus.REJECTED,
         )
     assert (
-        repository.get_proposal_for_user(
+        await repository.get_proposal_for_user(
             proposal_id=proposal.proposal_id,
             conversation_id=conversation.conversation_id,
             user_id="other",
@@ -245,7 +254,8 @@ def test_proposals_are_owner_scoped_deduplicated_and_consumed_once(
     )
 
 
-def test_aes_gcm_protector_authenticates_content_and_metadata() -> None:
+@pytest.mark.anyio
+async def test_aes_gcm_protector_authenticates_content_and_metadata() -> None:
     protector = AESGCMConversationContentProtector(
         key=b"k" * 32,
         key_version="test-v1",
@@ -271,7 +281,8 @@ def test_aes_gcm_protector_authenticates_content_and_metadata() -> None:
         )
 
 
-def test_production_content_protection_fails_closed_without_key(
+@pytest.mark.anyio
+async def test_production_content_protection_fails_closed_without_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "production")
@@ -285,11 +296,12 @@ def test_production_content_protection_fails_closed_without_key(
         configured_content_protector()
 
 
-def test_delete_cascades_timeline_memory_source_and_is_idempotent(
+@pytest.mark.anyio
+async def test_delete_cascades_timeline_memory_source_and_is_idempotent(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Delete")
-    event = repository.append_event(
+    conversation = await repository.create(user_id="owner", title="Delete")
+    event = await repository.append_event(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         event_type=ConversationEventType.USER_MESSAGE,
@@ -328,11 +340,11 @@ def test_delete_cascades_timeline_memory_source_and_is_idempotent(
             ),
         )
 
-    counts = repository.delete_for_user(
+    counts = await repository.delete_for_user(
         conversation_id=conversation.conversation_id,
         user_id="owner",
     )
-    replay = repository.delete_for_user(
+    replay = await repository.delete_for_user(
         conversation_id=conversation.conversation_id,
         user_id="owner",
     )
@@ -341,9 +353,9 @@ def test_delete_cascades_timeline_memory_source_and_is_idempotent(
     assert counts["events"] == 1
     assert counts["memory_proposals"] == 1
     assert replay == counts
-    assert repository.get_for_user(conversation.conversation_id, "owner") is None
+    assert await repository.get_for_user(conversation.conversation_id, "owner") is None
     assert (
-        repository.delete_for_user(
+        await repository.delete_for_user(
             conversation_id=conversation.conversation_id,
             user_id="other",
         )

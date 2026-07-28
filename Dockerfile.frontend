@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 
 WORKDIR /app/frontend
 
@@ -21,10 +21,12 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runner
 
 WORKDIR /app/frontend
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000
 ARG NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ARG NEXT_PUBLIC_SOCIALEASE_AUTH_MODE=demo
 ARG NEXT_PUBLIC_SOCIALEASE_ENABLE_SIGNUP=true
@@ -38,15 +40,14 @@ ENV NEXT_PUBLIC_SOCIALEASE_TOKEN_STORAGE=$NEXT_PUBLIC_SOCIALEASE_TOKEN_STORAGE
 ENV NEXT_PUBLIC_SOCIALEASE_SHOW_TRACE=$NEXT_PUBLIC_SOCIALEASE_SHOW_TRACE
 ENV NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOSTICS=$NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOSTICS
 
-COPY --from=builder /app/frontend/package.json ./package.json
-COPY --from=builder /app/frontend/package-lock.json ./package-lock.json
-COPY --from=builder /app/frontend/node_modules ./node_modules
-COPY --from=builder /app/frontend/.next ./.next
-COPY --from=builder /app/frontend/next.config.mjs ./next.config.mjs
+COPY --from=builder --chown=node:node /app/frontend/.next/standalone ./
+COPY --from=builder --chown=node:node /app/frontend/.next/static ./.next/static
+
+USER node
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
-CMD ["npx", "next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
+CMD ["node", "server.js"]

@@ -1,6 +1,7 @@
 """Support-resource service shared by API routes and harness skills."""
 
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from hashlib import sha256
 import re
 from uuid import uuid4
@@ -23,6 +24,17 @@ from app.safety.crisis import crisis_escalation_response
 
 
 SUPPORT_CRISIS_RESPONSE = crisis_escalation_response(paused_activity="普通资源检索")
+
+
+@dataclass(frozen=True)
+class PreparedSupportQuery:
+    """Support retrieval result whose Redis projection is not yet published."""
+
+    response: SupportQueryResponse
+    user_id: str
+    session_id: str
+    state: SupportSearchContext | None = None
+    delete_existing: bool = False
 
 
 class SupportResourceService:
@@ -52,20 +64,33 @@ class SupportResourceService:
 
     async def query_resources(self, request: SupportQueryRequest) -> SupportQueryResponse:
         """Query public support resources unless escalation is required."""
+        prepared = await self.prepare_query_resources(request)
+        await self.publish_prepared_query(prepared)
+        return prepared.response
+
+    async def prepare_query_resources(
+        self,
+        request: SupportQueryRequest,
+    ) -> PreparedSupportQuery:
+        """Run safety and retrieval without mutating the Redis search projection."""
         safety_result = await self.safety_classifier.classify(request.query)
         user_id = request.user_id or "anonymous"
         session_id = request.search_session_id or str(uuid4())
         if safety_result.risk_level == RiskLevel.CRISIS:
-            await self.search_store.delete(user_id=user_id, task_id=session_id)
-            return SupportQueryResponse(
-                answer=SUPPORT_CRISIS_RESPONSE,
-                citations=[],
-                unknown=False,
-                confidence=1.0,
-                retrieval=None,
-                safety_result=safety_result,
-                blocked=True,
-                search_session_id=session_id,
+            return PreparedSupportQuery(
+                response=SupportQueryResponse(
+                    answer=SUPPORT_CRISIS_RESPONSE,
+                    citations=[],
+                    unknown=False,
+                    confidence=1.0,
+                    retrieval=None,
+                    safety_result=safety_result,
+                    blocked=True,
+                    search_session_id=session_id,
+                ),
+                user_id=user_id,
+                session_id=session_id,
+                delete_existing=True,
             )
 
         previous = await self._load(user_id, session_id)
@@ -79,69 +104,93 @@ class SupportResourceService:
                 reference_index,
             )
             if citation is None:
-                return SupportQueryResponse(
-                    answer="当前检索会话中找不到你指向的那条来源，请重新描述资料标题或重新查询。",
-                    citations=[],
-                    unknown=True,
-                    confidence=0.0,
-                    retrieval=None,
-                    safety_result=safety_result,
-                    blocked=False,
-                    search_session_id=session_id,
-                    resolved_reference_index=reference_index,
+                return PreparedSupportQuery(
+                    response=SupportQueryResponse(
+                        answer="当前检索会话中找不到你指向的那条来源，请重新描述资料标题或重新查询。",
+                        citations=[],
+                        unknown=True,
+                        confidence=0.0,
+                        retrieval=None,
+                        safety_result=safety_result,
+                        blocked=False,
+                        search_session_id=session_id,
+                        resolved_reference_index=reference_index,
+                    ),
+                    user_id=user_id,
+                    session_id=session_id,
                 )
-            await self._save(
-                previous.model_copy(
+            state = previous.model_copy(
                     update={
                         "selected_citation_index": reference_index,
                         "version": previous.version + 1,
                         "updated_at": datetime.now(timezone.utc),
                     },
                     deep=True,
-                )
             )
-            return SupportQueryResponse(
-                answer=f"你指的是《{citation.title}》。{citation.snippet}",
-                citations=[citation],
-                unknown=False,
-                confidence=1.0,
-                retrieval=None,
-                safety_result=safety_result,
-                blocked=False,
-                search_session_id=session_id,
-                resolved_reference_index=reference_index,
+            return PreparedSupportQuery(
+                response=SupportQueryResponse(
+                    answer=f"你指的是《{citation.title}》。{citation.snippet}",
+                    citations=[citation],
+                    unknown=False,
+                    confidence=1.0,
+                    retrieval=None,
+                    safety_result=safety_result,
+                    blocked=False,
+                    search_session_id=session_id,
+                    resolved_reference_index=reference_index,
+                ),
+                user_id=user_id,
+                session_id=session_id,
+                state=state,
             )
 
         response = self.knowledge.query(
             query=request.query,
             kb_type=KnowledgeBaseType.SUPPORT_RESOURCES,
         )
-        await self._save(
-            SupportSearchContext(
-                user_id=user_id,
-                search_session_id=session_id,
-                query_fingerprint=_query_fingerprint(request.query),
-                ordered_citation_ids=[
-                    citation.citation_id
-                    for citation in response.citations[:10]
-                    if citation.citation_id is not None
-                ],
-                selected_citation_index=None,
-                retrieval_unknown=response.unknown,
-                version=(previous.version + 1 if previous else 1),
-                updated_at=datetime.now(timezone.utc),
-            )
-        )
-        return SupportQueryResponse(
-            answer=response.answer,
-            citations=response.citations,
-            unknown=response.unknown,
-            confidence=response.confidence,
-            retrieval=response.retrieval,
-            safety_result=safety_result,
-            blocked=False,
+        state = SupportSearchContext(
+            user_id=user_id,
             search_session_id=session_id,
+            query_fingerprint=_query_fingerprint(request.query),
+            ordered_citation_ids=[
+                citation.citation_id
+                for citation in response.citations[:10]
+                if citation.citation_id is not None
+            ],
+            selected_citation_index=None,
+            retrieval_unknown=response.unknown,
+            version=(previous.version + 1 if previous else 1),
+            updated_at=datetime.now(timezone.utc),
         )
+        return PreparedSupportQuery(
+            response=SupportQueryResponse(
+                answer=response.answer,
+                citations=response.citations,
+                unknown=response.unknown,
+                confidence=response.confidence,
+                retrieval=response.retrieval,
+                safety_result=safety_result,
+                blocked=False,
+                search_session_id=session_id,
+            ),
+            user_id=user_id,
+            session_id=session_id,
+            state=state,
+        )
+
+    async def publish_prepared_query(
+        self,
+        prepared: PreparedSupportQuery,
+    ) -> None:
+        """Apply the Redis projection after the owning operation commits."""
+        if prepared.delete_existing:
+            await self.search_store.delete(
+                user_id=prepared.user_id,
+                task_id=prepared.session_id,
+            )
+            return
+        if prepared.state is not None:
+            await self._save(prepared.state)
 
     async def delete_user_context(self, user_id: str) -> int:
         return await self.search_store.delete_user(user_id=user_id)

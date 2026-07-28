@@ -36,11 +36,12 @@ def repository() -> PostgresTraceRepository:
     return PostgresTraceRepository(database_url=TEST_DATABASE_URL)
 
 
-def test_postgres_trace_save_and_get(repository: PostgresTraceRepository) -> None:
+@pytest.mark.anyio
+async def test_postgres_trace_save_and_get(repository: PostgresTraceRepository) -> None:
     record = _trace_record(user_id=f"pg_trace_user_{uuid4().hex}")
 
-    saved = repository.save(record)
-    fetched = repository.get(record.run_id)
+    saved = await repository.save(record)
+    fetched = await repository.get(record.run_id)
 
     assert saved.run_id == record.run_id
     assert fetched is not None
@@ -50,15 +51,15 @@ def test_postgres_trace_save_and_get(repository: PostgresTraceRepository) -> Non
     assert fetched.safety_result.risk_level == RiskLevel.LOW
     assert fetched.intent_result.intent == Intent.EMOTIONAL_SUPPORT
 
-    with repository.engine.connect() as connection:
-        row = connection.execute(
+    async with repository.engine.connect() as connection:
+        row = (await connection.execute(
             text(
                 """SELECT risk_level, intent, selected_agent, permission_action,
                 session_id, intervention_plan_id
                 FROM runs WHERE run_id = :run_id"""
             ),
             {"run_id": record.run_id},
-        ).mappings().first()
+        )).mappings().first()
 
     assert row is not None
     assert row["risk_level"] == "low"
@@ -69,7 +70,8 @@ def test_postgres_trace_save_and_get(repository: PostgresTraceRepository) -> Non
     assert row["intervention_plan_id"] is None
 
 
-def test_postgres_trace_list_recent_orders_newest_first(
+@pytest.mark.anyio
+async def test_postgres_trace_list_recent_orders_newest_first(
     repository: PostgresTraceRepository,
 ) -> None:
     user_id = f"pg_trace_recent_user_{uuid4().hex}"
@@ -80,9 +82,9 @@ def test_postgres_trace_list_recent_orders_newest_first(
     )
     newer = _trace_record(user_id=user_id, created_at=future_base + timedelta(seconds=1))
 
-    repository.save(older)
-    repository.save(newer)
-    recent = repository.list_recent(limit=2)
+    await repository.save(older)
+    await repository.save(newer)
+    recent = await repository.list_recent(limit=2)
 
     assert recent[0].run_id == newer.run_id
     assert {record.run_id for record in recent} >= {older.run_id, newer.run_id}

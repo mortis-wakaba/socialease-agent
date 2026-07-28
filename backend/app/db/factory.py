@@ -59,7 +59,7 @@ from app.conversation.repository import (
 class ProtocolRepository(Protocol):
     """Persistence contract for consent protocol records."""
 
-    def create(
+    async def create(
         self,
         *,
         user_id: str,
@@ -71,16 +71,20 @@ class ProtocolRepository(Protocol):
         payload: dict[str, object],
     ) -> ProtocolRecord: ...
 
-    def save(self, record: ProtocolRecord) -> ProtocolRecord: ...
-    def get_for_user(self, protocol_id: str, user_id: str) -> ProtocolRecord | None: ...
-    def set_status(
+    async def save(self, record: ProtocolRecord) -> ProtocolRecord: ...
+    async def get_for_user(
+        self,
+        protocol_id: str,
+        user_id: str,
+    ) -> ProtocolRecord | None: ...
+    async def set_status(
         self,
         *,
         protocol_id: str,
         user_id: str,
         status: ProtocolStatus,
     ) -> ProtocolRecord | None: ...
-    def transition_status(
+    async def transition_status(
         self,
         *,
         protocol_id: str,
@@ -88,7 +92,7 @@ class ProtocolRepository(Protocol):
         expected_status: ProtocolStatus,
         next_status: ProtocolStatus,
     ) -> ProtocolRecord | None: ...
-    def expire_pending_before(self, cutoff) -> int: ...
+    async def expire_pending_before(self, cutoff) -> int: ...
 
 
 class RepositoryNotImplementedError(NotImplementedError):

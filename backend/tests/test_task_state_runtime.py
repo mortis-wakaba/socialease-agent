@@ -104,6 +104,10 @@ async def test_readiness_accepts_all_required_task_state_probes(
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "production")
     monkeypatch.delenv("SOCIALEASE_REQUIRE_REDIS", raising=False)
     monkeypatch.setenv("SOCIALEASE_REDIS_URL", "redis://configured-and-probed/0")
+    monkeypatch.setenv(
+        "SOCIALEASE_CALENDAR_MCP_URL",
+        "https://calendar-mcp.example/mcp",
+    )
 
     async def healthy() -> bool:
         return True

@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 from uuid import uuid4
 
+import pytest
+
 from app.db.factory import repository_factory
 from app.memory.retriever import EpisodicMemoryRetriever
 from app.models_long_term_memory import (
@@ -61,22 +63,22 @@ def _record(
     )
 
 
-def _enable_consent(user_id: str) -> None:
-    repository_factory().user_memory_settings_repository().save(
+async def _enable_consent(user_id: str) -> None:
+    await repository_factory().user_memory_settings_repository().save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_practice_summary=True),
     )
 
 
-def _persist(repository, record: EpisodicMemoryRecord) -> EpisodicMemoryRecord:
+async def _persist(repository, record: EpisodicMemoryRecord) -> EpisodicMemoryRecord:
     target_status = record.status
-    created = repository.create_memory(
+    created = await repository.create_memory(
         record.model_copy(update={"status": MemoryRecordStatus.ACTIVE}),
         reason_code="test_fixture",
     )
     if target_status == MemoryRecordStatus.ACTIVE:
         return created
-    return repository.transition_memory(
+    return await repository.transition_memory(
         memory_id=record.memory_id,
         user_id=record.user_id,
         expected_version=created.version,
@@ -115,7 +117,8 @@ def _request(
     )
 
 
-def test_repository_filters_scope_lifecycle_type_scenario_expiry_and_text() -> None:
+@pytest.mark.anyio
+async def test_repository_filters_scope_lifecycle_type_scenario_expiry_and_text() -> None:
     repository = repository_factory().long_term_memory_repository()
     user_id = f"retrieval_repository_{uuid4().hex}"
     relevant = _record(
@@ -142,9 +145,9 @@ def test_repository_filters_scope_lifecycle_type_scenario_expiry_and_text() -> N
         summary="课堂发言时先说一句开场。",
     )
     for record in (relevant, archived, wrong_scenario, expired, other_user):
-        _persist(repository, record)
+        await _persist(repository, record)
 
-    candidates = repository.search_memory_candidates(
+    candidates = await repository.search_memory_candidates(
         user_id=user_id,
         statuses=(MemoryRecordStatus.ACTIVE, MemoryRecordStatus.ARCHIVED),
         memory_types=(MemoryType.HELPFUL_STRATEGY,),
@@ -161,7 +164,8 @@ def test_repository_filters_scope_lifecycle_type_scenario_expiry_and_text() -> N
     }
 
 
-def test_open_scenario_retrieval_merges_continuity_and_transferable_skills() -> None:
+@pytest.mark.anyio
+async def test_open_scenario_retrieval_merges_continuity_and_transferable_skills() -> None:
     repository = repository_factory().long_term_memory_repository()
     user_id = f"open_scenario_retrieval_{uuid4().hex}"
     same_thread = _record(
@@ -192,10 +196,10 @@ def test_open_scenario_retrieval_merges_continuity_and_transferable_skills() -> 
         skill_codes=[SocialSkillCode.CONVERSATION_INITIATION],
     )
     for record in (same_thread, cross_scenario, irrelevant):
-        _persist(repository, record)
-    _enable_consent(user_id)
+        await _persist(repository, record)
+    await _enable_consent(user_id)
 
-    result = _retriever().retrieve(
+    result = await _retriever().retrieve(
         MemoryRetrievalRequest(
             user_id=user_id,
             query="继续上次练习：这次要拒绝临时增加的额外任务。",
@@ -216,22 +220,23 @@ def test_open_scenario_retrieval_merges_continuity_and_transferable_skills() -> 
     assert result.hits[0].score.skill_overlap == 1.0
 
 
-def test_retrieval_requires_consent_and_audits_only_returned_hits() -> None:
+@pytest.mark.anyio
+async def test_retrieval_requires_consent_and_audits_only_returned_hits() -> None:
     repository = repository_factory().long_term_memory_repository()
     user_id = f"retrieval_consent_{uuid4().hex}"
     relevant = _record(
         user_id=user_id,
         summary="课堂发言前先准备一句简短开场对我有帮助。",
     )
-    _persist(repository, relevant)
+    await _persist(repository, relevant)
     retriever = _retriever()
     request = _request(user_id, "我想继续练习课堂发言的简短开场。")
 
-    denied = retriever.retrieve(request, now=NOW)
-    _enable_consent(user_id)
-    allowed = retriever.retrieve(request, now=NOW)
-    refreshed = repository.get_memory(relevant.memory_id, user_id)
-    events = repository.list_events(
+    denied = await retriever.retrieve(request, now=NOW)
+    await _enable_consent(user_id)
+    allowed = await retriever.retrieve(request, now=NOW)
+    refreshed = await repository.get_memory(relevant.memory_id, user_id)
+    events = await repository.list_events(
         user_id=user_id,
         subject_id=relevant.memory_id,
     )
@@ -248,7 +253,8 @@ def test_retrieval_requires_consent_and_audits_only_returned_hits() -> None:
     assert events[-1].summary is None
 
 
-def test_retrieval_rejects_injection_identifiers_and_current_conflicts() -> None:
+@pytest.mark.anyio
+async def test_retrieval_rejects_injection_identifiers_and_current_conflicts() -> None:
     repository = repository_factory().long_term_memory_repository()
     user_id = f"retrieval_safety_{uuid4().hex}"
     records = [
@@ -266,10 +272,10 @@ def test_retrieval_rejects_injection_identifiers_and_current_conflicts() -> None
         ),
     ]
     for record in records:
-        _persist(repository, record)
-    _enable_consent(user_id)
+        await _persist(repository, record)
+    await _enable_consent(user_id)
 
-    result = _retriever().retrieve(
+    result = await _retriever().retrieve(
         _request(user_id, "我不再觉得准备一句课堂开场对我有帮助。"),
         now=NOW,
     )
@@ -279,7 +285,8 @@ def test_retrieval_rejects_injection_identifiers_and_current_conflicts() -> None
     assert result.diagnostics.eligible_count == 0
 
 
-def test_archived_memory_requires_explicit_scope_and_high_relevance() -> None:
+@pytest.mark.anyio
+async def test_archived_memory_requires_explicit_scope_and_high_relevance() -> None:
     repository = repository_factory().long_term_memory_repository()
     user_id = f"retrieval_archive_{uuid4().hex}"
     archived = _record(
@@ -287,15 +294,15 @@ def test_archived_memory_requires_explicit_scope_and_high_relevance() -> None:
         summary="课堂发言时先说一句简短开场曾经有帮助。",
         status=MemoryRecordStatus.ARCHIVED,
     )
-    _persist(repository, archived)
-    _enable_consent(user_id)
+    await _persist(repository, archived)
+    await _enable_consent(user_id)
     retriever = _retriever()
 
-    excluded = retriever.retrieve(
+    excluded = await retriever.retrieve(
         _request(user_id, "课堂发言时怎样简短开场？"),
         now=NOW,
     )
-    included = retriever.retrieve(
+    included = await retriever.retrieve(
         _request(
             user_id,
             "课堂发言时怎样简短开场？",
@@ -309,11 +316,12 @@ def test_archived_memory_requires_explicit_scope_and_high_relevance() -> None:
     assert included.hits[0].status == MemoryRecordStatus.ARCHIVED
 
 
-def test_retrieval_context_never_exceeds_independent_budget() -> None:
+@pytest.mark.anyio
+async def test_retrieval_context_never_exceeds_independent_budget() -> None:
     repository = repository_factory().long_term_memory_repository()
     user_id = f"retrieval_budget_{uuid4().hex}"
     for index in range(5):
-        _persist(
+        await _persist(
             repository,
             _record(
                 user_id=user_id,
@@ -323,9 +331,9 @@ def test_retrieval_context_never_exceeds_independent_budget() -> None:
                 )[:500],
             ),
         )
-    _enable_consent(user_id)
+    await _enable_consent(user_id)
 
-    result = _retriever().retrieve(
+    result = await _retriever().retrieve(
         _request(user_id, "课堂发言开场时先说核心观点和理由。"),
         now=NOW,
         record_usage=False,

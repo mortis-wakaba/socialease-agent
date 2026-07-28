@@ -51,8 +51,8 @@ def repository(
 async def test_cache_hit_and_version_miss_match_database_projection(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Cached")
-    repository.append_event(
+    conversation = await repository.create(user_id="owner", title="Cached")
+    await repository.append_event(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         event_type=ConversationEventType.USER_MESSAGE,
@@ -76,7 +76,7 @@ async def test_cache_hit_and_version_miss_match_database_projection(
         user_id="owner",
         recent_limit=32,
     )
-    repository.append_event(
+    await repository.append_event(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         event_type=ConversationEventType.ASSISTANT_MESSAGE,
@@ -103,7 +103,7 @@ async def test_cache_hit_and_version_miss_match_database_projection(
 async def test_cache_failure_falls_back_to_authoritative_database(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Degraded")
+    conversation = await repository.create(user_id="owner", title="Degraded")
     provider = CachedConversationContextProvider(
         repository=repository,
         store=DisabledTaskStateStore(),
@@ -125,7 +125,7 @@ async def test_concurrent_cache_misses_are_single_flight(
     repository: SQLiteConversationRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Single flight")
+    conversation = await repository.create(user_id="owner", title="Single flight")
     calls = 0
     original = repository.list_recent_events
 
@@ -181,8 +181,8 @@ async def test_cache_outage_cannot_block_durable_deletion() -> None:
 async def test_encrypted_cache_never_stores_plaintext_projection(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Encrypted")
-    repository.append_event(
+    conversation = await repository.create(user_id="owner", title="Encrypted")
+    await repository.append_event(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         event_type=ConversationEventType.USER_MESSAGE,
@@ -222,7 +222,7 @@ async def test_encrypted_cache_never_stores_plaintext_projection(
 async def test_owner_mismatched_cached_projection_is_rebuilt(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Scoped")
+    conversation = await repository.create(user_id="owner", title="Scoped")
     store: InMemoryTaskStateStore[ProtectedConversationProjection] = (
         InMemoryTaskStateStore()
     )
@@ -275,7 +275,7 @@ async def test_real_redis_context_cache_round_trip_when_configured(
     if not redis_url:
         pytest.skip("SOCIALEASE_TEST_REDIS_URL is required")
     user_id = f"redis-context-{uuid4().hex}"
-    conversation = repository.create(user_id=user_id, title="Redis")
+    conversation = await repository.create(user_id=user_id, title="Redis")
     store = RedisTaskStateStore(
         redis_url=redis_url,
         namespace="conversation-context-test",

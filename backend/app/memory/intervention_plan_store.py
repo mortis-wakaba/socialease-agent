@@ -17,7 +17,7 @@ class InterventionPlanStore:
         if resolve_database_provider(database_settings().database_url) == DatabaseProvider.SQLITE:
             initialize_database()
 
-    def create(
+    async def create(
         self,
         *,
         user_id: str,
@@ -38,9 +38,9 @@ class InterventionPlanStore:
             created_at=now,
             updated_at=now,
         )
-        return self.save(plan)
+        return await self.save(plan)
 
-    def save(self, plan: InterventionPlan) -> InterventionPlan:
+    async def save(self, plan: InterventionPlan) -> InterventionPlan:
         """Persist one intervention plan."""
         with connect() as connection:
             connection.execute(
@@ -59,7 +59,7 @@ class InterventionPlanStore:
             )
         return plan
 
-    def get_for_session(self, session_id: str, user_id: str) -> InterventionPlan | None:
+    async def get_for_session(self, session_id: str, user_id: str) -> InterventionPlan | None:
         """Return the intervention plan for a user session."""
         with connect() as connection:
             row = connection.execute(
@@ -68,7 +68,7 @@ class InterventionPlanStore:
             ).fetchone()
         return InterventionPlan.model_validate_json(row["payload"]) if row else None
 
-    def get_by_id_for_user(self, plan_id: str, user_id: str) -> InterventionPlan | None:
+    async def get_by_id_for_user(self, plan_id: str, user_id: str) -> InterventionPlan | None:
         """Return an intervention plan by id only if it belongs to the user."""
         with connect() as connection:
             row = connection.execute(
@@ -77,7 +77,7 @@ class InterventionPlanStore:
             ).fetchone()
         return InterventionPlan.model_validate_json(row["payload"]) if row else None
 
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[InterventionPlan]:
+    async def list_for_user(self, user_id: str, limit: int = 20) -> list[InterventionPlan]:
         """Return recent intervention plans for one user."""
         with connect() as connection:
             rows = connection.execute(
@@ -89,7 +89,7 @@ class InterventionPlanStore:
             ).fetchall()
         return [InterventionPlan.model_validate_json(row["payload"]) for row in rows]
 
-    def cancel_pending_consent_before(self, cutoff: datetime) -> int:
+    async def cancel_pending_consent_before(self, cutoff: datetime) -> int:
         """Cancel abandoned pending-consent plans before a cutoff timestamp."""
         with connect() as connection:
             rows = connection.execute(
@@ -107,7 +107,7 @@ class InterventionPlanStore:
                 for step in plan.steps
             ]
             updated = plan.model_copy(update={"status": "cancelled", "steps": updated_steps})
-            self.save(updated)
+            await self.save(updated)
             cancelled_count += 1
         return cancelled_count
 

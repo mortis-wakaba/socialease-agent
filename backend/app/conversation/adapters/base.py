@@ -1,7 +1,7 @@
 """Common contract for conversation module adapters."""
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.models_conversation import ConversationEventPayload, ModuleRun
 from app.models_conversation_context import ConversationWorkingContext
@@ -17,14 +17,32 @@ class ModuleAdapterResult:
     event_payload: ConversationEventPayload
 
 
+@dataclass(frozen=True)
+class PreparedModuleStart:
+    """Transaction-free computation needed to persist one module session."""
+
+    payload: Any
+
+
 class ModuleAdapter(Protocol):
     """Translate conversation lifecycle actions to one domain service."""
 
-    async def start(
+    async def prepare_start(
         self,
         run: ModuleRun,
         context: ConversationWorkingContext,
+    ) -> PreparedModuleStart: ...
+    async def persist_start(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
     ) -> ModuleAdapterResult: ...
+    async def after_start_commit(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+        result: ModuleAdapterResult,
+    ) -> None: ...
     async def handle_message(
         self,
         run: ModuleRun,

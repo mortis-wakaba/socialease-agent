@@ -21,4 +21,4 @@ async def diagnose_user_memory(
 ) -> MemoryDoctorReport:
     """Return a content-free read-only quality report for one owner."""
     require_owner_path_user(user_id, current_user)
-    return memory_doctor_service.diagnose(user_id)
+    return await memory_doctor_service.diagnose(user_id)

@@ -24,17 +24,17 @@ def _initialize_sqlite_if_configured() -> None:
 class TraceRepository(Protocol):
     """Persistence contract for workflow traces."""
 
-    def save(self, record: TraceRecord) -> TraceRecord: ...
-    def get(self, run_id: str) -> TraceRecord | None: ...
-    def list_recent(self, limit: int = 100) -> list[TraceRecord]: ...
+    async def save(self, record: TraceRecord) -> TraceRecord: ...
+    async def get(self, run_id: str) -> TraceRecord | None: ...
+    async def list_recent(self, limit: int = 100) -> list[TraceRecord]: ...
 
 
 class RoleplaySessionRepository(Protocol):
     """Persistence contract for role-play sessions."""
 
-    def save(self, session: RoleplaySession) -> RoleplaySession: ...
-    def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None: ...
-    def list_for_user(
+    async def save(self, session: RoleplaySession) -> RoleplaySession: ...
+    async def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None: ...
+    async def list_for_user(
         self,
         user_id: str,
         limit: int = 20,
@@ -45,30 +45,30 @@ class RoleplaySessionRepository(Protocol):
 class WorksheetRepository(Protocol):
     """Persistence contract for worksheets."""
 
-    def save(self, record: WorksheetRecord) -> WorksheetRecord: ...
-    def get(self, worksheet_id: str) -> WorksheetRecord | None: ...
+    async def save(self, record: WorksheetRecord) -> WorksheetRecord: ...
+    async def get(self, worksheet_id: str) -> WorksheetRecord | None: ...
 
 
 class ExposureRepository(Protocol):
     """Persistence contract for active exposure plans and attempts."""
 
-    def save_plan(self, plan: ExposurePlan) -> ExposurePlan: ...
-    def get_for_user(self, user_id: str) -> ExposurePlan | None: ...
-    def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None: ...
-    def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan: ...
+    async def save_plan(self, plan: ExposurePlan) -> ExposurePlan: ...
+    async def get_for_user(self, user_id: str) -> ExposurePlan | None: ...
+    async def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None: ...
+    async def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan: ...
 
 
 class UserProfileRepository(Protocol):
     """Persistence contract for privacy-minimized user practice summaries."""
 
-    def get_summary(self, user_id: str) -> UserPracticeSummary: ...
+    async def get_summary(self, user_id: str) -> UserPracticeSummary: ...
 
 
 class SessionReviewRepository(Protocol):
     """Persistence contract for privacy-safe session reviews."""
 
-    def save(self, record: SessionReviewRecord) -> SessionReviewRecord: ...
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]: ...
+    async def save(self, record: SessionReviewRecord) -> SessionReviewRecord: ...
+    async def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]: ...
 
 
 class SQLiteTraceRepository:
@@ -77,7 +77,7 @@ class SQLiteTraceRepository:
     def __init__(self) -> None:
         _initialize_sqlite_if_configured()
 
-    def save(self, record: TraceRecord) -> TraceRecord:
+    async def save(self, record: TraceRecord) -> TraceRecord:
         with connect() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO runs (run_id, user_id, payload, created_at) VALUES (?, ?, ?, ?)",
@@ -85,12 +85,12 @@ class SQLiteTraceRepository:
             )
         return record
 
-    def get(self, run_id: str) -> TraceRecord | None:
+    async def get(self, run_id: str) -> TraceRecord | None:
         with connect() as connection:
             row = connection.execute("SELECT payload FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         return TraceRecord.model_validate_json(row["payload"]) if row else None
 
-    def list_recent(self, limit: int = 100) -> list[TraceRecord]:
+    async def list_recent(self, limit: int = 100) -> list[TraceRecord]:
         """Return recent trace records ordered from newest to oldest."""
         with connect() as connection:
             rows = connection.execute(
@@ -106,7 +106,7 @@ class SQLiteRoleplaySessionRepository:
     def __init__(self) -> None:
         _initialize_sqlite_if_configured()
 
-    def save(self, session: RoleplaySession) -> RoleplaySession:
+    async def save(self, session: RoleplaySession) -> RoleplaySession:
         with connect() as connection:
             connection.execute(
                 """INSERT OR REPLACE INTO roleplay_sessions
@@ -115,7 +115,7 @@ class SQLiteRoleplaySessionRepository:
             )
         return session
 
-    def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
+    async def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
         with connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM roleplay_sessions WHERE session_id = ? AND user_id = ?",
@@ -123,7 +123,7 @@ class SQLiteRoleplaySessionRepository:
             ).fetchone()
         return RoleplaySession.model_validate_json(row["payload"]) if row else None
 
-    def list_for_user(
+    async def list_for_user(
         self,
         user_id: str,
         limit: int = 20,
@@ -147,7 +147,7 @@ class SQLiteWorksheetRepository:
     def __init__(self) -> None:
         _initialize_sqlite_if_configured()
 
-    def save(self, record: WorksheetRecord) -> WorksheetRecord:
+    async def save(self, record: WorksheetRecord) -> WorksheetRecord:
         with connect() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO worksheets (worksheet_id, user_id, payload, created_at) VALUES (?, ?, ?, ?)",
@@ -155,7 +155,7 @@ class SQLiteWorksheetRepository:
             )
         return record
 
-    def get(self, worksheet_id: str) -> WorksheetRecord | None:
+    async def get(self, worksheet_id: str) -> WorksheetRecord | None:
         with connect() as connection:
             row = connection.execute("SELECT payload FROM worksheets WHERE worksheet_id = ?", (worksheet_id,)).fetchone()
         return WorksheetRecord.model_validate_json(row["payload"]) if row else None
@@ -167,7 +167,7 @@ class SQLiteExposureRepository:
     def __init__(self) -> None:
         _initialize_sqlite_if_configured()
 
-    def save_plan(self, plan: ExposurePlan) -> ExposurePlan:
+    async def save_plan(self, plan: ExposurePlan) -> ExposurePlan:
         with connect() as connection:
             existing = connection.execute(
                 "SELECT plan_id FROM exposure_plans WHERE user_id = ?", (plan.user_id,)
@@ -181,12 +181,12 @@ class SQLiteExposureRepository:
             )
         return plan
 
-    def get_for_user(self, user_id: str) -> ExposurePlan | None:
+    async def get_for_user(self, user_id: str) -> ExposurePlan | None:
         with connect() as connection:
             row = connection.execute("SELECT payload FROM exposure_plans WHERE user_id = ?", (user_id,)).fetchone()
         return ExposurePlan.model_validate_json(row["payload"]) if row else None
 
-    def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
+    async def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
         with connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM exposure_plans WHERE plan_id = ? AND user_id = ?",
@@ -194,7 +194,7 @@ class SQLiteExposureRepository:
             ).fetchone()
         return ExposurePlan.model_validate_json(row["payload"]) if row else None
 
-    def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan:
+    async def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan:
         with connect() as connection:
             connection.execute(
                 "INSERT INTO exposure_attempts (plan_id, user_id, payload, created_at) VALUES (?, ?, ?, ?)",
@@ -213,7 +213,7 @@ class SQLiteUserProfileRepository:
     def __init__(self) -> None:
         _initialize_sqlite_if_configured()
 
-    def get_summary(self, user_id: str) -> UserPracticeSummary:
+    async def get_summary(self, user_id: str) -> UserPracticeSummary:
         with connect() as connection:
             roleplay_rows = connection.execute(
                 "SELECT payload FROM roleplay_sessions WHERE user_id = ? ORDER BY updated_at DESC",
@@ -243,7 +243,7 @@ class SQLiteSessionReviewRepository:
     def __init__(self) -> None:
         _initialize_sqlite_if_configured()
 
-    def save(self, record: SessionReviewRecord) -> SessionReviewRecord:
+    async def save(self, record: SessionReviewRecord) -> SessionReviewRecord:
         with connect() as connection:
             connection.execute(
                 """INSERT OR REPLACE INTO session_reviews
@@ -260,7 +260,7 @@ class SQLiteSessionReviewRepository:
             )
         return record
 
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]:
+    async def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]:
         with connect() as connection:
             rows = connection.execute(
                 """SELECT payload FROM session_reviews
@@ -274,9 +274,9 @@ class SQLiteSessionReviewRepository:
 class InMemoryTraceRepository:
     """In-memory trace repository for tests."""
     def __init__(self) -> None: self.records: dict[str, TraceRecord] = {}
-    def save(self, record: TraceRecord) -> TraceRecord: self.records[record.run_id] = record; return record
-    def get(self, run_id: str) -> TraceRecord | None: return self.records.get(run_id)
-    def list_recent(self, limit: int = 100) -> list[TraceRecord]:
+    async def save(self, record: TraceRecord) -> TraceRecord: self.records[record.run_id] = record; return record
+    async def get(self, run_id: str) -> TraceRecord | None: return self.records.get(run_id)
+    async def list_recent(self, limit: int = 100) -> list[TraceRecord]:
         return sorted(
             self.records.values(),
             key=lambda record: record.created_at,
@@ -287,11 +287,11 @@ class InMemoryTraceRepository:
 class InMemoryRoleplaySessionRepository:
     """In-memory role-play repository for tests."""
     def __init__(self) -> None: self.sessions: dict[str, RoleplaySession] = {}
-    def save(self, session: RoleplaySession) -> RoleplaySession: self.sessions[session.session_id] = session; return session
-    def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
+    async def save(self, session: RoleplaySession) -> RoleplaySession: self.sessions[session.session_id] = session; return session
+    async def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
         session = self.sessions.get(session_id)
         return session if session and session.user_id == user_id else None
-    def list_for_user(
+    async def list_for_user(
         self,
         user_id: str,
         limit: int = 20,
@@ -305,19 +305,19 @@ class InMemoryRoleplaySessionRepository:
 class InMemoryWorksheetRepository:
     """In-memory worksheet repository for tests."""
     def __init__(self) -> None: self.worksheets: dict[str, WorksheetRecord] = {}
-    def save(self, record: WorksheetRecord) -> WorksheetRecord: self.worksheets[record.worksheet_id] = record; return record
-    def get(self, worksheet_id: str) -> WorksheetRecord | None: return self.worksheets.get(worksheet_id)
+    async def save(self, record: WorksheetRecord) -> WorksheetRecord: self.worksheets[record.worksheet_id] = record; return record
+    async def get(self, worksheet_id: str) -> WorksheetRecord | None: return self.worksheets.get(worksheet_id)
 
 
 class InMemoryExposureRepository:
     """In-memory exposure repository for tests."""
     def __init__(self) -> None: self.plans_by_user: dict[str, ExposurePlan] = {}
-    def save_plan(self, plan: ExposurePlan) -> ExposurePlan: self.plans_by_user[plan.user_id] = plan; return plan
-    def get_for_user(self, user_id: str) -> ExposurePlan | None: return self.plans_by_user.get(user_id)
-    def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
+    async def save_plan(self, plan: ExposurePlan) -> ExposurePlan: self.plans_by_user[plan.user_id] = plan; return plan
+    async def get_for_user(self, user_id: str) -> ExposurePlan | None: return self.plans_by_user.get(user_id)
+    async def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
         plan = self.plans_by_user.get(user_id)
         return plan if plan and plan.plan_id == plan_id else None
-    def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan:
+    async def save_attempt(self, user_id: str, plan: ExposurePlan, attempt: ExposureAttempt) -> ExposurePlan:
         self.plans_by_user[user_id] = plan
         return plan
 
@@ -328,11 +328,11 @@ class InMemorySessionReviewRepository:
     def __init__(self) -> None:
         self.reviews: dict[str, SessionReviewRecord] = {}
 
-    def save(self, record: SessionReviewRecord) -> SessionReviewRecord:
+    async def save(self, record: SessionReviewRecord) -> SessionReviewRecord:
         self.reviews[record.review_id] = record
         return record
 
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]:
+    async def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]:
         records = [
             record for record in self.reviews.values() if record.user_id == user_id
         ]

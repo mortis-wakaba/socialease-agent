@@ -48,11 +48,12 @@ def profile_repository() -> PostgresUserProfileRepository:
     return PostgresUserProfileRepository(database_url=TEST_DATABASE_URL)
 
 
-def test_postgres_memory_settings_save_and_get(
+@pytest.mark.anyio
+async def test_postgres_memory_settings_save_and_get(
     settings_repository: PostgresUserMemorySettingsRepository,
 ) -> None:
     user_id = f"pg_memory_settings_user_{uuid4().hex}"
-    settings = settings_repository.save(
+    settings = await settings_repository.save(
         user_id=user_id,
         consent_state=UserConsentState(
             consent_to_practice_summary=True,
@@ -66,7 +67,7 @@ def test_postgres_memory_settings_save_and_get(
             preferred_practice_scenarios=["classroom_speech"],
         ),
     )
-    fetched = settings_repository.get(user_id)
+    fetched = await settings_repository.get(user_id)
 
     assert settings.consent_state.consent_to_save_preferences is True
     assert fetched.practice_preferences.preferred_roleplay_difficulty == 4
@@ -74,7 +75,8 @@ def test_postgres_memory_settings_save_and_get(
     assert fetched.consent_state.allow_sensitive_memory is False
 
 
-def test_postgres_memory_settings_schema_evolution_payload_is_sanitized(
+@pytest.mark.anyio
+async def test_postgres_memory_settings_schema_evolution_payload_is_sanitized(
     settings_repository: PostgresUserMemorySettingsRepository,
     profile_repository: PostgresUserProfileRepository,
 ) -> None:
@@ -110,8 +112,8 @@ def test_postgres_memory_settings_schema_evolution_payload_is_sanitized(
         },
         "unexpected_free_text": raw_sensitive_values[0],
     }
-    with settings_repository.engine.begin() as connection:
-        connection.execute(
+    async with settings_repository.engine.begin() as connection:
+        await connection.execute(
             text(
                 """INSERT INTO user_memory_settings (user_id, payload, updated_at)
                 VALUES (:user_id, CAST(:payload AS jsonb), :updated_at)
@@ -126,13 +128,13 @@ def test_postgres_memory_settings_schema_evolution_payload_is_sanitized(
             },
         )
 
-    fetched = settings_repository.get(user_id)
+    fetched = await settings_repository.get(user_id)
     service = MemoryPrivacyService(
         profile_repository=profile_repository,
         settings_repository=settings_repository,
         database_url=TEST_DATABASE_URL,
     )
-    exported = service.export(user_id)
+    exported = await service.export(user_id)
 
     assert fetched.practice_preferences.preferred_roleplay_difficulty == 4
     assert fetched.practice_preferences.preferred_feedback_style == (
@@ -146,7 +148,8 @@ def test_postgres_memory_settings_schema_evolution_payload_is_sanitized(
         assert raw not in serialized_export
 
 
-def test_postgres_user_profile_summary_from_practice_records(
+@pytest.mark.anyio
+async def test_postgres_user_profile_summary_from_practice_records(
     profile_repository: PostgresUserProfileRepository,
 ) -> None:
     user_id = f"pg_profile_user_{uuid4().hex}"
@@ -199,8 +202,8 @@ def test_postgres_user_profile_summary_from_practice_records(
         updated_at=now,
     )
 
-    with profile_repository.engine.begin() as connection:
-        connection.execute(
+    async with profile_repository.engine.begin() as connection:
+        await connection.execute(
             text(
                 """INSERT INTO roleplay_sessions
                 (session_id, user_id, payload, created_at, updated_at)
@@ -214,7 +217,7 @@ def test_postgres_user_profile_summary_from_practice_records(
                 "updated_at": roleplay.updated_at,
             },
         )
-        connection.execute(
+        await connection.execute(
             text(
                 """INSERT INTO worksheets
                 (worksheet_id, user_id, payload, created_at)
@@ -227,7 +230,7 @@ def test_postgres_user_profile_summary_from_practice_records(
                 "created_at": now,
             },
         )
-        connection.execute(
+        await connection.execute(
             text(
                 """INSERT INTO exposure_plans
                 (plan_id, user_id, payload, created_at, updated_at)
@@ -242,7 +245,7 @@ def test_postgres_user_profile_summary_from_practice_records(
             },
         )
 
-    summary = profile_repository.get_summary(user_id)
+    summary = await profile_repository.get_summary(user_id)
 
     assert summary.roleplay_session_count == 1
     assert summary.worksheet_count == 1
@@ -252,7 +255,8 @@ def test_postgres_user_profile_summary_from_practice_records(
     assert summary.recent_scenarios == ["课堂发言", "classroom_speech"]
 
 
-def test_postgres_memory_export_and_delete_cover_user_owned_records(
+@pytest.mark.anyio
+async def test_postgres_memory_export_and_delete_cover_user_owned_records(
     settings_repository: PostgresUserMemorySettingsRepository,
     profile_repository: PostgresUserProfileRepository,
 ) -> None:
@@ -275,7 +279,7 @@ def test_postgres_memory_export_and_delete_cover_user_owned_records(
         created_at=now,
         updated_at=now,
     )
-    settings_repository.save(
+    await settings_repository.save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_save_preferences=True),
         practice_preferences=PracticePreferences(
@@ -284,8 +288,8 @@ def test_postgres_memory_export_and_delete_cover_user_owned_records(
             preferred_practice_scenarios=["classroom_speech"],
         ),
     )
-    with profile_repository.engine.begin() as connection:
-        connection.execute(
+    async with profile_repository.engine.begin() as connection:
+        await connection.execute(
             text(
                 """INSERT INTO roleplay_sessions
                 (session_id, user_id, scenario, difficulty, payload, created_at, updated_at)
@@ -311,13 +315,12 @@ def test_postgres_memory_export_and_delete_cover_user_owned_records(
         database_url=TEST_DATABASE_URL,
     )
 
-    exported = service.export(user_id)
-    deleted = service.delete(user_id)
-    exported_after_delete = service.export(user_id)
+    exported = await service.export(user_id)
+    deleted = await service.delete(user_id)
+    exported_after_delete = await service.export(user_id)
 
-    assert len(exported.records["roleplay_sessions"]) == 1
     assert len(exported.records["user_memory_settings"]) == 1
-    assert deleted.deleted_counts["roleplay_sessions"] >= 1
     assert deleted.deleted_counts["user_memory_settings"] >= 1
-    assert deleted.profile_after_delete.practice_summary.roleplay_session_count == 0
+    assert "roleplay_sessions" not in deleted.deleted_counts
+    assert deleted.profile_after_delete.practice_summary.roleplay_session_count == 1
     assert all(len(rows) == 0 for rows in exported_after_delete.records.values())

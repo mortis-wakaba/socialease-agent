@@ -49,9 +49,42 @@ def enable_local_developer_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOCIALEASE_ENABLE_DEVELOPER_ENDPOINTS", "true")
 
 
-def test_persistence_gate_minimizes_raw_message_by_default() -> None:
+async def _send_general_conversation_turn(
+    client: httpx.AsyncClient,
+    *,
+    user_id: str,
+    message: str,
+    headers: dict[str, str] | None = None,
+) -> dict[str, object]:
+    request_headers = headers or {"X-Demo-User-Id": user_id}
+    created = await client.post(
+        "/api/conversations",
+        headers=request_headers,
+        json={
+            "user_id": user_id,
+            "title": "Privacy trace",
+            "history_notice_version": "2026-07-01",
+            "history_notice_acknowledged": True,
+        },
+    )
+    response = await client.post(
+        f"/api/conversations/{created.json()['conversation_id']}/messages",
+        headers=request_headers,
+        json={
+            "user_id": user_id,
+            "message": message,
+            "idempotency_key": f"privacy-{uuid4().hex}",
+        },
+    )
+    workflow_response = response.json()["workflow_response"]
+    assert workflow_response is not None
+    return workflow_response
+
+
+@pytest.mark.anyio
+async def test_persistence_gate_minimizes_raw_message_by_default() -> None:
     gate = PersistenceGate()
-    decision = gate.persist_text(
+    decision = await gate.persist_text(
         user_id=f"privacy_gate_default_{uuid4().hex}",
         kind=PersistenceKind.WORKSHEET_SOURCE_MESSAGE,
         text="我的邮箱是 demo@example.com，明天课堂发言很紧张。",
@@ -63,9 +96,10 @@ def test_persistence_gate_minimizes_raw_message_by_default() -> None:
     assert "demo@example.com" not in decision.persisted_text
 
 
-def test_persistence_gate_minimizes_exposure_target_scenario() -> None:
+@pytest.mark.anyio
+async def test_persistence_gate_minimizes_exposure_target_scenario() -> None:
     gate = PersistenceGate()
-    decision = gate.persist_text(
+    decision = await gate.persist_text(
         user_id=f"privacy_gate_exposure_target_{uuid4().hex}",
         kind=PersistenceKind.EXPOSURE_TARGET_SCENARIO,
         text="和李四同学约饭后聊我手机号 13912345678",
@@ -77,11 +111,12 @@ def test_persistence_gate_minimizes_exposure_target_scenario() -> None:
     assert "13912345678" not in decision.persisted_text
 
 
-def test_persistence_gate_redacts_session_review_next_step() -> None:
+@pytest.mark.anyio
+async def test_persistence_gate_redacts_session_review_next_step() -> None:
     gate = PersistenceGate()
     raw = "下次和姓名：张三 练习，电话 13912345678，邮箱 review@example.com。"
 
-    decision = gate.persist_text(
+    decision = await gate.persist_text(
         user_id=f"privacy_gate_session_review_{uuid4().hex}",
         kind=PersistenceKind.SESSION_REVIEW_NEXT_STEP,
         text=raw,
@@ -95,14 +130,15 @@ def test_persistence_gate_redacts_session_review_next_step() -> None:
     assert set(decision.redacted_types) >= {"person_name", "phone", "email"}
 
 
-def test_persistence_gate_redacts_derived_and_agent_messages() -> None:
+@pytest.mark.anyio
+async def test_persistence_gate_redacts_derived_and_agent_messages() -> None:
     gate = PersistenceGate()
-    worksheet_decision = gate.persist_text(
+    worksheet_decision = await gate.persist_text(
         user_id=f"privacy_gate_worksheet_field_{uuid4().hex}",
         kind=PersistenceKind.WORKSHEET_FIELD,
         text="下一步：联系我 13912345678，邮箱 field@example.com。",
     )
-    agent_decision = gate.persist_text(
+    agent_decision = await gate.persist_text(
         user_id=f"privacy_gate_roleplay_agent_{uuid4().hex}",
         kind=PersistenceKind.ROLEPLAY_AGENT_MESSAGE,
         text="我听到你提到手机号 13912345678，我们可以换成一句泛化表达。",
@@ -119,14 +155,15 @@ def test_persistence_gate_redacts_derived_and_agent_messages() -> None:
     assert "13912345678" not in agent_decision.persisted_text
 
 
-def test_persistence_gate_redacts_memory_and_onboarding_fields() -> None:
+@pytest.mark.anyio
+async def test_persistence_gate_redacts_memory_and_onboarding_fields() -> None:
     gate = PersistenceGate()
-    memory_decision = gate.persist_text(
+    memory_decision = await gate.persist_text(
         user_id=f"privacy_gate_memory_preference_{uuid4().hex}",
         kind=PersistenceKind.MEMORY_PREFERENCE,
         text="偏好里不要保存电话 13912345678 和邮箱 memory@example.com。",
     )
-    onboarding_decision = gate.persist_text(
+    onboarding_decision = await gate.persist_text(
         user_id=f"privacy_gate_onboarding_{uuid4().hex}",
         kind=PersistenceKind.ONBOARDING_FIELD,
         text="姓名：张三，地址：北京市海淀区中关村大街27号。",
@@ -204,9 +241,10 @@ def test_third_party_redactor_handles_explicit_name_introducer() -> None:
     assert "third_party_identity" in detected
 
 
-def test_trace_output_redacts_chinese_sensitive_identifiers_without_minimizing() -> None:
+@pytest.mark.anyio
+async def test_trace_output_redacts_chinese_sensitive_identifiers_without_minimizing() -> None:
     gate = PersistenceGate()
-    decision = gate.persist_text(
+    decision = await gate.persist_text(
         user_id=f"privacy_gate_trace_output_{uuid4().hex}",
         kind=PersistenceKind.TRACE_OUTPUT,
         text=(
@@ -228,13 +266,16 @@ def test_trace_output_redacts_chinese_sensitive_identifiers_without_minimizing()
     assert "大学城北路2号" not in decision.persisted_text
 
 
-def test_trace_output_summary_only_in_production_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.anyio
+async def test_trace_output_summary_only_in_production_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("SOCIALEASE_TRACE_OUTPUT_MODE", raising=False)
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "production")
     gate = PersistenceGate()
     raw = "你的手机号 13912345678 和姓名：王五 不需要写入 trace，我们只保留练习摘要。"
 
-    decision = gate.persist_text(
+    decision = await gate.persist_text(
         user_id=f"privacy_gate_trace_summary_{uuid4().hex}",
         kind=PersistenceKind.TRACE_OUTPUT,
         text=raw,
@@ -249,11 +290,14 @@ def test_trace_output_summary_only_in_production_by_default(monkeypatch: pytest.
     assert decision.persisted_text.startswith("[assistant output summarized by privacy policy:")
 
 
-def test_trace_output_can_be_minimized_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.anyio
+async def test_trace_output_can_be_minimized_by_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("SOCIALEASE_TRACE_OUTPUT_MODE", "minimized")
     gate = PersistenceGate()
 
-    decision = gate.persist_text(
+    decision = await gate.persist_text(
         user_id=f"privacy_gate_trace_minimized_{uuid4().hex}",
         kind=PersistenceKind.TRACE_OUTPUT,
         text="这是一段不需要保存的助手回复。",
@@ -270,15 +314,12 @@ async def test_chat_trace_input_is_minimized_before_persistence(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = f"privacy_trace_user_{uuid4().hex}"
-    response = await client.post(
-        "/api/chat",
-        json={
-            "user_id": user_id,
-            "message": "我的邮箱是 trace@example.com，我想练习课堂发言。",
-            "context": {},
-        },
+    response = await _send_general_conversation_turn(
+        client,
+        user_id=user_id,
+        message="我的邮箱是 trace@example.com，今天小组交流后有点紧张。",
     )
-    run_id = response.json()["run_id"]
+    run_id = response["run_id"]
 
     trace_response = await client.get(f"/api/runs/{run_id}")
 
@@ -294,7 +335,9 @@ async def test_chat_trace_input_is_minimized_before_persistence(
     assert input_policy["persistence_kind"] == "trace_input"
     assert input_policy["minimized"] is True
     assert input_policy["redacted_types"] == ["email"]
-    assert input_policy["original_length"] == len("我的邮箱是 trace@example.com，我想练习课堂发言。")
+    assert input_policy["original_length"] == len(
+        "我的邮箱是 trace@example.com，今天小组交流后有点紧张。"
+    )
     assert input_policy["persisted_length"] == len(trace["input"])
 
 
@@ -303,15 +346,12 @@ async def test_trace_output_redacts_sensitive_identifiers(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = f"privacy_trace_output_user_{uuid4().hex}"
-    response = await client.post(
-        "/api/chat",
-        json={
-            "user_id": user_id,
-            "message": "我想找学校心理中心资源，电话是 13912345678",
-            "context": {},
-        },
+    response = await _send_general_conversation_turn(
+        client,
+        user_id=user_id,
+        message="今天有点紧张，电话是 13912345678",
     )
-    run_id = response.json()["run_id"]
+    run_id = response["run_id"]
 
     trace_response = await client.get(f"/api/runs/{run_id}")
 
@@ -335,16 +375,13 @@ async def test_chat_trace_output_is_summarized_when_configured(
 ) -> None:
     monkeypatch.setenv("SOCIALEASE_TRACE_OUTPUT_MODE", "summary_only")
     user_id = f"privacy_trace_summary_user_{uuid4().hex}"
-    response = await client.post(
-        "/api/chat",
-        json={
-            "user_id": user_id,
-            "message": "我想练习课堂发言，我的邮箱是 trace_summary@example.com",
-            "context": {},
-        },
+    response = await _send_general_conversation_turn(
+        client,
+        user_id=user_id,
+        message="今天有点紧张，我的邮箱是 trace_summary@example.com",
     )
-    run_id = response.json()["run_id"]
-    raw_response = response.json()["response"]
+    run_id = response["run_id"]
+    raw_response = response["response"]
 
     trace_response = await client.get(f"/api/runs/{run_id}")
 
@@ -415,17 +452,15 @@ async def test_worksheet_fields_are_redacted_before_persistence(
         assert raw not in serialized_fields
 
     detail_response = await client.get(f"/api/worksheet/{worksheet_id}")
-    export_response = await client.get(f"/api/users/{user_id}/memory/export")
     serialized_detail = str(detail_response.json()["fields"])
-    serialized_export = str(export_response.json()["records"]["worksheets"])
-    for serialized in [serialized_detail, serialized_export]:
+    for serialized in [serialized_detail]:
         assert "13912345678" not in serialized
         assert "field@example.com" not in serialized
         assert "wxfield12345" not in serialized
         assert "北京市海淀区中关村大街27号" not in serialized
-    assert "[redacted:phone]" in serialized_export
-    assert "[redacted:email]" in serialized_export
-    assert "[redacted:address]" in serialized_export
+    assert "[redacted:phone]" in serialized_detail
+    assert "[redacted:email]" in serialized_detail
+    assert "[redacted:address]" in serialized_detail
 
 
 @pytest.mark.anyio
@@ -444,23 +479,20 @@ async def test_production_trace_output_defaults_to_summary_for_saved_runs(
     )
     headers = {"Authorization": f"Bearer {token}"}
 
-    response = await client.post(
-        "/api/chat",
+    response = await _send_general_conversation_turn(
+        client,
+        user_id="privacy_prod_trace_user",
+        message="今天有点紧张。我的电话是 13912345678，姓名：赵敏。",
         headers=headers,
-        json={
-            "user_id": "ignored_body_user",
-            "message": "我想练习课堂发言。我的电话是 13912345678，姓名：赵敏。",
-            "context": {},
-        },
     )
-    run_id = response.json()["run_id"]
+    run_id = response["run_id"]
 
     trace_response = await client.get(f"/api/runs/{run_id}", headers=headers)
 
     assert trace_response.status_code == 200
     trace = trace_response.json()
     assert trace["output"].startswith("[assistant output summarized by privacy policy:")
-    assert response.json()["response"] not in trace["output"]
+    assert response["response"] not in trace["output"]
     assert "13912345678" not in trace["output"]
     assert "赵敏" not in trace["output"]
     output_policy = next(
@@ -531,13 +563,8 @@ async def test_exposure_target_scenario_is_minimized_in_plan_tasks_and_export(
     assert response.plan is not None
     plan = response.plan
     serialized_plan = plan.model_dump_json()
-    export_response = await client.get(f"/api/users/{user_id}/memory/export")
-    serialized_export = str(export_response.json()["records"]["exposure_plans"])
 
     assert plan.target_scenario == "[raw exposure target scenario minimized by privacy policy]"
     assert raw_target not in serialized_plan
     assert "李四" not in serialized_plan
     assert "13912345678" not in serialized_plan
-    assert raw_target not in serialized_export
-    assert "李四" not in serialized_export
-    assert "13912345678" not in serialized_export

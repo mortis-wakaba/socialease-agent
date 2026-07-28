@@ -7,6 +7,7 @@ import pytest
 from app.db.factory import RepositoryFactory, repository_factory
 from app.db.account_repositories import PostgresAccountRepository
 from app.db.capabilities import (
+    DatabaseCapabilityError,
     database_capability_report,
     validate_runtime_database_support,
 )
@@ -50,7 +51,8 @@ def test_explicit_sqlite_url_selects_sqlite(tmp_path: Path) -> None:
     assert isinstance(factory.protocol_repository(), ProtocolStore)
 
 
-def test_postgres_url_selects_postgres_protocol_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_protocol_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -58,10 +60,11 @@ def test_postgres_url_selects_postgres_protocol_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresProtocolRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_trace_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_trace_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -69,20 +72,22 @@ def test_postgres_url_selects_postgres_trace_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresTraceRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_conversation_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_conversation_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
     repository = factory.conversation_repository()
 
     assert isinstance(repository, PostgresConversationRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_worksheet_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_worksheet_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -90,10 +95,11 @@ def test_postgres_url_selects_postgres_worksheet_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresWorksheetRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_roleplay_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_roleplay_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -101,10 +107,11 @@ def test_postgres_url_selects_postgres_roleplay_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresRoleplaySessionRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_exposure_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_exposure_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -112,10 +119,11 @@ def test_postgres_url_selects_postgres_exposure_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresExposureRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_user_profile_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_user_profile_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -123,10 +131,11 @@ def test_postgres_url_selects_postgres_user_profile_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresUserProfileRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_memory_settings_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_memory_settings_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -134,10 +143,11 @@ def test_postgres_url_selects_postgres_memory_settings_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresUserMemorySettingsRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_memory_repositories_share_one_engine_pool() -> None:
+@pytest.mark.anyio
+async def test_postgres_memory_repositories_share_one_engine_pool() -> None:
     database_url = (
         "postgresql+psycopg://socialease:socialease@127.0.0.1:5432/"
         "socialease_shared_memory_pool"
@@ -151,10 +161,11 @@ def test_postgres_memory_repositories_share_one_engine_pool() -> None:
     ]
 
     assert len({id(repository.engine) for repository in repositories}) == 1
-    repositories[0].engine.dispose()
+    await repositories[0].engine.dispose()
 
 
-def test_postgres_url_selects_postgres_session_review_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_session_review_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -162,10 +173,11 @@ def test_postgres_url_selects_postgres_session_review_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresSessionReviewRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_metrics_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_metrics_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -173,10 +185,11 @@ def test_postgres_url_selects_postgres_metrics_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresMetricsRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_intervention_plan_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_intervention_plan_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -184,10 +197,11 @@ def test_postgres_url_selects_postgres_intervention_plan_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresInterventionPlanRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
-def test_postgres_url_selects_postgres_account_repository() -> None:
+@pytest.mark.anyio
+async def test_postgres_url_selects_postgres_account_repository() -> None:
     factory = RepositoryFactory(
         database_url="postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease"
     )
@@ -195,7 +209,7 @@ def test_postgres_url_selects_postgres_account_repository() -> None:
 
     assert factory.provider == DatabaseProvider.POSTGRES
     assert isinstance(repository, PostgresAccountRepository)
-    repository.engine.dispose()
+    await repository.engine.dispose()
 
 
 def test_sqlite_runtime_database_capability_check_passes(tmp_path: Path) -> None:
@@ -205,6 +219,16 @@ def test_sqlite_runtime_database_capability_check_passes(tmp_path: Path) -> None
     assert report.full_runtime_supported is True
     assert report.missing_runtime_repositories == ()
     assert "trace" in report.supported_repositories
+
+
+def test_production_rejects_sqlite_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "production")
+
+    with pytest.raises(DatabaseCapabilityError, match="requires PostgreSQL"):
+        validate_runtime_database_support(f"sqlite:///{tmp_path / 'runtime.db'}")
 
 
 def test_postgres_runtime_database_capability_check_passes_when_all_repositories_exist() -> None:
@@ -249,7 +273,8 @@ def test_protocol_service_uses_repository_factory_by_default(
     assert isinstance(service.store, ProtocolStore)
 
 
-def test_protocol_service_uses_postgres_when_configured(
+@pytest.mark.anyio
+async def test_protocol_service_uses_postgres_when_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
@@ -260,7 +285,7 @@ def test_protocol_service_uses_postgres_when_configured(
     service = ProtocolService()
 
     assert isinstance(service.store, PostgresProtocolRepository)
-    service.store.engine.dispose()
+    await service.store.engine.dispose()
 
 
 @pytest.mark.parametrize(

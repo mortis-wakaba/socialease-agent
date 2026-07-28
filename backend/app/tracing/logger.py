@@ -21,17 +21,17 @@ class TraceLogger:
         """Return the privacy-sanitized record that is safe to persist or return."""
         return self.sanitizer.sanitize(record)
 
-    def save(self, record: TraceRecord) -> TraceRecord:
+    async def save(self, record: TraceRecord) -> TraceRecord:
         """Sanitize and persist a trace record, then return the persisted form."""
-        return self.repository.save(self.prepare(record))
+        return await self.repository.save(self.prepare(record))
 
-    def get(self, run_id: str) -> TraceRecord | None:
+    async def get(self, run_id: str) -> TraceRecord | None:
         """Return a trace record by run id, if present."""
-        return self.repository.get(run_id)
+        return await self.repository.get(run_id)
 
-    def list_recent(self, limit: int = 100) -> list[TraceRecord]:
+    async def list_recent(self, limit: int = 100) -> list[TraceRecord]:
         """Return recent trace records for lightweight metrics."""
-        return self.repository.list_recent(limit=limit)
+        return await self.repository.list_recent(limit=limit)
 
 
 trace_logger = TraceLogger()

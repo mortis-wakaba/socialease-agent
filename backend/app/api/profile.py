@@ -12,6 +12,7 @@ from app.models_memory import (
     UserOnboardingProfileResponse,
     UserOnboardingProfileUpdateRequest,
     UserMemoryDeleteResponse,
+    UserMemoryDeleteRequest,
     UserMemoryExportResponse,
     UserProfileResponse,
 )
@@ -35,12 +36,9 @@ from app.safety.classifier import RuleBasedSafetyClassifier
 from app.safety.actions import HarnessAction
 from app.safety.direct_actions import (
     PROTOCOL_HEADER_NAME,
-    consume_direct_action_consent,
     require_direct_action_consent,
 )
 from app.services.memory_privacy_service import memory_privacy_service
-from app.services.support_resource_service import support_resource_service
-from app.services.worksheet_service import worksheet_service
 
 router = APIRouter(tags=["profile"])
 session_review_repository = repository_factory().session_review_repository()
@@ -54,7 +52,7 @@ async def get_user_profile(
 ) -> UserProfileResponse:
     """Return a privacy-minimized practice summary for one user."""
     require_owner_path_user(user_id, current_user)
-    return memory_privacy_service.profile(user_id)
+    return await memory_privacy_service.profile(user_id)
 
 
 @router.get("/users/{user_id}/memory/export", response_model=UserMemoryExportResponse)
@@ -64,22 +62,23 @@ async def export_user_memory(
 ) -> UserMemoryExportResponse:
     """Export user-owned memory records."""
     require_owner_path_user(user_id, current_user)
-    response = memory_privacy_service.export(user_id)
-    record_memory_export()
+    response = await memory_privacy_service.export(user_id)
+    await record_memory_export()
     return response
 
 
 @router.delete("/users/{user_id}/memory", response_model=UserMemoryDeleteResponse)
 async def delete_user_memory(
     user_id: str,
+    request: UserMemoryDeleteRequest,
     current_user: AuthContext = Depends(get_current_user),
 ) -> UserMemoryDeleteResponse:
-    """Delete user-owned memory records."""
+    """Delete agent memory without deleting conversation or practice history."""
     require_owner_path_user(user_id, current_user)
-    response = memory_privacy_service.delete(user_id)
-    await worksheet_service.delete_user_context(user_id)
-    await support_resource_service.delete_user_context(user_id)
-    record_memory_delete()
+    if not request.confirm_delete:
+        raise HTTPException(status_code=409, detail="Memory deletion confirmation required")
+    response = await memory_privacy_service.delete(user_id)
+    await record_memory_delete()
     return response
 
 
@@ -95,23 +94,18 @@ async def update_memory_preferences(
 ) -> MemoryPreferencesUpdateResponse:
     """Save low-sensitivity practice preferences after explicit consent."""
     require_owner_path_user(user_id, current_user)
-    consent = require_direct_action_consent(
+    await require_direct_action_consent(
         user_id=user_id,
         harness_action=HarnessAction.WRITE_MEMORY,
         payload={"user_id": user_id, **request.model_dump(mode="json")},
         protocol_id=protocol_id,
     )
     try:
-        response = memory_privacy_service.update_preferences(
+        response = await memory_privacy_service.update_preferences(
             user_id=user_id,
             request=request,
         )
-        consume_direct_action_consent(
-            user_id=user_id,
-            consent=consent,
-            result_summary="Updated memory preferences.",
-        )
-        record_memory_preferences_saved()
+        await record_memory_preferences_saved()
         return response
     except PermissionError as error:
         raise HTTPException(status_code=403, detail=str(error))
@@ -127,8 +121,8 @@ async def disable_memory_preferences(
 ) -> MemoryPreferencesUpdateResponse:
     """Turn off long-term practice preferences for one user."""
     require_owner_path_user(user_id, current_user)
-    response = memory_privacy_service.disable_preferences(user_id)
-    record_memory_preferences_disabled()
+    response = await memory_privacy_service.disable_preferences(user_id)
+    await record_memory_preferences_disabled()
     return response
 
 
@@ -143,7 +137,7 @@ async def update_practice_summary_consent(
 ) -> PracticeSummaryConsentUpdateResponse:
     """Enable or revoke use of product practice summaries in future agent runs."""
     require_owner_path_user(user_id, current_user)
-    return memory_privacy_service.update_practice_summary_consent(
+    return await memory_privacy_service.update_practice_summary_consent(
         user_id=user_id,
         consent_to_practice_summary=request.consent_to_practice_summary,
     )
@@ -159,7 +153,7 @@ async def get_onboarding_profile(
 ) -> UserOnboardingProfileResponse:
     """Return low-sensitivity onboarding profile choices."""
     require_owner_path_user(user_id, current_user)
-    return memory_privacy_service.get_onboarding_profile(user_id)
+    return await memory_privacy_service.get_onboarding_profile(user_id)
 
 
 @router.put(
@@ -173,7 +167,7 @@ async def update_onboarding_profile(
 ) -> UserOnboardingProfileResponse:
     """Persist low-sensitivity onboarding profile choices."""
     require_owner_path_user(user_id, current_user)
-    return memory_privacy_service.update_onboarding_profile(
+    return await memory_privacy_service.update_onboarding_profile(
         user_id=user_id,
         onboarding_profile=request.onboarding_profile,
     )
@@ -189,7 +183,7 @@ async def reset_onboarding_profile(
 ) -> UserOnboardingProfileResponse:
     """Reset low-sensitivity onboarding profile choices for one user."""
     require_owner_path_user(user_id, current_user)
-    return memory_privacy_service.reset_onboarding_profile(user_id)
+    return await memory_privacy_service.reset_onboarding_profile(user_id)
 
 
 @router.post(
@@ -226,13 +220,13 @@ async def create_session_review(
         completed=request.completed,
         anxiety_before=request.anxiety_before,
         anxiety_after=request.anxiety_after,
-        next_step_summary=persistence_gate.persist_text(
+        next_step_summary=(await persistence_gate.persist_text(
             user_id=user_id,
             kind=PersistenceKind.SESSION_REVIEW_NEXT_STEP,
             text=request.next_step.strip(),
-        ).persisted_text,
+        )).persisted_text,
     )
-    saved = session_review_repository.save(record)
+    saved = await session_review_repository.save(record)
     return SessionReviewCreateResponse(
         review=saved,
         saved=True,
@@ -254,5 +248,5 @@ async def list_session_reviews(
     bounded_limit = min(max(limit, 1), 50)
     return SessionReviewListResponse(
         user_id=user_id,
-        reviews=session_review_repository.list_for_user(user_id, bounded_limit),
+        reviews=await session_review_repository.list_for_user(user_id, bounded_limit),
     )

@@ -29,7 +29,9 @@ async def list_roleplay_sessions(
     """Return recent role-play sessions for the current user."""
     effective_user_id = resolve_optional_user_id(user_id, current_user)
     bounded_limit = min(max(limit, 1), 50)
-    return roleplay_service.list_sessions(user_id=effective_user_id, limit=bounded_limit)
+    return await roleplay_service.list_sessions(
+        user_id=effective_user_id, limit=bounded_limit
+    )
 
 
 @router.get("/{session_id}", response_model=RoleplayStartResponse)
@@ -41,7 +43,9 @@ async def get_roleplay_session(
     """Return an existing role-play session for frontend restoration."""
     try:
         effective_user_id = resolve_optional_user_id(user_id, current_user)
-        return roleplay_service.get_session(session_id=session_id, user_id=effective_user_id)
+        return await roleplay_service.get_session(
+            session_id=session_id, user_id=effective_user_id
+        )
     except ServiceNotFoundError:
         raise HTTPException(status_code=404, detail="Role-play session not found")
 

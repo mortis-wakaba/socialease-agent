@@ -143,7 +143,7 @@ class ProviderConcurrencyLimiter:
                 record_llm_concurrency_saturation,
             )
 
-            record_llm_concurrency_saturation()
+            await record_llm_concurrency_saturation()
             raise ProviderConcurrencyLimitError(
                 "LLM provider concurrency limit reached."
             ) from exc

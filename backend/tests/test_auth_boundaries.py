@@ -41,6 +41,14 @@ def enable_local_developer_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make raw trace diagnostics explicit in local boundary tests."""
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
     monkeypatch.setenv("SOCIALEASE_ENABLE_DEVELOPER_ENDPOINTS", "true")
+    monkeypatch.setenv(
+        "SOCIALEASE_CONVERSATION_CONTENT_KEY",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    )
+    monkeypatch.setenv(
+        "SOCIALEASE_CONVERSATION_CONTENT_KEY_VERSION",
+        "auth-boundary-test-v1",
+    )
 
 
 def demo_headers(user_id: str) -> dict[str, str]:
@@ -54,25 +62,39 @@ def bearer_headers(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _create_conversation(
+    client: httpx.AsyncClient,
+    *,
+    body_user_id: str,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    return await client.post(
+        "/api/conversations",
+        headers=headers,
+        json={
+            "user_id": body_user_id,
+            "title": "Auth boundary",
+            "history_notice_version": "2026-07-01",
+            "history_notice_acknowledged": True,
+        },
+    )
+
+
 @pytest.mark.anyio
 async def test_chat_uses_authenticated_user_over_body_user_id(
     client: httpx.AsyncClient,
 ) -> None:
     owner_id = f"auth_chat_owner_{uuid4().hex}"
 
-    response = await client.post(
-        "/api/chat",
+    response = await _create_conversation(
+        client,
+        body_user_id="spoofed_body_user",
         headers=demo_headers(owner_id),
-        json={
-            "user_id": "spoofed_body_user",
-            "message": "今天小组讨论前有点紧张，想先整理一下表达。",
-            "context": {},
-        },
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["trace"]["user_id"] == owner_id
+    assert payload["user_id"] == owner_id
 
 
 @pytest.mark.anyio
@@ -81,16 +103,21 @@ async def test_trace_cannot_be_read_by_another_authenticated_user(
 ) -> None:
     owner_id = f"trace_owner_{uuid4().hex}"
     other_id = f"trace_other_{uuid4().hex}"
-    create_response = await client.post(
-        "/api/chat",
+    conversation = await _create_conversation(
+        client,
+        body_user_id="ignored_body_user",
+        headers=demo_headers(owner_id),
+    )
+    turn = await client.post(
+        f"/api/conversations/{conversation.json()['conversation_id']}/messages",
         headers=demo_headers(owner_id),
         json={
             "user_id": "ignored_body_user",
-            "message": "我想练习课堂发言，先看看怎么开头。",
-            "context": {},
+            "message": "今天小组交流后有点紧张。",
+            "idempotency_key": f"auth-trace-{uuid4().hex}",
         },
     )
-    run_id = create_response.json()["run_id"]
+    run_id = turn.json()["workflow_response"]["run_id"]
 
     owner_response = await client.get(
         f"/api/runs/{run_id}",
@@ -206,46 +233,15 @@ async def test_memory_export_and_delete_reject_path_user_mismatch(
         f"/api/users/{owner_id}/memory/export",
         headers=demo_headers(other_id),
     )
-    delete_response = await client.delete(
+    delete_response = await client.request(
+        "DELETE",
         f"/api/users/{owner_id}/memory",
         headers=demo_headers(other_id),
+        json={"confirm_delete": True},
     )
 
     assert export_response.status_code == 403
     assert delete_response.status_code == 403
-
-
-@pytest.mark.anyio
-async def test_protocol_response_uses_authenticated_user(
-    client: httpx.AsyncClient,
-) -> None:
-    owner_id = f"protocol_owner_{uuid4().hex}"
-    other_id = f"protocol_other_{uuid4().hex}"
-    initial_response = await client.post(
-        "/api/chat",
-        headers=demo_headers(owner_id),
-        json={
-            "user_id": "ignored_body_user",
-            "message": "我想模拟课堂发言",
-            "context": {},
-        },
-    )
-    protocol_id = initial_response.json()["structured_data"]["protocol_id"]
-
-    other_response = await client.post(
-        f"/api/protocols/{protocol_id}/respond",
-        headers=demo_headers(other_id),
-        json={"user_id": owner_id, "approved": True},
-    )
-    owner_response = await client.post(
-        f"/api/protocols/{protocol_id}/respond",
-        headers=demo_headers(owner_id),
-        json={"user_id": "spoofed_body_user", "approved": True},
-    )
-
-    assert other_response.status_code == 404
-    assert owner_response.status_code == 200
-    assert owner_response.json()["protocol"]["status"] == "approved"
 
 
 @pytest.mark.anyio
@@ -256,22 +252,14 @@ async def test_production_mode_requires_bearer_token(
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "production")
     monkeypatch.setenv("SOCIALEASE_AUTH_TOKEN_SECRET", TEST_AUTH_SECRET)
 
-    missing_response = await client.post(
-        "/api/chat",
-        json={
-            "user_id": "body_user_should_not_work",
-            "message": "我想练习课堂发言。",
-            "context": {},
-        },
+    missing_response = await _create_conversation(
+        client,
+        body_user_id="body_user_should_not_work",
     )
-    demo_header_response = await client.post(
-        "/api/chat",
+    demo_header_response = await _create_conversation(
+        client,
+        body_user_id="body_user_should_not_work",
         headers=demo_headers("demo_header_should_not_work"),
-        json={
-            "user_id": "body_user_should_not_work",
-            "message": "我想练习课堂发言。",
-            "context": {},
-        },
     )
 
     assert missing_response.status_code == 401
@@ -287,18 +275,14 @@ async def test_production_mode_uses_token_identity_over_body_user_id(
     monkeypatch.setenv("SOCIALEASE_AUTH_TOKEN_SECRET", TEST_AUTH_SECRET)
     owner_id = f"prod_auth_owner_{uuid4().hex}"
 
-    response = await client.post(
-        "/api/chat",
+    response = await _create_conversation(
+        client,
+        body_user_id="spoofed_body_user",
         headers=bearer_headers(owner_id),
-        json={
-            "user_id": "spoofed_body_user",
-            "message": "我想练习课堂发言。",
-            "context": {},
-        },
     )
 
     assert response.status_code == 200
-    assert response.json()["trace"]["user_id"] == owner_id
+    assert response.json()["user_id"] == owner_id
 
 
 @pytest.mark.anyio

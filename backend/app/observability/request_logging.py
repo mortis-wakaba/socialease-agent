@@ -54,7 +54,7 @@ class StructuredRequestLoggingMiddleware(BaseHTTPMiddleware):
             if response is not None:
                 response.headers[PROCESS_TIME_HEADER] = f"{latency_ms:.2f}"
             if latency_ms >= self.slow_request_ms:
-                record_slow_request()
+                await record_slow_request()
             self.logger.info(
                 json.dumps(
                     {

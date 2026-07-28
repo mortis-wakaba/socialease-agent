@@ -1,25 +1,27 @@
 """PostgreSQL session-review repository implementation."""
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.config import database_settings
+from app.db.postgres.engine import shared_postgres_async_engine
 from app.models_session_review import SessionReviewRecord
 
 
 class PostgresSessionReviewRepository:
     """PostgreSQL-backed privacy-safe session review repository."""
 
-    def __init__(self, database_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+    def __init__(
+        self, database_url: str | None = None, engine: AsyncEngine | None = None
+    ) -> None:
+        self.engine = engine or shared_postgres_async_engine(
+            database_url or database_settings().database_url
         )
 
-    def save(self, record: SessionReviewRecord) -> SessionReviewRecord:
+    async def save(self, record: SessionReviewRecord) -> SessionReviewRecord:
         """Persist one structured session review."""
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """INSERT INTO session_reviews
                     (review_id, user_id, source, source_id, payload, created_at)
@@ -44,10 +46,12 @@ class PostgresSessionReviewRepository:
             )
         return record
 
-    def list_for_user(self, user_id: str, limit: int = 20) -> list[SessionReviewRecord]:
+    async def list_for_user(
+        self, user_id: str, limit: int = 20
+    ) -> list[SessionReviewRecord]:
         """Return recent structured reviews for one user."""
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT payload FROM session_reviews
                     WHERE user_id = :user_id
@@ -55,5 +59,5 @@ class PostgresSessionReviewRepository:
                     LIMIT :limit"""
                 ),
                 {"user_id": user_id, "limit": limit},
-            ).mappings().all()
+            )).mappings().all()
         return [SessionReviewRecord.model_validate(row["payload"]) for row in rows]

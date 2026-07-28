@@ -35,8 +35,9 @@ async def get_current_user(
             verified = verify_auth_token(token.strip())
         except AuthTokenError:
             raise HTTPException(status_code=401, detail="Invalid authentication token")
-        if verified.token_id is not None and not account_service.is_access_token_active(
-            verified.token_id
+        if (
+            verified.token_id is not None
+            and not await account_service.is_access_token_active(verified.token_id)
         ):
             raise HTTPException(status_code=401, detail="Authentication token revoked")
         return AuthContext(

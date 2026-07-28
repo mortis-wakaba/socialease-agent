@@ -33,7 +33,7 @@ async def test_structured_request_logging_records_slow_request(
 ) -> None:
     slow_requests = 0
 
-    def fake_record_slow_request() -> None:
+    async def fake_record_slow_request() -> None:
         nonlocal slow_requests
         slow_requests += 1
 

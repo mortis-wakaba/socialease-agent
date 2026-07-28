@@ -1,8 +1,10 @@
 """Tests for consent protocol lifecycle rules."""
 
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+
+import pytest
 
 from app.db.engine import connect
 from app.db.session import initialize_database
@@ -11,9 +13,10 @@ from app.services.retention_service import retention_service
 from app.safety.actions import HarnessAction
 
 
-def test_expired_protocol_cannot_be_approved() -> None:
+@pytest.mark.anyio
+async def test_expired_protocol_cannot_be_approved() -> None:
     service = ProtocolService()
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id="expired_protocol_user",
         harness_action=HarnessAction.START_ROLEPLAY,
         reason="test consent",
@@ -23,7 +26,7 @@ def test_expired_protocol_cannot_be_approved() -> None:
         ttl_seconds=-1,
     )
 
-    response = service.respond(
+    response = await service.respond(
         protocol_id=protocol.protocol_id,
         user_id="expired_protocol_user",
         approved=True,
@@ -31,7 +34,7 @@ def test_expired_protocol_cannot_be_approved() -> None:
 
     assert response is not None
     assert response.status == "expired"
-    assert not service.is_approved_for_action(
+    assert not await service.is_approved_for_action(
         protocol_id=protocol.protocol_id,
         user_id="expired_protocol_user",
         harness_action=HarnessAction.START_ROLEPLAY,
@@ -40,10 +43,11 @@ def test_expired_protocol_cannot_be_approved() -> None:
     )
 
 
-def test_protocol_consume_is_atomic_under_concurrent_attempts() -> None:
+@pytest.mark.anyio
+async def test_protocol_consume_is_atomic_under_concurrent_attempts() -> None:
     service = ProtocolService()
     user_id = f"concurrent_protocol_user_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
         reason="test consent",
@@ -51,7 +55,7 @@ def test_protocol_consume_is_atomic_under_concurrent_attempts() -> None:
         session_id=None,
         request_hash="concurrent-hash",
     )
-    approved = service.respond(
+    approved = await service.respond(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         approved=True,
@@ -59,8 +63,8 @@ def test_protocol_consume_is_atomic_under_concurrent_attempts() -> None:
     assert approved is not None
     assert approved.status == "approved"
 
-    def consume_once() -> bool:
-        consumed = service.consume_for_action(
+    async def consume_once() -> bool:
+        consumed = await service.consume_for_action(
             protocol_id=protocol.protocol_id,
             user_id=user_id,
             harness_action=HarnessAction.START_ROLEPLAY,
@@ -69,17 +73,17 @@ def test_protocol_consume_is_atomic_under_concurrent_attempts() -> None:
         )
         return consumed is not None
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(lambda _: consume_once(), range(8)))
+    results = await asyncio.gather(*(consume_once() for _ in range(8)))
 
     assert results.count(True) == 1
     assert results.count(False) == 7
 
 
-def test_retention_service_expires_pending_protocols() -> None:
+@pytest.mark.anyio
+async def test_retention_service_expires_pending_protocols() -> None:
     service = ProtocolService()
     user_id = f"retention_protocol_user_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.CREATE_EXPOSURE_PLAN,
         reason="test consent",
@@ -89,17 +93,18 @@ def test_retention_service_expires_pending_protocols() -> None:
         ttl_seconds=-1,
     )
 
-    expired_count = retention_service.expire_pending_protocols(
+    expired_count = await retention_service.expire_pending_protocols(
         now=datetime.now(timezone.utc),
     )
-    record = service.store.get_for_user(protocol.protocol_id, user_id)
+    record = await service.store.get_for_user(protocol.protocol_id, user_id)
 
     assert expired_count >= 1
     assert record is not None
     assert record.status == "expired"
 
 
-def test_retention_service_deletes_records_past_retention_window() -> None:
+@pytest.mark.anyio
+async def test_retention_service_deletes_records_past_retention_window() -> None:
     initialize_database()
     user_id = f"retention_delete_user_{uuid4().hex}"
     run_id = f"run_{uuid4().hex}"
@@ -142,7 +147,7 @@ def test_retention_service_deletes_records_past_retention_window() -> None:
             ),
         )
 
-    result = retention_service.run_once(
+    result = await retention_service.run_once(
         now=now,
         abandoned_plan_minutes=60,
         trace_retention_days=30,

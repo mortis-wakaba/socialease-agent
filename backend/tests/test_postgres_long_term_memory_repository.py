@@ -79,14 +79,15 @@ def repository() -> PostgresLongTermMemoryRepository:
     return PostgresLongTermMemoryRepository(database_url=TEST_DATABASE_URL)
 
 
-def test_postgres_episodic_lifecycle_and_audit_are_atomic(
+@pytest.mark.anyio
+async def test_postgres_episodic_lifecycle_and_audit_are_atomic(
     repository: PostgresLongTermMemoryRepository,
 ) -> None:
     user_id = f"pg_episodic_{uuid4().hex}"
     record = _memory(user_id)
 
-    repository.create_memory(record, reason_code="completed_practice")
-    archived = repository.transition_memory(
+    await repository.create_memory(record, reason_code="completed_practice")
+    archived = await repository.transition_memory(
         memory_id=record.memory_id,
         user_id=user_id,
         expected_version=1,
@@ -94,7 +95,7 @@ def test_postgres_episodic_lifecycle_and_audit_are_atomic(
         reason_code="user_archived",
     )
     with pytest.raises(MemoryConflictError):
-        repository.transition_memory(
+        await repository.transition_memory(
             memory_id=record.memory_id,
             user_id=user_id,
             expected_version=1,
@@ -103,21 +104,22 @@ def test_postgres_episodic_lifecycle_and_audit_are_atomic(
         )
 
     assert archived.version == 2
-    assert repository.get_memory(record.memory_id, f"other_{user_id}") is None
-    events = repository.list_events(user_id=user_id, subject_id=record.memory_id)
+    assert await repository.get_memory(record.memory_id, f"other_{user_id}") is None
+    events = await repository.list_events(user_id=user_id, subject_id=record.memory_id)
     assert [event.event_type for event in events] == [
         MemoryEventType.MEMORY_COMMITTED,
         MemoryEventType.MEMORY_ARCHIVED,
     ]
 
 
-def test_postgres_memory_center_update_and_checkpoint_listing(
+@pytest.mark.anyio
+async def test_postgres_memory_center_update_and_checkpoint_listing(
     repository: PostgresLongTermMemoryRepository,
 ) -> None:
     user_id = f"pg_memory_center_{uuid4().hex}"
     record = _memory(user_id)
-    repository.create_memory(record, reason_code="user_confirmed_proposal")
-    updated = repository.update_memory_summary(
+    await repository.create_memory(record, reason_code="user_confirmed_proposal")
+    updated = await repository.update_memory_summary(
         memory_id=record.memory_id,
         user_id=user_id,
         expected_version=1,
@@ -127,7 +129,7 @@ def test_postgres_memory_center_update_and_checkpoint_listing(
         reason_code="user_edited",
     )
     checkpoint = _checkpoint(user_id, f"thread_{uuid4().hex}")
-    repository.save_checkpoint(
+    await repository.save_checkpoint(
         checkpoint,
         expected_version=None,
         reason_code="practice_paused",
@@ -135,8 +137,8 @@ def test_postgres_memory_center_update_and_checkpoint_listing(
 
     assert updated.version == 2
     assert updated.summary == "先写一个关键词，再开始表达。"
-    assert repository.list_checkpoints(user_id) == [checkpoint]
-    events = repository.list_events(
+    assert await repository.list_checkpoints(user_id) == [checkpoint]
+    events = await repository.list_events(
         user_id=user_id,
         subject_id=record.memory_id,
     )
@@ -144,7 +146,8 @@ def test_postgres_memory_center_update_and_checkpoint_listing(
     assert all(event.summary is None for event in events)
 
 
-def test_postgres_proposal_decision_erases_pending_body() -> None:
+@pytest.mark.anyio
+async def test_postgres_proposal_decision_erases_pending_body() -> None:
     assert TEST_DATABASE_URL is not None
     user_id = f"pg_proposal_decision_{uuid4().hex}"
     repository = PostgresMemoryProposalRepository(
@@ -169,9 +172,9 @@ def test_postgres_proposal_decision_erases_pending_body() -> None:
         updated_at=NOW,
         expires_at=NOW + timedelta(days=30),
     )
-    repository.save_pending(proposal)
+    await repository.save_pending(proposal)
 
-    repository.consume_pending(
+    await repository.consume_pending(
         user_id=user_id,
         proposal_id=proposal.proposal_id,
         expected_version=1,
@@ -180,40 +183,42 @@ def test_postgres_proposal_decision_erases_pending_body() -> None:
         changed_at=NOW + timedelta(minutes=1),
     )
 
-    assert repository.get_for_user(proposal.proposal_id, user_id) is None
+    assert await repository.get_for_user(proposal.proposal_id, user_id) is None
 
 
-def test_postgres_checkpoint_export_and_user_delete_are_complete(
+@pytest.mark.anyio
+async def test_postgres_checkpoint_export_and_user_delete_are_complete(
     repository: PostgresLongTermMemoryRepository,
 ) -> None:
     assert TEST_DATABASE_URL is not None
     user_id = f"pg_checkpoint_{uuid4().hex}"
     thread_id = f"thread_{uuid4().hex}"
     checkpoint = _checkpoint(user_id, thread_id)
-    repository.save_checkpoint(
+    await repository.save_checkpoint(
         checkpoint,
         expected_version=None,
         reason_code="practice_paused",
     )
-    updated = repository.save_checkpoint(
+    updated = await repository.save_checkpoint(
         checkpoint.model_copy(update={"status": PracticeThreadStatus.ACTIVE}),
         expected_version=1,
         reason_code="practice_resumed",
     )
     service = MemoryPrivacyService(database_url=TEST_DATABASE_URL)
 
-    exported = service.export(user_id)
-    deleted = service.delete(user_id)
+    exported = await service.export(user_id)
+    deleted = await service.delete(user_id)
 
     assert updated.version == 2
     assert len(exported.records["thread_checkpoints"]) == 1
     assert len(exported.records["memory_events"]) == 2
     assert deleted.deleted_counts["thread_checkpoints"] == 1
     assert deleted.deleted_counts["memory_events"] == 2
-    assert repository.get_checkpoint(thread_id, user_id) is None
+    assert await repository.get_checkpoint(thread_id, user_id) is None
 
 
-def test_postgres_checkpoint_service_restores_bounded_active_state(
+@pytest.mark.anyio
+async def test_postgres_checkpoint_service_restores_bounded_active_state(
     repository: PostgresLongTermMemoryRepository,
 ) -> None:
     assert TEST_DATABASE_URL is not None
@@ -222,7 +227,7 @@ def test_postgres_checkpoint_service_restores_bounded_active_state(
     settings = PostgresUserMemorySettingsRepository(
         database_url=TEST_DATABASE_URL
     )
-    settings.save(
+    await settings.save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_practice_summary=True),
     )
@@ -233,7 +238,7 @@ def test_postgres_checkpoint_service_restores_bounded_active_state(
         active_memory_token_budget=128,
     )
 
-    paused = service.record_roleplay(
+    paused = await service.record_roleplay(
         user_id=user_id,
         thread_id=thread_id,
         scenario=_scenario("classroom_speech"),
@@ -244,7 +249,7 @@ def test_postgres_checkpoint_service_restores_bounded_active_state(
         unresolved_next_step="恢复后先写一句简短开场。",
         changed_at=NOW,
     )
-    restored = service.restore_roleplay_context(
+    restored = await service.restore_roleplay_context(
         user_id=user_id,
         thread_id=thread_id,
         expected_scenario_id=_scenario("classroom_speech").scenario_id,
@@ -266,7 +271,7 @@ async def test_postgres_policy_pipeline_commits_and_deduplicates(
     settings = PostgresUserMemorySettingsRepository(
         database_url=TEST_DATABASE_URL
     )
-    settings.save(
+    await settings.save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_practice_summary=True),
     )
@@ -311,10 +316,11 @@ async def test_postgres_policy_pipeline_commits_and_deduplicates(
 
     assert first.status == "committed"
     assert second.items[0].deduplicated is True
-    assert len(repository.list_memories(user_id)) == 1
+    assert len(await repository.list_memories(user_id)) == 1
 
 
-def test_postgres_retrieval_is_user_scoped_and_audited(
+@pytest.mark.anyio
+async def test_postgres_retrieval_is_user_scoped_and_audited(
     repository: PostgresLongTermMemoryRepository,
 ) -> None:
     """PostgreSQL should enforce retrieval filters and atomically audit hits."""
@@ -324,7 +330,7 @@ def test_postgres_retrieval_is_user_scoped_and_audited(
     settings = PostgresUserMemorySettingsRepository(
         database_url=TEST_DATABASE_URL
     )
-    settings.save(
+    await settings.save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_practice_summary=True),
     )
@@ -344,15 +350,15 @@ def test_postgres_retrieval_is_user_scoped_and_audited(
             "idempotency_key": uuid4().hex * 2,
         }
     )
-    repository.create_memory(relevant, reason_code="test_retrieval")
-    repository.create_memory(other_user, reason_code="test_retrieval")
+    await repository.create_memory(relevant, reason_code="test_retrieval")
+    await repository.create_memory(other_user, reason_code="test_retrieval")
     retriever = EpisodicMemoryRetriever(
         repository=repository,
         settings_repository=settings,
         context_token_budget=128,
     )
 
-    result = retriever.retrieve(
+    result = await retriever.retrieve(
         MemoryRetrievalRequest(
             user_id=user_id,
             query="我想练习课堂发言的简短开场。",
@@ -364,17 +370,18 @@ def test_postgres_retrieval_is_user_scoped_and_audited(
     )
 
     assert [hit.memory_id for hit in result.hits] == [relevant.memory_id]
-    refreshed = repository.get_memory(relevant.memory_id, user_id)
+    refreshed = await repository.get_memory(relevant.memory_id, user_id)
     assert refreshed is not None
     assert refreshed.last_retrieved_at == NOW + timedelta(days=1)
-    events = repository.list_events(
+    events = await repository.list_events(
         user_id=user_id,
         subject_id=relevant.memory_id,
     )
     assert events[-1].event_type == MemoryEventType.MEMORY_RETRIEVED
 
 
-def test_postgres_memory_doctor_is_content_free_and_user_scoped(
+@pytest.mark.anyio
+async def test_postgres_memory_doctor_is_content_free_and_user_scoped(
     repository: PostgresLongTermMemoryRepository,
 ) -> None:
     """Doctor composes real PostgreSQL adapters without widening tenant scope."""
@@ -393,9 +400,9 @@ def test_postgres_memory_doctor_is_content_free_and_user_scoped(
     foreign = _memory(foreign_user_id).model_copy(
         update={"summary": "foreign private memory body"}
     )
-    repository.create_memory(first, reason_code="doctor_test")
-    repository.create_memory(duplicate, reason_code="doctor_test")
-    repository.create_memory(foreign, reason_code="doctor_test")
+    await repository.create_memory(first, reason_code="doctor_test")
+    await repository.create_memory(duplicate, reason_code="doctor_test")
+    await repository.create_memory(foreign, reason_code="doctor_test")
     service = MemoryDoctorService(
         memory_repository=repository,
         proposal_repository=PostgresMemoryProposalRepository(
@@ -406,7 +413,7 @@ def test_postgres_memory_doctor_is_content_free_and_user_scoped(
         ),
     )
 
-    report = service.diagnose(user_id, now=NOW + timedelta(days=1))
+    report = await service.diagnose(user_id, now=NOW + timedelta(days=1))
 
     assert MemoryDoctorIssueCode.DUPLICATE_MEMORY in {
         issue.code for issue in report.issues

@@ -18,18 +18,20 @@ class ExposureStore:
     def __init__(self, repository: ExposureRepository | None = None) -> None:
         self.repository = repository or SQLiteExposureRepository()
 
-    def create_plan(
+    async def create_plan(
         self,
         user_id: str,
         target_scenario: str,
         current_anxiety_level: int,
         previous_attempts: list[str],
         tasks: list[ExposureTask],
+        *,
+        plan_id: str | None = None,
     ) -> ExposurePlan:
         """Create or replace the user's active exposure plan."""
         now = datetime.now(timezone.utc)
         plan = ExposurePlan(
-            plan_id=str(uuid4()),
+            plan_id=plan_id or str(uuid4()),
             user_id=user_id,
             target_scenario=target_scenario,
             current_anxiety_level=current_anxiety_level,
@@ -41,24 +43,26 @@ class ExposureStore:
             created_at=now,
             updated_at=now,
         )
-        return self.repository.save_plan(plan)
+        return await self.repository.save_plan(plan)
 
-    def get_for_user(self, user_id: str) -> ExposurePlan | None:
+    async def get_for_user(self, user_id: str) -> ExposurePlan | None:
         """Return the user's active exposure plan, if present."""
-        return self.repository.get_for_user(user_id)
+        return await self.repository.get_for_user(user_id)
 
-    def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
+    async def get_by_id_for_user(self, plan_id: str, user_id: str) -> ExposurePlan | None:
         """Return a plan by id only if it belongs to the user."""
-        return self.repository.get_by_id_for_user(plan_id=plan_id, user_id=user_id)
+        return await self.repository.get_by_id_for_user(
+            plan_id=plan_id, user_id=user_id
+        )
 
-    def update_after_attempt(
+    async def update_after_attempt(
         self,
         user_id: str,
         attempt: ExposureAttempt,
         recommended_next_task_id: str | None,
     ) -> ExposurePlan | None:
         """Append an attempt and update the recommended next task."""
-        plan = self.repository.get_for_user(user_id)
+        plan = await self.repository.get_for_user(user_id)
         if plan is None:
             return None
         updated = plan.model_copy(
@@ -68,7 +72,7 @@ class ExposureStore:
                 "updated_at": datetime.now(timezone.utc),
             }
         )
-        return self.repository.save_attempt(user_id, updated, attempt)
+        return await self.repository.save_attempt(user_id, updated, attempt)
 
 
 exposure_store = ExposureStore()

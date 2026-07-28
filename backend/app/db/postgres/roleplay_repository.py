@@ -1,25 +1,31 @@
 """PostgreSQL role-play session repository implementation."""
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.config import database_settings
+from app.db.postgres.engine import (
+    postgres_read_connection,
+    postgres_write_connection,
+    shared_postgres_async_engine,
+)
 from app.models_roleplay import RoleplaySession
 
 
 class PostgresRoleplaySessionRepository:
     """PostgreSQL-backed role-play session repository."""
 
-    def __init__(self, database_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+    def __init__(
+        self, database_url: str | None = None, engine: AsyncEngine | None = None
+    ) -> None:
+        self.engine = engine or shared_postgres_async_engine(
+            database_url or database_settings().database_url
         )
 
-    def save(self, session: RoleplaySession) -> RoleplaySession:
+    async def save(self, session: RoleplaySession) -> RoleplaySession:
         """Persist one role-play session."""
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with postgres_write_connection(self.engine) as connection:
+            await connection.execute(
                 text(
                     """INSERT INTO roleplay_sessions
                     (session_id, user_id, scenario, difficulty, payload, created_at, updated_at)
@@ -46,27 +52,29 @@ class PostgresRoleplaySessionRepository:
             )
         return session
 
-    def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
+    async def get_for_user(
+        self, session_id: str, user_id: str
+    ) -> RoleplaySession | None:
         """Return a role-play session only if it belongs to the user."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with postgres_read_connection(self.engine) as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM roleplay_sessions
                     WHERE session_id = :session_id AND user_id = :user_id"""
                 ),
                 {"session_id": session_id, "user_id": user_id},
-            ).mappings().first()
+            )).mappings().first()
         return RoleplaySession.model_validate(row["payload"]) if row else None
 
-    def list_for_user(
+    async def list_for_user(
         self,
         user_id: str,
         limit: int = 20,
         offset: int = 0,
     ) -> list[RoleplaySession]:
         """Return recent role-play sessions for one user."""
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with postgres_read_connection(self.engine) as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT payload FROM roleplay_sessions
                     WHERE user_id = :user_id
@@ -74,5 +82,5 @@ class PostgresRoleplaySessionRepository:
                     LIMIT :limit OFFSET :offset"""
                 ),
                 {"user_id": user_id, "limit": limit, "offset": offset},
-            ).mappings().all()
+            )).mappings().all()
         return [RoleplaySession.model_validate(row["payload"]) for row in rows]

@@ -4,13 +4,20 @@ from datetime import UTC, datetime
 from hashlib import sha256
 import logging
 
-from app.conversation.adapters import ModuleAdapter, ModuleAdapterResult
+from app.conversation.adapters import (
+    ModuleAdapter,
+    ModuleAdapterResult,
+    PreparedModuleStart,
+)
 from app.conversation.module_overlay_store import (
     ModuleOverlayStore,
     create_module_overlay_store,
 )
 from app.conversation.module_policy import ModuleStackPolicy
-from app.conversation.repository import ConversationRepository
+from app.conversation.repository import (
+    ConversationConcurrencyError,
+    ConversationRepository,
+)
 from app.memory.task_state_store import TaskStateStoreUnavailable
 from app.models_conversation import (
     ConversationEvent,
@@ -22,6 +29,7 @@ from app.models_conversation import (
     ModuleRun,
     ModuleRunStatus,
     ModuleType,
+    ExposureParameters,
 )
 from app.models_conversation_api import ModuleControlResponse
 from app.models_conversation_context import ConversationWorkingContext
@@ -29,6 +37,18 @@ from app.models_module_overlay import ModuleOverlay
 
 
 logger = logging.getLogger(__name__)
+
+
+def _initial_domain_session_id(proposal: ModuleProposal) -> str | None:
+    """Reserve a deterministic domain id for replayable module startup."""
+    if proposal.proposed_module == ModuleType.EXPOSURE:
+        parameters = proposal.bounded_parameters
+        if (
+            isinstance(parameters, ExposureParameters)
+            and parameters.starting_anxiety is None
+        ):
+            return None
+    return _module_run_id(proposal.proposal_id)
 
 
 class ModuleCoordinator:
@@ -52,34 +72,32 @@ class ModuleCoordinator:
     ) -> ModuleControlResponse:
         """Consume one proposal and push its confirmed module frame."""
         module_run_id = _module_run_id(proposal.proposal_id)
-        existing = self._repository.get_module_run_for_user(
+        existing = await self._repository.get_module_run_for_user(
             module_run_id=module_run_id,
             conversation_id=proposal.conversation_id,
             user_id=proposal.user_id,
         )
         if existing is not None:
-            return self._control_response(
+            if await self._repository.claim_module_start(
+                module_run_id=existing.module_run_id
+            ):
+                return await self._reconcile_module_start(
+                    run=existing,
+                    context=context,
+                    proposal_id=proposal.proposal_id,
+                )
+            return await self._control_response(
                 conversation_id=proposal.conversation_id,
                 user_id=proposal.user_id,
                 events=[],
                 response="这个模块已经进入当前会话。",
             )
 
-        stack = self._repository.list_module_stack(
+        stack = await self._repository.list_module_stack(
             conversation_id=proposal.conversation_id,
             user_id=proposal.user_id,
         )
         ModuleStackPolicy.validate_push(stack, proposal.proposed_module)
-        accepted = self._repository.transition_proposal(
-            proposal_id=proposal.proposal_id,
-            conversation_id=proposal.conversation_id,
-            user_id=proposal.user_id,
-            expected_status=ModuleProposalStatus.PENDING,
-            target_status=ModuleProposalStatus.ACCEPTED,
-        )
-        if accepted is None:
-            raise LookupError("module proposal not found")
-
         now = datetime.now(UTC)
         run = ModuleRun(
             module_run_id=module_run_id,
@@ -92,60 +110,175 @@ class ModuleCoordinator:
             ),
             depth=len(stack) + 1,
             module_parameters=proposal.bounded_parameters,
+            domain_session_id=_initial_domain_session_id(proposal),
             started_at=now,
         )
-        adapter = self._adapter(run.module_type)
-        result = await adapter.start(run, context)
-        run = run.model_copy(
-            update={"domain_session_id": result.domain_session_id}
-        )
-        events: list[ConversationEvent] = []
-        if stack:
-            parent = stack[-1]
-            await self._adapter(parent.module_type).suspend(parent)
-            suspended = self._repository.transition_module_run(
-                module_run_id=parent.module_run_id,
-                conversation_id=parent.conversation_id,
-                user_id=parent.user_id,
-                expected_status=ModuleRunStatus.ACTIVE,
-                expected_version=parent.version,
-                target_status=ModuleRunStatus.SUSPENDED,
-                ended_at=None,
+        parent = stack[-1] if stack else None
+        prepared = await self._adapter(run.module_type).prepare_start(run, context)
+        try:
+            async with self._repository.module_start_transaction():
+                run = await self._repository.begin_module_start(
+                    proposal=proposal,
+                    run=run,
+                    parent=parent,
+                )
+                if not await self._repository.claim_module_start(
+                    module_run_id=run.module_run_id
+                ):
+                    raise ConversationConcurrencyError(
+                        "module startup could not be claimed"
+                    )
+                run, result, parent = await self._start_domain_session(
+                    run=run,
+                    prepared=prepared,
+                    parent=parent,
+                )
+        except Exception as exc:
+            await self._repository.retry_module_start(
+                module_run_id=run.module_run_id,
+                error_code=exc.__class__.__name__,
             )
-            if suspended is None:
+            raise
+        return await self._finalize_module_start(
+            run=run,
+            prepared=prepared,
+            result=result,
+            parent=parent,
+            context=context,
+            proposal_id=proposal.proposal_id,
+        )
+
+    async def reconcile_claimed(
+        self,
+        *,
+        run: ModuleRun,
+        context: ConversationWorkingContext,
+        proposal_id: str,
+    ) -> ModuleControlResponse:
+        """Reconcile a job already leased by the background worker."""
+        return await self._reconcile_module_start(
+            run=run,
+            context=context,
+            proposal_id=proposal_id,
+        )
+
+    async def _reconcile_module_start(
+        self,
+        *,
+        run: ModuleRun,
+        context: ConversationWorkingContext,
+        proposal_id: str,
+    ) -> ModuleControlResponse:
+        """Recreate a missing domain session and finalize its durable outbox."""
+        try:
+            prepared = await self._adapter(run.module_type).prepare_start(
+                run, context
+            )
+            async with self._repository.module_start_transaction():
+                run, result, parent = await self._start_domain_session(
+                    run=run,
+                    prepared=prepared,
+                )
+        except Exception as exc:
+            await self._repository.retry_module_start(
+                module_run_id=run.module_run_id,
+                error_code=exc.__class__.__name__,
+            )
+            raise
+        return await self._finalize_module_start(
+            run=run,
+            prepared=prepared,
+            result=result,
+            parent=parent,
+            context=context,
+            proposal_id=proposal_id,
+        )
+
+    async def _start_domain_session(
+        self,
+        *,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+        parent: ModuleRun | None = None,
+    ) -> tuple[ModuleRun, ModuleAdapterResult, ModuleRun | None]:
+        """Persist the module's internal domain state in the bound transaction."""
+        if parent is None and run.parent_module_run_id is not None:
+            parent = await self._repository.get_module_run_for_user(
+                module_run_id=run.parent_module_run_id,
+                conversation_id=run.conversation_id,
+                user_id=run.user_id,
+            )
+            if parent is None:
                 raise LookupError("parent module run not found")
-            await self._refresh_overlay(suspended, context)
+        if parent is not None:
+            await self._adapter(parent.module_type).suspend(parent)
+        result = await self._adapter(run.module_type).persist_start(run, prepared)
+        if result.domain_session_id != run.domain_session_id:
+            if result.domain_session_id is None:
+                raise ValueError("module startup lost its reserved session id")
+            run = await self._repository.update_module_domain_session(
+                module_run_id=run.module_run_id,
+                conversation_id=run.conversation_id,
+                user_id=run.user_id,
+                expected_version=run.version,
+                domain_session_id=result.domain_session_id,
+            )
+        return run, result, parent
+
+    async def _finalize_module_start(
+        self,
+        *,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+        result: ModuleAdapterResult,
+        parent: ModuleRun | None,
+        context: ConversationWorkingContext,
+        proposal_id: str,
+    ) -> ModuleControlResponse:
+        """Publish projections and idempotent events after the database commits."""
+        try:
+            await self._adapter(run.module_type).after_start_commit(
+                run,
+                prepared=prepared,
+                result=result,
+            )
+            events: list[ConversationEvent] = []
+            if parent is not None:
+                await self._refresh_overlay(parent, context)
+                events.append(
+                    await self._append_lifecycle_event(
+                        run=parent,
+                        event_type=ConversationEventType.MODULE_SUSPENDED,
+                        content="父模块已暂停，等待子模块结束后恢复。",
+                        idempotency_key=f"module-suspended:{proposal_id}",
+                    )
+                )
+            await self._refresh_overlay(run, context)
             events.append(
-                self._append_lifecycle_event(
-                    run=suspended,
-                    event_type=ConversationEventType.MODULE_SUSPENDED,
-                    content="父模块已暂停，等待子模块结束后恢复。",
-                    idempotency_key=f"module-suspended:{proposal.proposal_id}",
+                await self._append_lifecycle_event(
+                    run=run,
+                    event_type=ConversationEventType.MODULE_STARTED,
+                    content=f"已进入 {run.module_type.value} 模块。",
+                    idempotency_key=f"module-started:{proposal_id}",
                 )
             )
-        self._repository.create_module_run(run)
-        await self._refresh_overlay(run, context)
-        events.append(
-            self._append_lifecycle_event(
-                run=run,
-                event_type=ConversationEventType.MODULE_STARTED,
-                content=f"已进入 {run.module_type.value} 模块。",
-                idempotency_key=f"module-started:{proposal.proposal_id}",
+            events.append(
+                await self._append_result_event(
+                    run=run,
+                    result=result,
+                    idempotency_key=f"module-opening:{proposal_id}",
+                )
             )
-        )
-        events.append(
-            self._append_result_event(
-                run=run,
-                result=result,
-                idempotency_key=f"module-opening:{proposal.proposal_id}",
+            await self._repository.complete_module_start(
+                module_run_id=run.module_run_id
             )
-        )
-        self._set_active_depth(
-            conversation_id=run.conversation_id,
-            user_id=run.user_id,
-            depth=run.depth,
-        )
-        return self._control_response(
+        except Exception as exc:
+            await self._repository.retry_module_start(
+                module_run_id=run.module_run_id,
+                error_code=exc.__class__.__name__,
+            )
+            raise
+        return await self._control_response(
             conversation_id=run.conversation_id,
             user_id=run.user_id,
             events=events,
@@ -162,7 +295,7 @@ class ModuleCoordinator:
         context: ConversationWorkingContext,
     ) -> tuple[ModuleAdapterResult, ConversationEvent]:
         """Send one message to the active top module frame."""
-        stack = self._repository.list_module_stack(
+        stack = await self._repository.list_module_stack(
             conversation_id=conversation_id,
             user_id=user_id,
         )
@@ -170,7 +303,7 @@ class ModuleCoordinator:
             raise LookupError("active module not found")
         run = stack[-1]
         response_key = f"module-response:{idempotency_key}"
-        replay = self._repository.get_event_by_idempotency(
+        replay = await self._repository.get_event_by_idempotency(
             conversation_id=conversation_id,
             user_id=user_id,
             idempotency_key=response_key,
@@ -202,7 +335,7 @@ class ModuleCoordinator:
             result.domain_session_id is not None
             and result.domain_session_id != run.domain_session_id
         ):
-            run = self._repository.update_module_domain_session(
+            run = await self._repository.update_module_domain_session(
                 module_run_id=run.module_run_id,
                 conversation_id=run.conversation_id,
                 user_id=run.user_id,
@@ -210,14 +343,14 @@ class ModuleCoordinator:
                 domain_session_id=result.domain_session_id,
             )
         else:
-            run = self._repository.advance_module_run_version(
+            run = await self._repository.advance_module_run_version(
                 module_run_id=run.module_run_id,
                 conversation_id=run.conversation_id,
                 user_id=run.user_id,
                 expected_version=run.version,
             )
         await self._refresh_overlay(run, projected_context)
-        event = self._append_result_event(
+        event = await self._append_result_event(
             run=run,
             result=result,
             idempotency_key=response_key,
@@ -233,18 +366,18 @@ class ModuleCoordinator:
         context: ConversationWorkingContext | None = None,
     ) -> ModuleControlResponse:
         """Terminate only the top frame and resume its parent."""
-        stack = self._repository.list_module_stack(
+        stack = await self._repository.list_module_stack(
             conversation_id=conversation_id,
             user_id=user_id,
         )
         if not stack or stack[-1].module_run_id != module_run_id:
-            existing = self._repository.get_module_run_for_user(
+            existing = await self._repository.get_module_run_for_user(
                 module_run_id=module_run_id,
                 conversation_id=conversation_id,
                 user_id=user_id,
             )
             if existing is not None and existing.status == ModuleRunStatus.TERMINATED:
-                return self._control_response(
+                return await self._control_response(
                     conversation_id=conversation_id,
                     user_id=user_id,
                     events=[],
@@ -254,7 +387,7 @@ class ModuleCoordinator:
         top = stack[-1]
         await self._adapter(top.module_type).terminate(top)
         ended_at = datetime.now(UTC)
-        terminated = self._repository.transition_module_run(
+        terminated = await self._repository.transition_module_run(
             module_run_id=top.module_run_id,
             conversation_id=conversation_id,
             user_id=user_id,
@@ -267,7 +400,7 @@ class ModuleCoordinator:
             raise LookupError("module run not found")
         await self._overlay_store.delete(terminated)
         events = [
-            self._append_lifecycle_event(
+            await self._append_lifecycle_event(
                 run=terminated,
                 event_type=ConversationEventType.MODULE_TERMINATED,
                 content="用户已结束当前模块。",
@@ -278,7 +411,7 @@ class ModuleCoordinator:
         if len(stack) > 1:
             parent = stack[-2]
             await self._adapter(parent.module_type).resume(parent)
-            resumed = self._repository.transition_module_run(
+            resumed = await self._repository.transition_module_run(
                 module_run_id=parent.module_run_id,
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -291,7 +424,7 @@ class ModuleCoordinator:
                 raise LookupError("parent module run not found")
             await self._refresh_overlay(resumed, context)
             events.append(
-                self._append_lifecycle_event(
+                await self._append_lifecycle_event(
                     run=resumed,
                     event_type=ConversationEventType.MODULE_RESUMED,
                     content="已恢复父模块。",
@@ -299,12 +432,12 @@ class ModuleCoordinator:
                 )
             )
             response = "已结束当前模块，并恢复上一层练习。"
-        self._set_active_depth(
+        await self._set_active_depth(
             conversation_id=conversation_id,
             user_id=user_id,
             depth=max(0, len(stack) - 1),
         )
-        return self._control_response(
+        return await self._control_response(
             conversation_id=conversation_id,
             user_id=user_id,
             events=events,
@@ -318,14 +451,14 @@ class ModuleCoordinator:
         user_id: str,
     ) -> ModuleControlResponse:
         """Terminate every frame from child to parent without resuming."""
-        stack = self._repository.list_module_stack(
+        stack = await self._repository.list_module_stack(
             conversation_id=conversation_id,
             user_id=user_id,
         )
         events: list[ConversationEvent] = []
         for run in reversed(stack):
             await self._adapter(run.module_type).terminate(run)
-            terminated = self._repository.transition_module_run(
+            terminated = await self._repository.transition_module_run(
                 module_run_id=run.module_run_id,
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -338,7 +471,7 @@ class ModuleCoordinator:
                 continue
             await self._overlay_store.delete(terminated)
             events.append(
-                self._append_lifecycle_event(
+                await self._append_lifecycle_event(
                     run=terminated,
                     event_type=ConversationEventType.MODULE_TERMINATED,
                     content="用户已结束全部模块。",
@@ -347,12 +480,12 @@ class ModuleCoordinator:
                     ),
                 )
             )
-        self._set_active_depth(
+        await self._set_active_depth(
             conversation_id=conversation_id,
             user_id=user_id,
             depth=0,
         )
-        return self._control_response(
+        return await self._control_response(
             conversation_id=conversation_id,
             user_id=user_id,
             events=events,
@@ -366,7 +499,7 @@ class ModuleCoordinator:
         user_id: str,
     ) -> list[ConversationEvent]:
         """Stop every frame without letting adapter failure delay safety."""
-        stack = self._repository.list_module_stack(
+        stack = await self._repository.list_module_stack(
             conversation_id=conversation_id,
             user_id=user_id,
         )
@@ -385,7 +518,7 @@ class ModuleCoordinator:
                         ).hexdigest()[:16],
                     },
                 )
-            terminated = self._repository.transition_module_run(
+            terminated = await self._repository.transition_module_run(
                 module_run_id=run.module_run_id,
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -398,7 +531,7 @@ class ModuleCoordinator:
                 continue
             await self._overlay_store.delete(terminated)
             events.append(
-                self._append_lifecycle_event(
+                await self._append_lifecycle_event(
                     run=terminated,
                     event_type=ConversationEventType.MODULE_TERMINATED,
                     content="安全升级已停止当前模块。",
@@ -409,7 +542,7 @@ class ModuleCoordinator:
                 )
             )
         if stack:
-            self._set_active_depth(
+            await self._set_active_depth(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 depth=0,
@@ -500,7 +633,7 @@ class ModuleCoordinator:
             raise ValueError(f"module adapter is unavailable: {module_type.value}")
         return adapter
 
-    def _append_lifecycle_event(
+    async def _append_lifecycle_event(
         self,
         *,
         run: ModuleRun,
@@ -508,7 +641,7 @@ class ModuleCoordinator:
         content: str,
         idempotency_key: str,
     ) -> ConversationEvent:
-        return self._repository.append_event(
+        return await self._repository.append_event(
             conversation_id=run.conversation_id,
             user_id=run.user_id,
             event_type=event_type,
@@ -524,14 +657,14 @@ class ModuleCoordinator:
             idempotency_key=idempotency_key,
         )
 
-    def _append_result_event(
+    async def _append_result_event(
         self,
         *,
         run: ModuleRun,
         result: ModuleAdapterResult,
         idempotency_key: str,
     ) -> ConversationEvent:
-        return self._repository.append_event(
+        return await self._repository.append_event(
             conversation_id=run.conversation_id,
             user_id=run.user_id,
             event_type=ConversationEventType.MODULE_MESSAGE,
@@ -543,27 +676,27 @@ class ModuleCoordinator:
             idempotency_key=idempotency_key,
         )
 
-    def _set_active_depth(
+    async def _set_active_depth(
         self,
         *,
         conversation_id: str,
         user_id: str,
         depth: int,
     ) -> None:
-        conversation = self._repository.get_for_user(
+        conversation = await self._repository.get_for_user(
             conversation_id,
             user_id,
         )
         if conversation is None:
             raise LookupError("conversation not found")
-        self._repository.update_metadata(
+        await self._repository.update_metadata(
             conversation_id=conversation_id,
             user_id=user_id,
             expected_version=conversation.version,
             active_module_depth=depth,
         )
 
-    def _control_response(
+    async def _control_response(
         self,
         *,
         conversation_id: str,
@@ -571,7 +704,7 @@ class ModuleCoordinator:
         events: list[ConversationEvent],
         response: str,
     ) -> ModuleControlResponse:
-        conversation = self._repository.get_for_user(
+        conversation = await self._repository.get_for_user(
             conversation_id,
             user_id,
         )
@@ -579,7 +712,7 @@ class ModuleCoordinator:
             raise LookupError("conversation not found")
         return ModuleControlResponse(
             conversation=conversation,
-            active_module_stack=self._repository.list_module_stack(
+            active_module_stack=await self._repository.list_module_stack(
                 conversation_id=conversation_id,
                 user_id=user_id,
             ),

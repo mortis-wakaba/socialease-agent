@@ -351,17 +351,19 @@ async def test_harness_boundary_paths_do_not_create_business_plans(
     assert response.structured_data["state_changed"] is False
 
 
-def test_memory_context_builder_combines_profile_and_preferences() -> None:
+@pytest.mark.anyio
+async def test_memory_context_builder_combines_profile_and_preferences() -> None:
     memory_context = build_memory_context(
         practice_summary=UserPracticeSummary(
             recent_scenarios=["group_discussion"],
             latest_anxiety_level=6,
             preferred_difficulty=2,
         ),
-        memory_settings=repository_factory()
-        .user_memory_settings_repository()
-        .get("memory_context_empty")
-        .model_copy(
+        memory_settings=(
+            await repository_factory()
+            .user_memory_settings_repository()
+            .get("memory_context_empty")
+        ).model_copy(
             update={
                 "consent_state": UserConsentState(
                     consent_to_practice_summary=True,
@@ -385,7 +387,7 @@ def test_memory_context_builder_combines_profile_and_preferences() -> None:
 @pytest.mark.anyio
 async def test_legacy_roleplay_skill_redirects_after_consent() -> None:
     user_id = f"memory_context_roleplay_{uuid4().hex}"
-    repository_factory().user_memory_settings_repository().save(
+    await repository_factory().user_memory_settings_repository().save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_save_preferences=True),
         practice_preferences=PracticePreferences(
@@ -404,7 +406,11 @@ async def test_legacy_roleplay_skill_redirects_after_consent() -> None:
     )
 
     protocol_id = consent_response.structured_data["protocol_id"]
-    protocol_service.respond(protocol_id=protocol_id, user_id=user_id, approved=True)
+    await protocol_service.respond(
+        protocol_id=protocol_id,
+        user_id=user_id,
+        approved=True,
+    )
 
     response = await harness.run(
         ChatRequest(
@@ -475,7 +481,11 @@ async def test_legacy_exposure_skill_redirects_after_consent() -> None:
     )
 
     protocol_id = consent_response.structured_data["protocol_id"]
-    protocol_service.respond(protocol_id=protocol_id, user_id=user_id, approved=True)
+    await protocol_service.respond(
+        protocol_id=protocol_id,
+        user_id=user_id,
+        approved=True,
+    )
 
     response = await harness.run(
         ChatRequest(
@@ -633,7 +643,7 @@ async def test_metrics_hook_collects_non_identifying_trace_metrics() -> None:
         )
     )
 
-    snapshot = hook.snapshot()
+    snapshot = await hook.snapshot()
 
     assert snapshot.total_runs == 2
     assert snapshot.crisis_runs == 1

@@ -42,15 +42,16 @@ def repository() -> PostgresExposureRepository:
     return PostgresExposureRepository(database_url=TEST_DATABASE_URL)
 
 
-def test_postgres_exposure_save_get_and_owner_scope(
+@pytest.mark.anyio
+async def test_postgres_exposure_save_get_and_owner_scope(
     repository: PostgresExposureRepository,
 ) -> None:
     plan = _exposure_plan(user_id=f"pg_exposure_user_{uuid4().hex}")
 
-    saved = repository.save_plan(plan)
-    by_user = repository.get_for_user(plan.user_id)
-    by_id = repository.get_by_id_for_user(plan.plan_id, plan.user_id)
-    wrong_user = repository.get_by_id_for_user(plan.plan_id, "other_user")
+    saved = await repository.save_plan(plan)
+    by_user = await repository.get_for_user(plan.user_id)
+    by_id = await repository.get_by_id_for_user(plan.plan_id, plan.user_id)
+    wrong_user = await repository.get_by_id_for_user(plan.plan_id, "other_user")
 
     assert saved.plan_id == plan.plan_id
     assert by_user is not None
@@ -59,14 +60,14 @@ def test_postgres_exposure_save_get_and_owner_scope(
     assert by_id.target_scenario == "[raw exposure target scenario minimized by privacy policy]"
     assert wrong_user is None
 
-    with repository.engine.connect() as connection:
-        row = connection.execute(
+    async with repository.engine.connect() as connection:
+        row = (await connection.execute(
             text(
                 """SELECT current_anxiety_level, recommended_next_task_id, deleted_at
                 FROM exposure_plans WHERE plan_id = :plan_id"""
             ),
             {"plan_id": plan.plan_id},
-        ).mappings().first()
+        )).mappings().first()
 
     assert row is not None
     assert row["current_anxiety_level"] == 6
@@ -74,23 +75,24 @@ def test_postgres_exposure_save_get_and_owner_scope(
     assert row["deleted_at"] is None
 
 
-def test_postgres_exposure_save_plan_replaces_active_user_plan(
+@pytest.mark.anyio
+async def test_postgres_exposure_save_plan_replaces_active_user_plan(
     repository: PostgresExposureRepository,
 ) -> None:
     user_id = f"pg_exposure_replace_user_{uuid4().hex}"
     first = _exposure_plan(user_id=user_id, target_scenario="first minimized scenario")
     second = _exposure_plan(user_id=user_id, target_scenario="second minimized scenario")
 
-    repository.save_plan(first)
-    repository.save_attempt(
+    await repository.save_plan(first)
+    await repository.save_attempt(
         user_id,
         first.model_copy(update={"attempts": [_attempt("task_1")]}),
         _attempt("task_1"),
     )
-    repository.save_plan(second)
+    await repository.save_plan(second)
 
-    active = repository.get_for_user(user_id)
-    old = repository.get_by_id_for_user(first.plan_id, user_id)
+    active = await repository.get_for_user(user_id)
+    old = await repository.get_by_id_for_user(first.plan_id, user_id)
 
     assert active is not None
     assert active.plan_id == second.plan_id
@@ -98,7 +100,8 @@ def test_postgres_exposure_save_plan_replaces_active_user_plan(
     assert old is None
 
 
-def test_postgres_exposure_save_attempt_updates_plan_payload(
+@pytest.mark.anyio
+async def test_postgres_exposure_save_attempt_updates_plan_payload(
     repository: PostgresExposureRepository,
 ) -> None:
     plan = _exposure_plan(user_id=f"pg_exposure_attempt_user_{uuid4().hex}")
@@ -111,9 +114,9 @@ def test_postgres_exposure_save_attempt_updates_plan_payload(
         }
     )
 
-    repository.save_plan(plan)
-    repository.save_attempt(plan.user_id, updated, attempt)
-    fetched = repository.get_for_user(plan.user_id)
+    await repository.save_plan(plan)
+    await repository.save_attempt(plan.user_id, updated, attempt)
+    fetched = await repository.get_for_user(plan.user_id)
 
     assert fetched is not None
     assert len(fetched.attempts) == 1
@@ -121,14 +124,14 @@ def test_postgres_exposure_save_attempt_updates_plan_payload(
     assert fetched.attempts[0].reflection == "[minimized exposure reflection]"
     assert fetched.recommended_next_task_id == "task_2"
 
-    with repository.engine.connect() as connection:
-        row = connection.execute(
+    async with repository.engine.connect() as connection:
+        row = (await connection.execute(
             text(
                 """SELECT task_id, status, anxiety_before, anxiety_after
                 FROM exposure_attempts WHERE plan_id = :plan_id"""
             ),
             {"plan_id": plan.plan_id},
-        ).mappings().first()
+        )).mappings().first()
 
     assert row is not None
     assert row["task_id"] == "task_1"

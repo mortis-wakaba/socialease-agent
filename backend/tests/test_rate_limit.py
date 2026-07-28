@@ -59,7 +59,7 @@ async def test_rate_limit_middleware_returns_429_for_same_demo_user(
 ) -> None:
     recorded_hits = 0
 
-    def fake_record_rate_limit_hit() -> None:
+    async def fake_record_rate_limit_hit() -> None:
         nonlocal recorded_hits
         recorded_hits += 1
 

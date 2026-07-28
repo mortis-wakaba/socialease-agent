@@ -145,7 +145,9 @@ async def test_exposure_adapter_records_feedback_inside_unified_context() -> Non
             tokenizer_backend="test",
         ),
     )
-    started = await adapter.start(run, context)
+    prepared = await adapter.prepare_start(run, context)
+    started = await adapter.persist_start(run, prepared)
+    await adapter.after_start_commit(run, prepared, started)
     run = run.model_copy(update={"domain_session_id": started.domain_session_id})
     overlay = await adapter.build_overlay(run, context)
 
@@ -156,7 +158,7 @@ async def test_exposure_adapter_records_feedback_inside_unified_context() -> Non
         overlay,
     )
 
-    plan = service.store.get_for_user("owner")
+    plan = await service.store.get_for_user("owner")
     assert plan is not None
     assert len(plan.attempts) == 1
     assert result.event_payload.permission_to_increase is False

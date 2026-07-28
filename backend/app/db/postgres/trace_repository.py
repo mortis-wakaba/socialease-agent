@@ -1,25 +1,27 @@
 """PostgreSQL trace repository implementation."""
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.config import database_settings
+from app.db.postgres.engine import shared_postgres_async_engine
 from app.models import TraceRecord
 
 
 class PostgresTraceRepository:
     """PostgreSQL-backed workflow trace repository."""
 
-    def __init__(self, database_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+    def __init__(
+        self, database_url: str | None = None, engine: AsyncEngine | None = None
+    ) -> None:
+        self.engine = engine or shared_postgres_async_engine(
+            database_url or database_settings().database_url
         )
 
-    def save(self, record: TraceRecord) -> TraceRecord:
+    async def save(self, record: TraceRecord) -> TraceRecord:
         """Persist one product-safe workflow trace."""
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """INSERT INTO runs
                     (run_id, user_id, product_safe, risk_level, intent, selected_agent,
@@ -44,26 +46,26 @@ class PostgresTraceRepository:
             )
         return record
 
-    def get(self, run_id: str) -> TraceRecord | None:
+    async def get(self, run_id: str) -> TraceRecord | None:
         """Return one workflow trace by run id."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text("SELECT payload FROM runs WHERE run_id = :run_id"),
                 {"run_id": run_id},
-            ).mappings().first()
+            )).mappings().first()
         return TraceRecord.model_validate(row["payload"]) if row else None
 
-    def list_recent(self, limit: int = 100) -> list[TraceRecord]:
+    async def list_recent(self, limit: int = 100) -> list[TraceRecord]:
         """Return recent workflow traces ordered from newest to oldest."""
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT payload FROM runs
                     ORDER BY created_at DESC
                     LIMIT :limit"""
                 ),
                 {"limit": limit},
-            ).mappings().all()
+            )).mappings().all()
         return [TraceRecord.model_validate(row["payload"]) for row in rows]
 
 

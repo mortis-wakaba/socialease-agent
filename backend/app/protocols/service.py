@@ -17,7 +17,7 @@ class ProtocolService:
     def __init__(self, store: ProtocolRepository | None = None) -> None:
         self.store = store or repository_factory().protocol_repository()
 
-    def create_consent_request(
+    async def create_consent_request(
         self,
         *,
         user_id: str,
@@ -30,7 +30,7 @@ class ProtocolService:
     ) -> ProtocolRecord:
         """Create a pending consent request for a harness action."""
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
-        return self.store.create(
+        return await self.store.create(
             user_id=user_id,
             protocol_type=ProtocolType.CONSENT_REQUEST,
             session_id=session_id,
@@ -45,7 +45,7 @@ class ProtocolService:
             },
         )
 
-    def respond(
+    async def respond(
         self,
         *,
         protocol_id: str,
@@ -59,17 +59,17 @@ class ProtocolService:
             None,
         )
         if transactional_respond is not None:
-            return transactional_respond(
+            return await transactional_respond(
                 protocol_id=protocol_id,
                 user_id=user_id,
                 approved=approved,
                 now=datetime.now(timezone.utc),
             )
-        record = self.store.get_for_user(protocol_id, user_id)
+        record = await self.store.get_for_user(protocol_id, user_id)
         if record is None:
             return None
         if self._is_expired(record):
-            return self.store.set_status(
+            return await self.store.set_status(
                 protocol_id=protocol_id,
                 user_id=user_id,
                 status=ProtocolStatus.EXPIRED,
@@ -77,17 +77,17 @@ class ProtocolService:
         if record.status != ProtocolStatus.PENDING:
             return record
         status = ProtocolStatus.APPROVED if approved else ProtocolStatus.REJECTED
-        updated = self.store.transition_status(
+        updated = await self.store.transition_status(
             protocol_id=protocol_id,
             user_id=user_id,
             expected_status=ProtocolStatus.PENDING,
             next_status=status,
         )
         if updated is not None:
-            self._sync_intervention_plan_after_response(updated)
+            await self._sync_intervention_plan_after_response(updated)
         return updated
 
-    def link_intervention_plan(
+    async def link_intervention_plan(
         self,
         *,
         protocol_id: str,
@@ -95,13 +95,15 @@ class ProtocolService:
         intervention_plan_id: str,
     ) -> ProtocolRecord | None:
         """Attach a created intervention plan to a protocol payload."""
-        record = self.store.get_for_user(protocol_id, user_id)
+        record = await self.store.get_for_user(protocol_id, user_id)
         if record is None:
             return None
         payload = {**record.payload, "intervention_plan_id": intervention_plan_id}
-        return self.store.save(record.model_copy(update={"payload": payload}))
+        return await self.store.save(
+            record.model_copy(update={"payload": payload})
+        )
 
-    def is_approved_for_action(
+    async def is_approved_for_action(
         self,
         *,
         protocol_id: str | None,
@@ -113,11 +115,11 @@ class ProtocolService:
         """Return whether the protocol approves this exact harness action."""
         if protocol_id is None:
             return False
-        record = self.store.get_for_user(protocol_id, user_id)
+        record = await self.store.get_for_user(protocol_id, user_id)
         if record is None:
             return False
         if self._is_expired(record):
-            self.store.set_status(
+            await self.store.set_status(
                 protocol_id=protocol_id,
                 user_id=user_id,
                 status=ProtocolStatus.EXPIRED,
@@ -133,7 +135,7 @@ class ProtocolService:
             return False
         return True
 
-    def consume_for_action(
+    async def consume_for_action(
         self,
         *,
         protocol_id: str | None,
@@ -153,7 +155,7 @@ class ProtocolService:
             None,
         )
         if transactional_consume is not None:
-            return transactional_consume(
+            return await transactional_consume(
                 protocol_id=protocol_id,
                 user_id=user_id,
                 harness_action=harness_action.value,
@@ -163,7 +165,7 @@ class ProtocolService:
                 result_session_id=result_session_id,
                 result_summary=result_summary,
             )
-        if not self.is_approved_for_action(
+        if not await self.is_approved_for_action(
             protocol_id=protocol_id,
             user_id=user_id,
             harness_action=harness_action,
@@ -171,14 +173,53 @@ class ProtocolService:
             session_id=session_id,
         ):
             return None
-        return self.store.transition_status(
+        return await self.store.transition_status(
             protocol_id=protocol_id,
             user_id=user_id,
             expected_status=ProtocolStatus.APPROVED,
             next_status=ProtocolStatus.CONSUMED,
         )
 
-    def linked_intervention_plan_id(
+    async def claim_for_action(
+        self,
+        *,
+        protocol_id: str | None,
+        user_id: str,
+        harness_action: HarnessAction,
+        request_hash: str,
+        session_id: str | None,
+    ) -> ProtocolRecord | None:
+        """Atomically claim an approved protocol before executing its side effect."""
+        if protocol_id is None:
+            return None
+        record = await self.store.get_for_user(protocol_id, user_id)
+        if record is None:
+            return None
+        if self._is_expired(record):
+            await self.store.set_status(
+                protocol_id=protocol_id,
+                user_id=user_id,
+                status=ProtocolStatus.EXPIRED,
+            )
+            return None
+        if (
+            record.status != ProtocolStatus.APPROVED
+            or record.harness_action != harness_action.value
+            or record.request_hash != request_hash
+            or (
+                record.session_id is not None
+                and record.session_id != session_id
+            )
+        ):
+            return None
+        return await self.store.transition_status(
+            protocol_id=protocol_id,
+            user_id=user_id,
+            expected_status=ProtocolStatus.APPROVED,
+            next_status=ProtocolStatus.CONSUMED,
+        )
+
+    async def linked_intervention_plan_id(
         self,
         *,
         protocol_id: str | None,
@@ -187,15 +228,21 @@ class ProtocolService:
         """Return the intervention plan linked to a protocol, if present."""
         if protocol_id is None:
             return None
-        record = self.store.get_for_user(protocol_id, user_id)
+        record = await self.store.get_for_user(protocol_id, user_id)
         if record is None:
             return None
         plan_id = record.payload.get("intervention_plan_id")
         return plan_id if isinstance(plan_id, str) else None
 
-    def expire_pending_protocols(self, *, now: datetime | None = None) -> int:
+    async def expire_pending_protocols(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> int:
         """Expire pending protocols up to a cutoff timestamp."""
-        return self.store.expire_pending_before(now or datetime.now(timezone.utc))
+        return await self.store.expire_pending_before(
+            now or datetime.now(timezone.utc)
+        )
 
     @staticmethod
     def _is_expired(record: ProtocolRecord) -> bool:
@@ -203,7 +250,9 @@ class ProtocolService:
         return record.expires_at is not None and record.expires_at <= datetime.now(timezone.utc)
 
     @staticmethod
-    def _sync_intervention_plan_after_response(record: ProtocolRecord) -> None:
+    async def _sync_intervention_plan_after_response(
+        record: ProtocolRecord,
+    ) -> None:
         """Update linked intervention plan after a protocol response."""
         plan_id = record.payload.get("intervention_plan_id")
         if not isinstance(plan_id, str):
@@ -211,12 +260,12 @@ class ProtocolService:
         from app.services.intervention_plan_service import intervention_plan_service
 
         if record.status == ProtocolStatus.APPROVED:
-            intervention_plan_service.mark_consent_approved(
+            await intervention_plan_service.mark_consent_approved(
                 user_id=record.user_id,
                 plan_id=plan_id,
             )
         elif record.status == ProtocolStatus.REJECTED:
-            intervention_plan_service.mark_consent_rejected(
+            await intervention_plan_service.mark_consent_rejected(
                 user_id=record.user_id,
                 plan_id=plan_id,
             )

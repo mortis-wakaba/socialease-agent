@@ -1,0 +1,216 @@
+"""Fault-injection tests for the transactional Calendar outbox."""
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from app.calendar.mcp_client import CalendarMCPError, InProcessCalendarMCPClient
+from app.calendar.outbox import CalendarActionOutbox
+from app.calendar.outbox_processor import CalendarOutboxProcessor
+from app.calendar.provider import InMemoryCalendarProvider
+from app.calendar.service import CalendarService
+from app.calendar.tools import CalendarToolService
+from app.db.engine import connect
+from app.models_calendar import CalendarCreateRequest, CalendarEventProposal
+from app.models_protocols import ProtocolStatus
+from app.protocols.service import ProtocolService
+from app.protocols.store import ProtocolStore
+from app.safety.actions import HarnessAction
+from app.safety.direct_actions import direct_action_request_hash
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+def outbox(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> CalendarActionOutbox:
+    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "calendar-outbox.db"))
+    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
+    return CalendarActionOutbox()
+
+
+def _request() -> CalendarCreateRequest:
+    return CalendarCreateRequest(
+        user_id="owner",
+        proposal=CalendarEventProposal(
+            title="练习提醒",
+            start_time=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+            duration_minutes=15,
+        ),
+        idempotency_key="calendar-outbox-test",
+    )
+
+
+async def _enqueue_approved(outbox: CalendarActionOutbox):
+    request = _request()
+    request_hash = direct_action_request_hash(
+        harness_action=HarnessAction.CREATE_CALENDAR_EVENT,
+        payload=request,
+    )
+    protocols = ProtocolService(store=ProtocolStore())
+    protocol = await protocols.create_consent_request(
+        user_id=request.user_id,
+        harness_action=HarnessAction.CREATE_CALENDAR_EVENT,
+        reason="test",
+        required_protocol="test",
+        session_id=None,
+        request_hash=request_hash,
+    )
+    approved = await protocols.respond(
+        protocol_id=protocol.protocol_id,
+        user_id=request.user_id,
+        approved=True,
+    )
+    assert approved is not None
+    job = await outbox.enqueue(
+        protocol_id=protocol.protocol_id,
+        user_id=request.user_id,
+        action_type="create",
+        request_hash=request_hash,
+        idempotency_key=request.idempotency_key,
+        payload=request.model_dump(mode="json"),
+    )
+    assert job is not None
+    consumed = await protocols.store.get_for_user(
+        protocol.protocol_id, request.user_id
+    )
+    assert consumed is not None
+    assert consumed.status is ProtocolStatus.CONSUMED
+    return job
+
+
+@pytest.mark.anyio
+async def test_consent_consumption_and_enqueue_are_atomic(
+    outbox: CalendarActionOutbox,
+) -> None:
+    job = await _enqueue_approved(outbox)
+
+    stored = await outbox.get(job.job_id)
+
+    assert stored is not None
+    assert stored.status == "pending"
+    assert stored.attempt_count == 0
+
+
+@pytest.mark.anyio
+async def test_concurrent_claim_has_single_lease_owner(
+    outbox: CalendarActionOutbox,
+) -> None:
+    job = await _enqueue_approved(outbox)
+
+    first = await outbox.claim(worker_id="worker-a", job_id=job.job_id)
+    second = await outbox.claim(worker_id="worker-b", job_id=job.job_id)
+
+    assert len(first) == 1
+    assert second == []
+    assert first[0].lease_owner == "worker-a"
+
+
+@pytest.mark.anyio
+async def test_expired_lease_is_reclaimed(
+    outbox: CalendarActionOutbox,
+) -> None:
+    job = await _enqueue_approved(outbox)
+    assert await outbox.claim(worker_id="crashed-worker", job_id=job.job_id)
+    with connect() as connection:
+        connection.execute(
+            """UPDATE calendar_action_outbox
+            SET lease_expires_at = ? WHERE job_id = ?""",
+            (datetime(2020, 1, 1, tzinfo=UTC).isoformat(), job.job_id),
+        )
+
+    reclaimed = await outbox.claim(
+        worker_id="replacement-worker",
+        job_id=job.job_id,
+    )
+
+    assert len(reclaimed) == 1
+    assert reclaimed[0].lease_owner == "replacement-worker"
+    assert reclaimed[0].attempt_count == 2
+
+
+@pytest.mark.anyio
+async def test_external_success_then_completion_failure_reconciles_idempotently(
+    outbox: CalendarActionOutbox,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue_approved(outbox)
+    provider = InMemoryCalendarProvider()
+    service = CalendarService(
+        InProcessCalendarMCPClient(CalendarToolService(provider))
+    )
+    original_complete = outbox.complete
+    failed_once = False
+
+    async def fail_once(**kwargs: object) -> bool:
+        nonlocal failed_once
+        if not failed_once:
+            failed_once = True
+            return False
+        return await original_complete(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(outbox, "complete", fail_once)
+    processor = CalendarOutboxProcessor(
+        outbox=outbox,
+        service=service,
+        worker_id="worker",
+    )
+
+    with pytest.raises(Exception, match="completion lease"):
+        await processor.process_job(job.job_id)
+    with connect() as connection:
+        connection.execute(
+            """UPDATE calendar_action_outbox
+            SET next_attempt_at = ? WHERE job_id = ?""",
+            (datetime(2020, 1, 1, tzinfo=UTC).isoformat(), job.job_id),
+        )
+    response = await processor.process_job(job.job_id)
+    events = await service.list_owned_events(user_id="owner")
+
+    assert response.verified is True
+    assert response.event.idempotency_reused is True
+    assert len(events) == 1
+    assert (await outbox.get(job.job_id)).status == "completed"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
+async def test_max_attempt_moves_job_to_dead_letter(
+    outbox: CalendarActionOutbox,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue_approved(outbox)
+    service = CalendarService(
+        InProcessCalendarMCPClient(
+            CalendarToolService(InMemoryCalendarProvider())
+        )
+    )
+
+    async def fail(**_kwargs: object):
+        raise CalendarMCPError("unavailable")
+
+    monkeypatch.setattr(service, "create_event", fail)
+    with connect() as connection:
+        connection.execute(
+            "UPDATE calendar_action_outbox SET max_attempts = 1 WHERE job_id = ?",
+            (job.job_id,),
+        )
+    processor = CalendarOutboxProcessor(
+        outbox=outbox,
+        service=service,
+        worker_id="worker",
+    )
+
+    with pytest.raises(CalendarMCPError):
+        await processor.process_job(job.job_id)
+
+    stored = await outbox.get(job.job_id)
+    assert stored is not None
+    assert stored.status == "dead_letter"
+    health = await outbox.health()
+    assert health.dead_letter == 1

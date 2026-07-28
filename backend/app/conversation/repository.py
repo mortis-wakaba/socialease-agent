@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from datetime import UTC, datetime
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 import json
 import sqlite3
 from typing import Protocol
@@ -24,7 +26,6 @@ from app.models_conversation import (
     ConversationEventPayload,
     ConversationEventRole,
     ConversationEventType,
-    ConversationImportSnapshot,
     ConversationPage,
     ConversationStatus,
     ModuleProposal,
@@ -44,10 +45,31 @@ class ConversationIdempotencyError(RuntimeError):
     """Raised when an idempotency key is reused for different content."""
 
 
+@dataclass(frozen=True)
+class ConversationCommandClaim:
+    """Result of atomically claiming one conversation write command."""
+
+    acquired: bool
+    completed_result: str | None = None
+
+
+@dataclass(frozen=True)
+class ModuleStartJob:
+    """Lease-owned module startup reconciliation job."""
+
+    module_run_id: str
+    conversation_id: str
+    user_id: str
+    proposal_id: str
+    attempt_count: int
+    max_attempts: int
+    lease_owner: str
+
+
 class ConversationRepository(Protocol):
     """Persistence contract for owner-scoped conversation timelines."""
 
-    def create(
+    async def create(
         self,
         *,
         user_id: str,
@@ -55,18 +77,13 @@ class ConversationRepository(Protocol):
         history_notice_version: str = HISTORY_NOTICE_VERSION,
     ) -> Conversation: ...
 
-    def import_snapshot(
-        self,
-        snapshot: ConversationImportSnapshot,
-    ) -> Conversation: ...
-
-    def get_for_user(
+    async def get_for_user(
         self,
         conversation_id: str,
         user_id: str,
     ) -> Conversation | None: ...
 
-    def list_for_user(
+    async def list_for_user(
         self,
         user_id: str,
         *,
@@ -74,7 +91,7 @@ class ConversationRepository(Protocol):
         limit: int = 20,
     ) -> ConversationPage: ...
 
-    def append_event(
+    async def append_event(
         self,
         *,
         conversation_id: str,
@@ -88,7 +105,7 @@ class ConversationRepository(Protocol):
         parent_module_run_id: str | None = None,
     ) -> ConversationEvent: ...
 
-    def advance_module_run_version(
+    async def advance_module_run_version(
         self,
         *,
         module_run_id: str,
@@ -97,7 +114,7 @@ class ConversationRepository(Protocol):
         expected_version: int,
     ) -> ModuleRun: ...
 
-    def list_events(
+    async def list_events(
         self,
         *,
         conversation_id: str,
@@ -106,7 +123,7 @@ class ConversationRepository(Protocol):
         limit: int = 50,
     ) -> ConversationEventPage: ...
 
-    def list_recent_events(
+    async def list_recent_events(
         self,
         *,
         conversation_id: str,
@@ -114,7 +131,7 @@ class ConversationRepository(Protocol):
         limit: int = 64,
     ) -> list[ConversationEvent]: ...
 
-    def get_event_by_idempotency(
+    async def get_event_by_idempotency(
         self,
         *,
         conversation_id: str,
@@ -122,28 +139,72 @@ class ConversationRepository(Protocol):
         idempotency_key: str,
     ) -> ConversationEvent | None: ...
 
-    def get_compact_summary(
+    async def claim_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ConversationCommandClaim: ...
+
+    async def complete_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        result: str,
+    ) -> None: ...
+
+    async def get_compact_summary(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> ConversationCompactSummary | None: ...
 
-    def save_compact_summary(
+    async def save_compact_summary(
         self,
         summary: ConversationCompactSummary,
         *,
         expected_version: int | None,
     ) -> ConversationCompactSummary: ...
 
-    def list_module_stack(
+    async def list_module_stack(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> list[ModuleRun]: ...
 
-    def get_module_run_for_user(
+    def module_start_transaction(self): ...
+
+    async def begin_module_start(
+        self,
+        *,
+        proposal: ModuleProposal,
+        run: ModuleRun,
+        parent: ModuleRun | None,
+    ) -> ModuleRun: ...
+
+    async def claim_module_start(self, *, module_run_id: str) -> bool: ...
+
+    async def complete_module_start(self, *, module_run_id: str) -> None: ...
+
+    async def retry_module_start(
+        self, *, module_run_id: str, error_code: str
+    ) -> None: ...
+
+    async def claim_due_module_starts(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[ModuleStartJob]: ...
+
+    async def get_module_run_for_user(
         self,
         *,
         module_run_id: str,
@@ -151,14 +212,14 @@ class ConversationRepository(Protocol):
         user_id: str,
     ) -> ModuleRun | None: ...
 
-    def list_all_module_runs(
+    async def list_all_module_runs(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> list[ModuleRun]: ...
 
-    def get_conversation_for_domain_session(
+    async def get_conversation_for_domain_session(
         self,
         *,
         user_id: str,
@@ -166,14 +227,14 @@ class ConversationRepository(Protocol):
         domain_session_id: str,
     ) -> Conversation | None: ...
 
-    def list_proposals(
+    async def list_proposals(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> list[ModuleProposal]: ...
 
-    def delete_for_user(
+    async def delete_for_user(
         self,
         *,
         conversation_id: str,
@@ -192,7 +253,12 @@ class SQLiteConversationRepository:
         initialize_database()
         self._protector = protector or configured_content_protector()
 
-    def create(
+    @asynccontextmanager
+    async def module_start_transaction(self):
+        """Keep the common coordinator contract for the local demo adapter."""
+        yield
+
+    async def create(
         self,
         *,
         user_id: str,
@@ -219,77 +285,7 @@ class SQLiteConversationRepository:
             )
         return conversation
 
-    def import_snapshot(
-        self,
-        snapshot: ConversationImportSnapshot,
-    ) -> Conversation:
-        """Atomically insert one deterministic, read-only legacy timeline."""
-        conversation = snapshot.conversation
-        protected_events = [
-            (
-                event,
-                self._protector.protect(
-                    event.content,
-                    associated_data=_event_associated_data(
-                        event.event_id,
-                        event.conversation_id,
-                        event.user_id,
-                        event.sequence_no,
-                    ),
-                ),
-            )
-            for event in snapshot.events
-        ]
-        connection = connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            result = connection.execute(
-                """INSERT OR IGNORE INTO conversations
-                (conversation_id, user_id, title, status, active_module_depth,
-                 version, history_notice_version, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                _conversation_values(conversation),
-            )
-            if result.rowcount == 0:
-                row = connection.execute(
-                    """SELECT * FROM conversations
-                    WHERE conversation_id = ? AND user_id = ?""",
-                    (conversation.conversation_id, conversation.user_id),
-                ).fetchone()
-                connection.commit()
-                if row is None:
-                    raise ConversationConcurrencyError(
-                        "legacy import id belongs to another owner"
-                    )
-                return _conversation_from_row(row)
-            for event, protected in protected_events:
-                connection.execute(
-                    """INSERT INTO conversation_events
-                    (event_id, conversation_id, user_id, sequence_no, event_type,
-                     role, content_plaintext, content_ciphertext, content_nonce,
-                     content_key_version, structured_payload, module_run_id,
-                     parent_module_run_id, idempotency_key, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    _event_values(event, protected),
-                )
-            for run in snapshot.module_runs:
-                connection.execute(
-                    """INSERT INTO conversation_module_runs
-                    (module_run_id, conversation_id, user_id, module_type,
-                     parent_module_run_id, depth, status, domain_session_id,
-                     version, payload, started_at, ended_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    _module_run_values(run),
-                )
-            connection.commit()
-            return conversation
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
-
-    def get_for_user(
+    async def get_for_user(
         self,
         conversation_id: str,
         user_id: str,
@@ -307,7 +303,127 @@ class SQLiteConversationRepository:
             ).fetchone()
         return _conversation_from_row(row) if row else None
 
-    def list_for_user(
+    async def claim_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ConversationCommandClaim:
+        """Atomically acquire one logical command or return its saved result."""
+        now = datetime.now(UTC).isoformat()
+        connection = connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            owner = connection.execute(
+                """SELECT 1 FROM conversations
+                WHERE conversation_id = ? AND user_id = ? AND status != ?""",
+                (
+                    conversation_id,
+                    user_id,
+                    ConversationStatus.DELETED.value,
+                ),
+            ).fetchone()
+            if owner is None:
+                raise LookupError("conversation not found")
+            inserted = connection.execute(
+                """INSERT OR IGNORE INTO conversation_commands
+                (conversation_id, user_id, idempotency_key, request_hash,
+                 status, created_at)
+                VALUES (?, ?, ?, ?, 'processing', ?)""",
+                (
+                    conversation_id,
+                    user_id,
+                    idempotency_key,
+                    request_hash,
+                    now,
+                ),
+            )
+            if inserted.rowcount == 1:
+                connection.commit()
+                return ConversationCommandClaim(acquired=True)
+            row = connection.execute(
+                """SELECT * FROM conversation_commands
+                WHERE conversation_id = ? AND idempotency_key = ?""",
+                (conversation_id, idempotency_key),
+            ).fetchone()
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        if row is None or row["user_id"] != user_id:
+            raise ConversationIdempotencyError(
+                "idempotency key belongs to another command"
+            )
+        if row["request_hash"] != request_hash:
+            raise ConversationIdempotencyError(
+                "idempotency key was reused with different input"
+            )
+        if row["status"] != "completed":
+            return ConversationCommandClaim(acquired=False)
+        result = self._protector.recover(
+            ProtectedContent(
+                plaintext=row["result_plaintext"],
+                ciphertext=row["result_ciphertext"],
+                nonce=row["result_nonce"],
+                key_version=row["result_key_version"],
+            ),
+            associated_data=_command_associated_data(
+                conversation_id,
+                user_id,
+                idempotency_key,
+            ),
+        )
+        return ConversationCommandClaim(
+            acquired=False,
+            completed_result=result,
+        )
+
+    async def complete_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        result: str,
+    ) -> None:
+        """Persist the final encrypted-capable result exactly once."""
+        protected = self._protector.protect(
+            result,
+            associated_data=_command_associated_data(
+                conversation_id,
+                user_id,
+                idempotency_key,
+            ),
+        )
+        with connect() as connection:
+            updated = connection.execute(
+                """UPDATE conversation_commands
+                SET status = 'completed', result_plaintext = ?,
+                    result_ciphertext = ?, result_nonce = ?,
+                    result_key_version = ?, completed_at = ?
+                WHERE conversation_id = ? AND user_id = ?
+                  AND idempotency_key = ? AND status = 'processing'""",
+                (
+                    protected.plaintext,
+                    protected.ciphertext,
+                    protected.nonce,
+                    protected.key_version,
+                    datetime.now(UTC).isoformat(),
+                    conversation_id,
+                    user_id,
+                    idempotency_key,
+                ),
+            )
+        if updated.rowcount != 1:
+            raise ConversationConcurrencyError(
+                "conversation command is no longer claimable"
+            )
+
+    async def list_for_user(
         self,
         user_id: str,
         *,
@@ -353,7 +469,7 @@ class SQLiteConversationRepository:
             )
         return ConversationPage(items=items, next_cursor=next_cursor)
 
-    def update_metadata(
+    async def update_metadata(
         self,
         *,
         conversation_id: str,
@@ -383,13 +499,13 @@ class SQLiteConversationRepository:
                 [*parameters, ConversationStatus.DELETED.value],
             )
         if result.rowcount == 0:
-            current = self.get_for_user(conversation_id, user_id)
+            current = await self.get_for_user(conversation_id, user_id)
             if current is None:
                 return None
             raise ConversationConcurrencyError("conversation version changed")
-        return self.get_for_user(conversation_id, user_id)
+        return await self.get_for_user(conversation_id, user_id)
 
-    def append_event(
+    async def append_event(
         self,
         *,
         conversation_id: str,
@@ -490,7 +606,7 @@ class SQLiteConversationRepository:
         finally:
             connection.close()
 
-    def list_events(
+    async def list_events(
         self,
         *,
         conversation_id: str,
@@ -530,7 +646,7 @@ class SQLiteConversationRepository:
         )
         return ConversationEventPage(items=items, next_cursor=next_cursor)
 
-    def list_recent_events(
+    async def list_recent_events(
         self,
         *,
         conversation_id: str,
@@ -557,7 +673,7 @@ class SQLiteConversationRepository:
             ).fetchall()
         return [self._event_from_row(row) for row in reversed(rows)]
 
-    def get_event_by_idempotency(
+    async def get_event_by_idempotency(
         self,
         *,
         conversation_id: str,
@@ -583,7 +699,7 @@ class SQLiteConversationRepository:
             ).fetchone()
         return self._event_from_row(row) if row else None
 
-    def get_compact_summary(
+    async def get_compact_summary(
         self,
         *,
         conversation_id: str,
@@ -611,7 +727,7 @@ class SQLiteConversationRepository:
             else None
         )
 
-    def save_compact_summary(
+    async def save_compact_summary(
         self,
         summary: ConversationCompactSummary,
         *,
@@ -667,7 +783,7 @@ class SQLiteConversationRepository:
             raise ConversationConcurrencyError("conversation summary state changed")
         return summary
 
-    def save_proposal(self, proposal: ModuleProposal) -> ModuleProposal:
+    async def save_proposal(self, proposal: ModuleProposal) -> ModuleProposal:
         """Persist a validated proposal, deduplicated by request hash."""
         with connect() as connection:
             try:
@@ -698,7 +814,7 @@ class SQLiteConversationRepository:
                     ),
                 )
             except sqlite3.IntegrityError:
-                existing = self.get_proposal_by_request(
+                existing = await self.get_proposal_by_request(
                     conversation_id=proposal.conversation_id,
                     user_id=proposal.user_id,
                     request_hash=proposal.request_hash,
@@ -706,7 +822,7 @@ class SQLiteConversationRepository:
                 if existing is not None:
                     return existing
                 raise
-        saved = self.get_proposal_for_user(
+        saved = await self.get_proposal_for_user(
             proposal_id=proposal.proposal_id,
             conversation_id=proposal.conversation_id,
             user_id=proposal.user_id,
@@ -715,7 +831,7 @@ class SQLiteConversationRepository:
             raise LookupError("active conversation not found")
         return saved
 
-    def get_proposal_for_user(
+    async def get_proposal_for_user(
         self,
         *,
         proposal_id: str,
@@ -731,7 +847,7 @@ class SQLiteConversationRepository:
             ).fetchone()
         return ModuleProposal.model_validate_json(row["payload"]) if row else None
 
-    def get_proposal_by_request(
+    async def get_proposal_by_request(
         self,
         *,
         conversation_id: str,
@@ -747,7 +863,7 @@ class SQLiteConversationRepository:
             ).fetchone()
         return ModuleProposal.model_validate_json(row["payload"]) if row else None
 
-    def transition_proposal(
+    async def transition_proposal(
         self,
         *,
         proposal_id: str,
@@ -757,7 +873,7 @@ class SQLiteConversationRepository:
         target_status: ModuleProposalStatus,
     ) -> ModuleProposal | None:
         """Atomically consume a pending proposal decision."""
-        current = self.get_proposal_for_user(
+        current = await self.get_proposal_for_user(
             proposal_id=proposal_id,
             conversation_id=conversation_id,
             user_id=user_id,
@@ -784,7 +900,7 @@ class SQLiteConversationRepository:
             raise ConversationConcurrencyError("module proposal state changed")
         return updated
 
-    def create_module_run(self, run: ModuleRun) -> ModuleRun:
+    async def create_module_run(self, run: ModuleRun) -> ModuleRun:
         """Persist a new module frame inside its owner conversation."""
         with connect() as connection:
             result = connection.execute(
@@ -819,7 +935,234 @@ class SQLiteConversationRepository:
             raise LookupError("active conversation not found")
         return run
 
-    def list_module_stack(
+    async def begin_module_start(
+        self,
+        *,
+        proposal: ModuleProposal,
+        run: ModuleRun,
+        parent: ModuleRun | None,
+    ) -> ModuleRun:
+        """Atomically consume a proposal, reserve its frame, and enqueue startup."""
+        accepted = proposal.model_copy(
+            update={"status": ModuleProposalStatus.ACCEPTED}
+        )
+        now = datetime.now(UTC)
+        with connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            proposal_result = connection.execute(
+                """UPDATE conversation_module_proposals
+                SET status = ?, payload = ?
+                WHERE proposal_id = ? AND conversation_id = ? AND user_id = ?
+                  AND status = ?""",
+                (
+                    ModuleProposalStatus.ACCEPTED.value,
+                    accepted.model_dump_json(),
+                    proposal.proposal_id,
+                    proposal.conversation_id,
+                    proposal.user_id,
+                    ModuleProposalStatus.PENDING.value,
+                ),
+            )
+            if proposal_result.rowcount == 0:
+                raise ConversationConcurrencyError("module proposal state changed")
+            if parent is not None:
+                suspended = parent.model_copy(
+                    update={
+                        "status": ModuleRunStatus.SUSPENDED,
+                        "version": parent.version + 1,
+                    }
+                )
+                parent_result = connection.execute(
+                    """UPDATE conversation_module_runs
+                    SET status = ?, version = ?, payload = ?
+                    WHERE module_run_id = ? AND conversation_id = ? AND user_id = ?
+                      AND status = ? AND version = ?""",
+                    (
+                        ModuleRunStatus.SUSPENDED.value,
+                        suspended.version,
+                        suspended.model_dump_json(),
+                        parent.module_run_id,
+                        parent.conversation_id,
+                        parent.user_id,
+                        ModuleRunStatus.ACTIVE.value,
+                        parent.version,
+                    ),
+                )
+                if parent_result.rowcount == 0:
+                    raise ConversationConcurrencyError("parent module state changed")
+            connection.execute(
+                """INSERT INTO conversation_module_runs
+                (module_run_id, conversation_id, user_id, module_type,
+                 parent_module_run_id, depth, status, domain_session_id,
+                 version, payload, started_at, ended_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run.module_run_id,
+                    run.conversation_id,
+                    run.user_id,
+                    run.module_type.value,
+                    run.parent_module_run_id,
+                    run.depth,
+                    run.status.value,
+                    run.domain_session_id,
+                    run.version,
+                    run.model_dump_json(),
+                    run.started_at.isoformat(),
+                    None,
+                ),
+            )
+            conversation_result = connection.execute(
+                """UPDATE conversations
+                SET active_module_depth = ?, version = version + 1, updated_at = ?
+                WHERE conversation_id = ? AND user_id = ? AND status = ?""",
+                (
+                    run.depth,
+                    now.isoformat(),
+                    run.conversation_id,
+                    run.user_id,
+                    ConversationStatus.ACTIVE.value,
+                ),
+            )
+            if conversation_result.rowcount == 0:
+                raise LookupError("active conversation not found")
+            connection.execute(
+                """INSERT INTO conversation_module_start_outbox
+                (module_run_id, conversation_id, user_id, proposal_id, status,
+                 attempt_count, next_attempt_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)""",
+                (
+                    run.module_run_id,
+                    run.conversation_id,
+                    run.user_id,
+                    proposal.proposal_id,
+                    now.isoformat(),
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+        return run
+
+    async def claim_module_start(self, *, module_run_id: str) -> bool:
+        """Claim a pending/recoverable module startup."""
+        now = datetime.now(UTC)
+        with connect() as connection:
+            result = connection.execute(
+                """UPDATE conversation_module_start_outbox
+                SET status = 'processing', attempt_count = attempt_count + 1,
+                    lease_owner = ?, lease_expires_at = ?, updated_at = ?
+                WHERE module_run_id = ?
+                  AND (
+                    status = 'pending'
+                    OR (status = 'processing' AND lease_expires_at <= ?)
+                  )""",
+                (
+                    f"request:{uuid4().hex}",
+                    (now + timedelta(seconds=60)).isoformat(),
+                    now.isoformat(),
+                    module_run_id,
+                    now.isoformat(),
+                ),
+            )
+        return result.rowcount == 1
+
+    async def claim_due_module_starts(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[ModuleStartJob]:
+        """Lease due reconciliation jobs in the local demo database."""
+        now = datetime.now(UTC)
+        lease_until = now + timedelta(seconds=max(1, lease_seconds))
+        jobs: list[ModuleStartJob] = []
+        with connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """SELECT module_run_id, conversation_id, user_id, proposal_id,
+                          attempt_count, max_attempts
+                FROM conversation_module_start_outbox
+                WHERE (
+                    (status = 'pending' AND
+                     COALESCE(next_attempt_at, updated_at) <= ?)
+                    OR (status = 'processing' AND lease_expires_at <= ?)
+                )
+                ORDER BY COALESCE(next_attempt_at, updated_at), created_at
+                LIMIT ?""",
+                (now.isoformat(), now.isoformat(), max(1, min(limit, 100))),
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    """UPDATE conversation_module_start_outbox
+                    SET status = 'processing', attempt_count = attempt_count + 1,
+                        lease_owner = ?, lease_expires_at = ?, updated_at = ?
+                    WHERE module_run_id = ?""",
+                    (
+                        worker_id,
+                        lease_until.isoformat(),
+                        now.isoformat(),
+                        row["module_run_id"],
+                    ),
+                )
+                if row["proposal_id"]:
+                    jobs.append(
+                        ModuleStartJob(
+                            module_run_id=row["module_run_id"],
+                            conversation_id=row["conversation_id"],
+                            user_id=row["user_id"],
+                            proposal_id=row["proposal_id"],
+                            attempt_count=int(row["attempt_count"]) + 1,
+                            max_attempts=int(row["max_attempts"]),
+                            lease_owner=worker_id,
+                        )
+                    )
+        return jobs
+
+    async def complete_module_start(self, *, module_run_id: str) -> None:
+        """Mark a module startup side effect reconciled."""
+        with connect() as connection:
+            connection.execute(
+                """UPDATE conversation_module_start_outbox
+                SET status = 'completed', last_error_code = NULL,
+                    lease_owner = NULL, lease_expires_at = NULL,
+                    completed_at = ?, updated_at = ?
+                WHERE module_run_id = ?""",
+                (
+                    datetime.now(UTC).isoformat(),
+                    datetime.now(UTC).isoformat(),
+                    module_run_id,
+                ),
+            )
+
+    async def retry_module_start(
+        self, *, module_run_id: str, error_code: str
+    ) -> None:
+        """Return a failed startup to the replay queue without storing details."""
+        with connect() as connection:
+            row = connection.execute(
+                """SELECT attempt_count FROM conversation_module_start_outbox
+                WHERE module_run_id = ?""",
+                (module_run_id,),
+            ).fetchone()
+            if row is None:
+                return
+            attempt = int(row["attempt_count"])
+            now = datetime.now(UTC)
+            connection.execute(
+                """UPDATE conversation_module_start_outbox
+                SET status = 'pending', last_error_code = ?,
+                    next_attempt_at = ?, lease_owner = NULL,
+                    lease_expires_at = NULL, updated_at = ?
+                WHERE module_run_id = ?""",
+                (
+                    error_code[:64],
+                    (now + timedelta(seconds=min(300, 2 ** max(0, attempt - 1)))).isoformat(),
+                    now.isoformat(),
+                    module_run_id,
+                ),
+            )
+
+    async def list_module_stack(
         self,
         *,
         conversation_id: str,
@@ -841,7 +1184,7 @@ class SQLiteConversationRepository:
             ).fetchall()
         return [ModuleRun.model_validate_json(row["payload"]) for row in rows]
 
-    def get_module_run_for_user(
+    async def get_module_run_for_user(
         self,
         *,
         module_run_id: str,
@@ -857,7 +1200,7 @@ class SQLiteConversationRepository:
             ).fetchone()
         return ModuleRun.model_validate_json(row["payload"]) if row else None
 
-    def list_all_module_runs(
+    async def list_all_module_runs(
         self,
         *,
         conversation_id: str,
@@ -873,7 +1216,7 @@ class SQLiteConversationRepository:
             ).fetchall()
         return [ModuleRun.model_validate_json(row["payload"]) for row in rows]
 
-    def get_conversation_for_domain_session(
+    async def get_conversation_for_domain_session(
         self,
         *,
         user_id: str,
@@ -893,7 +1236,7 @@ class SQLiteConversationRepository:
             ).fetchone()
         return _conversation_from_row(row) if row else None
 
-    def list_proposals(
+    async def list_proposals(
         self,
         *,
         conversation_id: str,
@@ -911,7 +1254,7 @@ class SQLiteConversationRepository:
             ModuleProposal.model_validate_json(row["payload"]) for row in rows
         ]
 
-    def delete_for_user(
+    async def delete_for_user(
         self,
         *,
         conversation_id: str,
@@ -973,6 +1316,12 @@ class SQLiteConversationRepository:
                 "compact_summaries": connection.execute(
                     """SELECT COUNT(*) AS count
                     FROM conversation_context_summaries
+                    WHERE conversation_id = ? AND user_id = ?""",
+                    (conversation_id, user_id),
+                ).fetchone()["count"],
+                "commands": connection.execute(
+                    """SELECT COUNT(*) AS count
+                    FROM conversation_commands
                     WHERE conversation_id = ? AND user_id = ?""",
                     (conversation_id, user_id),
                 ).fetchone()["count"],
@@ -1050,13 +1399,13 @@ class SQLiteConversationRepository:
         finally:
             connection.close()
 
-    def delete_all_for_user(self, *, user_id: str) -> dict[str, int]:
+    async def delete_all_for_user(self, *, user_id: str) -> dict[str, int]:
         """Delete all conversations by repeatedly applying scoped deletion."""
-        page = self.list_for_user(user_id, limit=100)
+        page = await self.list_for_user(user_id, limit=100)
         totals: dict[str, int] = {}
         while True:
             for conversation in page.items:
-                counts = self.delete_for_user(
+                counts = await self.delete_for_user(
                     conversation_id=conversation.conversation_id,
                     user_id=user_id,
                 )
@@ -1064,14 +1413,14 @@ class SQLiteConversationRepository:
                     totals[key] = totals.get(key, 0) + value
             if page.next_cursor is None:
                 break
-            page = self.list_for_user(
+            page = await self.list_for_user(
                 user_id,
                 cursor=page.next_cursor,
                 limit=100,
             )
         return totals
 
-    def update_module_domain_session(
+    async def update_module_domain_session(
         self,
         *,
         module_run_id: str,
@@ -1081,7 +1430,7 @@ class SQLiteConversationRepository:
         domain_session_id: str,
     ) -> ModuleRun:
         """Attach a lazily created domain session with optimistic locking."""
-        current = self.get_module_run_for_user(
+        current = await self.get_module_run_for_user(
             module_run_id=module_run_id,
             conversation_id=conversation_id,
             user_id=user_id,
@@ -1114,7 +1463,7 @@ class SQLiteConversationRepository:
             raise ConversationConcurrencyError("module run state changed")
         return updated
 
-    def advance_module_run_version(
+    async def advance_module_run_version(
         self,
         *,
         module_run_id: str,
@@ -1123,7 +1472,7 @@ class SQLiteConversationRepository:
         expected_version: int,
     ) -> ModuleRun:
         """Advance the durable overlay watermark after one module action."""
-        current = self.get_module_run_for_user(
+        current = await self.get_module_run_for_user(
             module_run_id=module_run_id,
             conversation_id=conversation_id,
             user_id=user_id,
@@ -1152,7 +1501,7 @@ class SQLiteConversationRepository:
             raise ConversationConcurrencyError("module run state changed")
         return updated
 
-    def transition_module_run(
+    async def transition_module_run(
         self,
         *,
         module_run_id: str,
@@ -1293,23 +1642,6 @@ def _event_values(
     )
 
 
-def _module_run_values(run: ModuleRun) -> tuple[object, ...]:
-    return (
-        run.module_run_id,
-        run.conversation_id,
-        run.user_id,
-        run.module_type.value,
-        run.parent_module_run_id,
-        run.depth,
-        run.status.value,
-        run.domain_session_id,
-        run.version,
-        run.model_dump_json(),
-        run.started_at.isoformat(),
-        run.ended_at.isoformat() if run.ended_at else None,
-    )
-
-
 def _event_associated_data(
     event_id: str,
     conversation_id: str,
@@ -1356,6 +1688,17 @@ def _validated_limit(limit: int, *, maximum: int) -> int:
     if limit < 1 or limit > maximum:
         raise ValueError(f"limit must be between 1 and {maximum}")
     return limit
+
+
+def _command_associated_data(
+    conversation_id: str,
+    user_id: str,
+    idempotency_key: str,
+) -> bytes:
+    """Bind an encrypted command result to its owner and logical command."""
+    return (
+        f"conversation-command:{conversation_id}:{user_id}:{idempotency_key}"
+    ).encode("utf-8")
 
 
 def _encode_conversation_cursor(updated_at: str, conversation_id: str) -> str:

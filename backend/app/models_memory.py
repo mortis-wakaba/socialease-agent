@@ -3,15 +3,15 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models_memory_types import MemoryType
 
 
 MEMORY_PRIVACY_NOTICE = (
-    "练习记录与跨会话个性化分开管理；只有在你开启对应用途后，历史练习摘要或"
-    "低敏感度偏好才会进入未来对话。不保存诊断结论，也不保存危机原文副本。"
-    "你可以随时撤回授权，并导出或删除自己拥有的练习记录。"
+    "对话历史、练习记录与跨会话 Agent Memory 分开管理；只有在你开启对应用途后，"
+    "历史练习摘要或低敏感度偏好才会进入未来对话。不保存诊断结论，也不保存危机"
+    "原文副本。你可以随时撤回授权，并独立导出或删除 Agent Memory。"
 )
 
 
@@ -183,6 +183,14 @@ class UserMemoryDeleteResponse(BaseModel):
     user_id: str
     deleted_counts: dict[str, int] = Field(default_factory=dict)
     profile_after_delete: "UserProfileResponse"
+
+
+class UserMemoryDeleteRequest(BaseModel):
+    """Explicit confirmation for deleting cross-conversation agent memory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_delete: bool
 
 
 class UserProfileResponse(BaseModel):

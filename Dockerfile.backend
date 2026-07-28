@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,8 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app/backend
 
-COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements-runtime.lock ./requirements-runtime.lock
+RUN pip install --no-cache-dir -r requirements-runtime.lock
 
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/migrations ./migrations
@@ -15,7 +15,12 @@ COPY backend/app ./app
 COPY backend/data ./data
 COPY backend/pytest.ini ./pytest.ini
 
-RUN mkdir -p /data
+RUN addgroup --system socialease \
+    && adduser --system --ingroup socialease socialease \
+    && mkdir -p /data \
+    && chown -R socialease:socialease /app/backend /data
+
+USER socialease
 
 EXPOSE 8000
 

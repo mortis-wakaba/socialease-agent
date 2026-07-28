@@ -4,11 +4,12 @@ from datetime import datetime
 import json
 
 from sqlalchemy import text
-from sqlalchemy.engine import Connection, Engine, RowMapping
+from sqlalchemy.engine import RowMapping
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.exc import IntegrityError
 
 from app.db.config import database_settings
-from app.db.postgres.engine import shared_postgres_engine
+from app.db.postgres.engine import shared_postgres_async_engine
 from app.memory.long_term_repository import (
     InvalidMemoryTransitionError,
     MemoryConflictError,
@@ -37,13 +38,13 @@ class PostgresLongTermMemoryRepository:
     def __init__(
         self,
         database_url: str | None = None,
-        engine: Engine | None = None,
+        engine: AsyncEngine | None = None,
     ) -> None:
-        self.engine = engine or shared_postgres_engine(
+        self.engine = engine or shared_postgres_async_engine(
             database_url or database_settings().database_url
         )
 
-    def create_memory(
+    async def create_memory(
         self,
         record: EpisodicMemoryRecord,
         *,
@@ -61,8 +62,8 @@ class PostgresLongTermMemoryRepository:
             created_at=record.created_at,
         )
         try:
-            with self.engine.begin() as connection:
-                connection.execute(
+            async with self.engine.begin() as connection:
+                (await connection.execute(
                     text(
                         """INSERT INTO episodic_memories (
                         memory_id, user_id, memory_type, summary, scenario_type,
@@ -82,39 +83,39 @@ class PostgresLongTermMemoryRepository:
                         )"""
                     ),
                     _postgres_memory_values(record),
-                )
-                _insert_postgres_event(connection, event)
+                ))
+                await _insert_postgres_event(connection, event)
         except IntegrityError as error:
             raise MemoryConflictError(
                 f"episodic memory {record.memory_id!r} already exists"
             ) from error
         return record
 
-    def get_memory(
+    async def get_memory(
         self,
         memory_id: str,
         user_id: str,
     ) -> EpisodicMemoryRecord | None:
         """Return one memory only when both identifier and owner match."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT * FROM episodic_memories
                     WHERE memory_id = :memory_id AND user_id = :user_id"""
                 ),
                 {"memory_id": memory_id, "user_id": user_id},
-            ).mappings().first()
+            )).mappings().first()
         return _memory_from_mapping(row) if row else None
 
-    def get_memory_by_idempotency_key(
+    async def get_memory_by_idempotency_key(
         self,
         *,
         user_id: str,
         idempotency_key: str,
     ) -> EpisodicMemoryRecord | None:
         """Resolve a safely retried write inside the same user scope."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT * FROM episodic_memories
                     WHERE user_id = :user_id
@@ -124,18 +125,18 @@ class PostgresLongTermMemoryRepository:
                     "user_id": user_id,
                     "idempotency_key": idempotency_key,
                 },
-            ).mappings().first()
+            )).mappings().first()
         return _memory_from_mapping(row) if row else None
 
-    def get_memory_by_content_hash(
+    async def get_memory_by_content_hash(
         self,
         *,
         user_id: str,
         content_hash: str,
     ) -> EpisodicMemoryRecord | None:
         """Return one exact-content match, preferring a currently usable record."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT * FROM episodic_memories
                     WHERE user_id = :user_id AND content_hash = :content_hash
@@ -151,10 +152,10 @@ class PostgresLongTermMemoryRepository:
                     LIMIT 1"""
                 ),
                 {"user_id": user_id, "content_hash": content_hash},
-            ).mappings().first()
+            )).mappings().first()
         return _memory_from_mapping(row) if row else None
 
-    def list_memories(
+    async def list_memories(
         self,
         user_id: str,
         *,
@@ -175,8 +176,8 @@ class PostgresLongTermMemoryRepository:
                 names.append(f":{name}")
                 parameters[name] = status.value
             status_clause = f" AND status IN ({', '.join(names)})"
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     f"""SELECT * FROM episodic_memories
                     WHERE user_id = :user_id{status_clause}
@@ -184,10 +185,10 @@ class PostgresLongTermMemoryRepository:
                     LIMIT :limit"""
                 ),
                 parameters,
-            ).mappings().all()
+            )).mappings().all()
         return [_memory_from_mapping(row) for row in rows]
 
-    def search_memory_candidates(
+    async def search_memory_candidates(
         self,
         *,
         user_id: str,
@@ -245,14 +246,14 @@ class PostgresLongTermMemoryRepository:
             "CASE WHEN last_retrieved_at IS NULL THEN 0 ELSE 1 END, "
             "last_retrieved_at ASC LIMIT :limit"
         )
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(query),
                 parameters,
-            ).mappings().all()
+            )).mappings().all()
         return [_memory_from_mapping(row) for row in rows]
 
-    def record_retrieval(
+    async def record_retrieval(
         self,
         *,
         user_id: str,
@@ -264,20 +265,20 @@ class PostgresLongTermMemoryRepository:
         timestamp = _aware_now(retrieved_at)
         unique_ids = tuple(dict.fromkeys(memory_ids))[:3]
         updated_count = 0
-        with self.engine.begin() as connection:
+        async with self.engine.begin() as connection:
             for memory_id in unique_ids:
-                row = connection.execute(
+                row = (await connection.execute(
                     text(
                         """SELECT * FROM episodic_memories
                         WHERE memory_id = :memory_id AND user_id = :user_id
                         FOR UPDATE"""
                     ),
                     {"memory_id": memory_id, "user_id": user_id},
-                ).mappings().first()
+                )).mappings().first()
                 if row is None:
                     continue
                 record = _memory_from_mapping(row)
-                connection.execute(
+                (await connection.execute(
                     text(
                         """UPDATE episodic_memories
                         SET last_retrieved_at = GREATEST(
@@ -291,8 +292,8 @@ class PostgresLongTermMemoryRepository:
                         "memory_id": memory_id,
                         "user_id": user_id,
                     },
-                )
-                _insert_postgres_event(
+                ))
+                await _insert_postgres_event(
                     connection,
                     MemoryEvent(
                         user_id=user_id,
@@ -309,7 +310,7 @@ class PostgresLongTermMemoryRepository:
                 updated_count += 1
         return updated_count
 
-    def transition_memory(
+    async def transition_memory(
         self,
         *,
         memory_id: str,
@@ -321,15 +322,15 @@ class PostgresLongTermMemoryRepository:
     ) -> EpisodicMemoryRecord:
         """Apply one row-locked compare-and-swap lifecycle transition."""
         timestamp = _aware_now(changed_at)
-        with self.engine.begin() as connection:
-            row = connection.execute(
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT * FROM episodic_memories
                     WHERE memory_id = :memory_id AND user_id = :user_id
                     FOR UPDATE"""
                 ),
                 {"memory_id": memory_id, "user_id": user_id},
-            ).mappings().first()
+            )).mappings().first()
             if row is None:
                 raise MemoryNotFoundError("user-scoped episodic memory was not found")
             current = _memory_from_mapping(row)
@@ -342,7 +343,7 @@ class PostgresLongTermMemoryRepository:
                     "version": current.version + 1,
                 }
             )
-            result = connection.execute(
+            result = (await connection.execute(
                 text(
                     """UPDATE episodic_memories
                     SET status = :status, updated_at = :updated_at, version = :version
@@ -358,10 +359,10 @@ class PostgresLongTermMemoryRepository:
                     "user_id": user_id,
                     "expected_version": expected_version,
                 },
-            )
+            ))
             if result.rowcount != 1:
                 raise MemoryConflictError("episodic memory was changed concurrently")
-            _insert_postgres_event(
+            await _insert_postgres_event(
                 connection,
                 _memory_event(
                     record=updated,
@@ -374,7 +375,7 @@ class PostgresLongTermMemoryRepository:
             )
         return updated
 
-    def update_memory_summary(
+    async def update_memory_summary(
         self,
         *,
         memory_id: str,
@@ -389,15 +390,15 @@ class PostgresLongTermMemoryRepository:
         """Update a safe summary with row locking and content-free audit."""
         timestamp = _aware_now(changed_at)
         try:
-            with self.engine.begin() as connection:
-                row = connection.execute(
+            async with self.engine.begin() as connection:
+                row = (await connection.execute(
                     text(
                         """SELECT * FROM episodic_memories
                         WHERE memory_id = :memory_id AND user_id = :user_id
                         FOR UPDATE"""
                     ),
                     {"memory_id": memory_id, "user_id": user_id},
-                ).mappings().first()
+                )).mappings().first()
                 if row is None:
                     raise MemoryNotFoundError(
                         "user-scoped episodic memory was not found"
@@ -413,7 +414,7 @@ class PostgresLongTermMemoryRepository:
                         "version": current.version + 1,
                     }
                 )
-                result = connection.execute(
+                result = (await connection.execute(
                     text(
                         """UPDATE episodic_memories
                         SET summary = :summary, content_hash = :content_hash,
@@ -433,12 +434,12 @@ class PostgresLongTermMemoryRepository:
                         "user_id": user_id,
                         "expected_version": expected_version,
                     },
-                )
+                ))
                 if result.rowcount != 1:
                     raise MemoryConflictError(
                         "episodic memory was changed concurrently"
                     )
-                _insert_postgres_event(
+                await _insert_postgres_event(
                     connection,
                     _memory_event(
                         record=updated,
@@ -455,7 +456,7 @@ class PostgresLongTermMemoryRepository:
             ) from error
         return updated
 
-    def delete_memory(
+    async def delete_memory(
         self,
         *,
         memory_id: str,
@@ -466,15 +467,15 @@ class PostgresLongTermMemoryRepository:
     ) -> None:
         """Physically delete memory content while retaining a content-free event."""
         timestamp = _aware_now(changed_at)
-        with self.engine.begin() as connection:
-            row = connection.execute(
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT * FROM episodic_memories
                     WHERE memory_id = :memory_id AND user_id = :user_id
                     FOR UPDATE"""
                 ),
                 {"memory_id": memory_id, "user_id": user_id},
-            ).mappings().first()
+            )).mappings().first()
             if row is None:
                 raise MemoryNotFoundError("user-scoped episodic memory was not found")
             current = _memory_from_mapping(row)
@@ -487,7 +488,7 @@ class PostgresLongTermMemoryRepository:
                 reason_code=reason_code,
                 created_at=timestamp,
             )
-            result = connection.execute(
+            result = (await connection.execute(
                 text(
                     """DELETE FROM episodic_memories
                     WHERE memory_id = :memory_id
@@ -499,12 +500,12 @@ class PostgresLongTermMemoryRepository:
                     "user_id": user_id,
                     "expected_version": expected_version,
                 },
-            )
+            ))
             if result.rowcount != 1:
                 raise MemoryConflictError("episodic memory was changed concurrently")
-            _insert_postgres_event(connection, event)
+            await _insert_postgres_event(connection, event)
 
-    def save_checkpoint(
+    async def save_checkpoint(
         self,
         checkpoint: PracticeThreadCheckpoint,
         *,
@@ -514,15 +515,15 @@ class PostgresLongTermMemoryRepository:
     ) -> PracticeThreadCheckpoint:
         """Create or row-lock and update a user-scoped checkpoint."""
         timestamp = _aware_now(changed_at or checkpoint.updated_at)
-        with self.engine.begin() as connection:
-            row = connection.execute(
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT * FROM thread_checkpoints
                     WHERE thread_id = :thread_id AND user_id = :user_id
                     FOR UPDATE"""
                 ),
                 {"thread_id": checkpoint.thread_id, "user_id": checkpoint.user_id},
-            ).mappings().first()
+            )).mappings().first()
             current = _checkpoint_from_mapping(row) if row else None
             if current is None:
                 if expected_version is not None or checkpoint.version != 1:
@@ -531,7 +532,7 @@ class PostgresLongTermMemoryRepository:
                     )
                 saved = checkpoint
                 try:
-                    connection.execute(
+                    (await connection.execute(
                         text(
                             """INSERT INTO thread_checkpoints (
                             thread_id, user_id, current_goal, current_stage,
@@ -552,7 +553,7 @@ class PostgresLongTermMemoryRepository:
                             )"""
                         ),
                         _postgres_checkpoint_values(saved),
-                    )
+                    ))
                 except IntegrityError as error:
                     raise MemoryConflictError(
                         f"checkpoint {checkpoint.thread_id!r} already exists"
@@ -571,7 +572,7 @@ class PostgresLongTermMemoryRepository:
                 )
                 values = _postgres_checkpoint_values(saved)
                 values["expected_version"] = expected_version
-                result = connection.execute(
+                result = (await connection.execute(
                     text(
                         """UPDATE thread_checkpoints SET
                         current_goal = :current_goal,
@@ -595,11 +596,11 @@ class PostgresLongTermMemoryRepository:
                         AND version = :expected_version"""
                     ),
                     values,
-                )
+                ))
                 if result.rowcount != 1:
                     raise MemoryConflictError("checkpoint was changed concurrently")
                 from_status = current.status.value
-            _insert_postgres_event(
+            await _insert_postgres_event(
                 connection,
                 MemoryEvent(
                     user_id=saved.user_id,
@@ -615,31 +616,31 @@ class PostgresLongTermMemoryRepository:
             )
         return saved
 
-    def get_checkpoint(
+    async def get_checkpoint(
         self,
         thread_id: str,
         user_id: str,
     ) -> PracticeThreadCheckpoint | None:
         """Return a checkpoint only when both thread and owner match."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT * FROM thread_checkpoints
                     WHERE thread_id = :thread_id AND user_id = :user_id"""
                 ),
                 {"thread_id": thread_id, "user_id": user_id},
-            ).mappings().first()
+            )).mappings().first()
         return _checkpoint_from_mapping(row) if row else None
 
-    def list_checkpoints(
+    async def list_checkpoints(
         self,
         user_id: str,
         *,
         limit: int = 100,
     ) -> list[PracticeThreadCheckpoint]:
         """Return bounded user-owned checkpoints ordered by latest activity."""
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT * FROM thread_checkpoints
                     WHERE user_id = :user_id
@@ -650,10 +651,10 @@ class PostgresLongTermMemoryRepository:
                     "user_id": user_id,
                     "limit": min(max(limit, 1), 500),
                 },
-            ).mappings().all()
+            )).mappings().all()
         return [_checkpoint_from_mapping(row) for row in rows]
 
-    def list_events(
+    async def list_events(
         self,
         *,
         user_id: str,
@@ -670,8 +671,8 @@ class PostgresLongTermMemoryRepository:
         if subject_id is not None:
             subject_clause = " AND subject_id = :subject_id"
             parameters["subject_id"] = subject_id
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     f"""SELECT * FROM memory_events
                     WHERE user_id = :user_id{subject_clause}
@@ -679,7 +680,7 @@ class PostgresLongTermMemoryRepository:
                     LIMIT :limit"""
                 ),
                 parameters,
-            ).mappings().all()
+            )).mappings().all()
         return [_event_from_mapping(row) for row in rows]
 
 
@@ -737,11 +738,11 @@ def _postgres_checkpoint_values(
     }
 
 
-def _insert_postgres_event(
-    connection: Connection,
+async def _insert_postgres_event(
+    connection: AsyncConnection,
     event: MemoryEvent,
 ) -> None:
-    connection.execute(
+    (await connection.execute(
         text(
             """INSERT INTO memory_events (
             event_id, user_id, subject_type, subject_id, event_type,
@@ -763,7 +764,7 @@ def _insert_postgres_event(
             "subject_version": event.subject_version,
             "created_at": event.created_at,
         },
-    )
+    ))
 
 
 def _memory_from_mapping(row: RowMapping) -> EpisodicMemoryRecord:

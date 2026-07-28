@@ -85,7 +85,7 @@ async def get_harness_metrics(
 ) -> HarnessMetricsResponse:
     """Return lightweight aggregate metrics captured by MetricsHook."""
     require_developer_access(current_user)
-    snapshot = metrics_hook.snapshot()
+    snapshot = await metrics_hook.snapshot()
     return HarnessMetricsResponse(
         window_size=limit,
         total_runs=snapshot.total_runs,

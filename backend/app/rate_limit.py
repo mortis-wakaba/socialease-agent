@@ -94,7 +94,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         decision = self.limiter.check(_rate_limit_key(request))
         if decision.allowed:
             return await call_next(request)
-        record_rate_limit_hit()
+        await record_rate_limit_hit()
         request_id = getattr(request.state, "request_id", None) or request.headers.get(
             REQUEST_ID_HEADER
         ) or str(uuid4())

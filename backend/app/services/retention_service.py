@@ -3,12 +3,13 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from app.db.config import database_settings
 from app.db.engine import connect
 from app.db.factory import repository_factory
 from app.db.providers import DatabaseProvider, resolve_database_provider
+from app.db.postgres.engine import shared_postgres_async_engine
 from app.protocols.service import ProtocolService
 
 
@@ -33,11 +34,15 @@ class RetentionService:
         self.protocol_service = ProtocolService(store=factory.protocol_repository())
         self.intervention_plan_repository = factory.intervention_plan_repository()
 
-    def expire_pending_protocols(self, *, now: datetime | None = None) -> int:
+    async def expire_pending_protocols(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> int:
         """Expire pending protocols that are past their expiration timestamp."""
-        return self.protocol_service.expire_pending_protocols(now=now)
+        return await self.protocol_service.expire_pending_protocols(now=now)
 
-    def cancel_abandoned_intervention_plans(
+    async def cancel_abandoned_intervention_plans(
         self,
         *,
         older_than_minutes: int = 60,
@@ -46,12 +51,16 @@ class RetentionService:
         """Cancel pending-consent plans abandoned before the retention cutoff."""
         current = now or datetime.now(timezone.utc)
         cutoff = current - timedelta(minutes=older_than_minutes)
-        return self.intervention_plan_repository.cancel_pending_consent_before(cutoff)
+        return await (
+            self.intervention_plan_repository.cancel_pending_consent_before(
+                cutoff
+            )
+        )
 
-    def delete_trace_records_before(self, cutoff: datetime) -> int:
+    async def delete_trace_records_before(self, cutoff: datetime) -> int:
         """Delete trace records older than the retention cutoff."""
         if self.provider == DatabaseProvider.POSTGRES:
-            return self._delete_postgres_rows(
+            return await self._delete_postgres_rows(
                 """DELETE FROM runs
                 WHERE created_at <= :cutoff""",
                 {"cutoff": cutoff},
@@ -63,11 +72,11 @@ class RetentionService:
             )
             return cursor.rowcount
 
-    def delete_terminal_protocols_before(self, cutoff: datetime) -> int:
+    async def delete_terminal_protocols_before(self, cutoff: datetime) -> int:
         """Delete terminal protocol records older than the retention cutoff."""
         terminal_statuses = ("expired", "rejected", "consumed")
         if self.provider == DatabaseProvider.POSTGRES:
-            return self._delete_postgres_rows(
+            return await self._delete_postgres_rows(
                 """DELETE FROM protocols
                 WHERE status IN ('expired', 'rejected', 'consumed')
                   AND updated_at <= :cutoff""",
@@ -81,11 +90,14 @@ class RetentionService:
             )
             return cursor.rowcount
 
-    def delete_terminal_intervention_plans_before(self, cutoff: datetime) -> int:
+    async def delete_terminal_intervention_plans_before(
+        self,
+        cutoff: datetime,
+    ) -> int:
         """Delete terminal intervention plans older than the retention cutoff."""
         terminal_statuses = ("completed", "cancelled", "blocked")
         if self.provider == DatabaseProvider.POSTGRES:
-            return self._delete_postgres_rows(
+            return await self._delete_postgres_rows(
                 """DELETE FROM intervention_plans
                 WHERE status IN ('completed', 'cancelled', 'blocked')
                   AND updated_at <= :cutoff""",
@@ -99,7 +111,7 @@ class RetentionService:
             )
             return cursor.rowcount
 
-    def run_once(
+    async def run_once(
         self,
         *,
         now: datetime | None = None,
@@ -112,27 +124,30 @@ class RetentionService:
         trace_cutoff = current - timedelta(days=trace_retention_days)
         protocol_cutoff = current - timedelta(days=protocol_retention_days)
         return RetentionResult(
-            expired_protocols=self.expire_pending_protocols(now=current),
-            cancelled_intervention_plans=self.cancel_abandoned_intervention_plans(
+            expired_protocols=await self.expire_pending_protocols(now=current),
+            cancelled_intervention_plans=await self.cancel_abandoned_intervention_plans(
                 older_than_minutes=abandoned_plan_minutes,
                 now=current,
             ),
-            deleted_raw_traces=self.delete_trace_records_before(trace_cutoff),
-            deleted_protocol_records=self.delete_terminal_protocols_before(protocol_cutoff),
-            deleted_intervention_plans=self.delete_terminal_intervention_plans_before(
+            deleted_raw_traces=await self.delete_trace_records_before(trace_cutoff),
+            deleted_protocol_records=await self.delete_terminal_protocols_before(
+                protocol_cutoff
+            ),
+            deleted_intervention_plans=await self.delete_terminal_intervention_plans_before(
                 protocol_cutoff
             ),
         )
 
-    def _delete_postgres_rows(self, statement: str, params: dict[str, object]) -> int:
+    async def _delete_postgres_rows(
+        self,
+        statement: str,
+        params: dict[str, object],
+    ) -> int:
         """Delete PostgreSQL rows and return affected count."""
-        engine = create_engine(self.database_url, pool_pre_ping=True)
-        try:
-            with engine.begin() as connection:
-                result = connection.execute(text(statement), params)
-                return result.rowcount or 0
-        finally:
-            engine.dispose()
+        engine = shared_postgres_async_engine(self.database_url)
+        async with engine.begin() as connection:
+            result = await connection.execute(text(statement), params)
+            return result.rowcount or 0
 
 
 retention_service = RetentionService()

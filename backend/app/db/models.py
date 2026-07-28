@@ -48,6 +48,28 @@ CREATE TABLE IF NOT EXISTS protocols (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS calendar_action_outbox (
+    job_id TEXT PRIMARY KEY,
+    protocol_id TEXT UNIQUE,
+    user_id TEXT NOT NULL,
+    action_type TEXT NOT NULL CHECK (action_type IN ('create', 'update', 'delete')),
+    request_hash TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    result TEXT,
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'processing', 'completed', 'dead_letter')
+    ),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 8 CHECK (max_attempts > 0),
+    next_attempt_at TEXT NOT NULL,
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    last_error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT
+);
 CREATE TABLE IF NOT EXISTS intervention_plans (
     plan_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -245,6 +267,54 @@ CREATE TABLE IF NOT EXISTS conversation_events (
             AND content_nonce IS NOT NULL AND content_key_version IS NOT NULL)
     )
 );
+CREATE TABLE IF NOT EXISTS conversation_commands (
+    conversation_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result_plaintext TEXT,
+    result_ciphertext BLOB,
+    result_nonce BLOB,
+    result_key_version TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    PRIMARY KEY(conversation_id, idempotency_key),
+    FOREIGN KEY(conversation_id) REFERENCES conversations(conversation_id)
+        ON DELETE CASCADE,
+    CHECK (status IN ('processing', 'completed')),
+    CHECK (
+        (status = 'processing' AND result_plaintext IS NULL
+            AND result_ciphertext IS NULL AND result_nonce IS NULL
+            AND result_key_version IS NULL AND completed_at IS NULL)
+        OR
+        (status = 'completed' AND completed_at IS NOT NULL AND (
+            (result_plaintext IS NOT NULL AND result_ciphertext IS NULL
+                AND result_nonce IS NULL AND result_key_version IS NULL)
+            OR
+            (result_plaintext IS NULL AND result_ciphertext IS NOT NULL
+                AND result_nonce IS NOT NULL AND result_key_version IS NOT NULL)
+        ))
+    )
+);
+
+CREATE TABLE IF NOT EXISTS conversation_module_start_outbox (
+    module_run_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    proposal_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'processing', 'completed', 'dead_letter')),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 8 CHECK(max_attempts > 0),
+    last_error_code TEXT,
+    next_attempt_at TEXT NOT NULL,
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(conversation_id) REFERENCES conversations(conversation_id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS conversation_module_proposals (
     proposal_id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
@@ -344,6 +414,16 @@ CREATE INDEX IF NOT EXISTS idx_conversations_user_updated
 ON conversations(user_id, updated_at DESC, conversation_id DESC);
 CREATE INDEX IF NOT EXISTS idx_conversation_events_owner_sequence
 ON conversation_events(user_id, conversation_id, sequence_no);
+CREATE INDEX IF NOT EXISTS idx_conversation_commands_owner
+ON conversation_commands(user_id, conversation_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_module_start_outbox_pending
+ON conversation_module_start_outbox(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_action_outbox_due
+ON calendar_action_outbox(status, next_attempt_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_action_outbox_demo_request
+ON calendar_action_outbox(user_id, action_type, request_hash)
+WHERE protocol_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_conversation_module_proposals_owner_status
 ON conversation_module_proposals(user_id, conversation_id, status, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_module_proposals_request

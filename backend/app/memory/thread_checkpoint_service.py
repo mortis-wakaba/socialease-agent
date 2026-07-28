@@ -70,7 +70,7 @@ class ThreadCheckpointService:
         self.restore_ttl = restore_ttl
         self.max_write_attempts = min(max(max_write_attempts, 1), 5)
 
-    def record_roleplay(
+    async def record_roleplay(
         self,
         *,
         user_id: str,
@@ -87,7 +87,7 @@ class ThreadCheckpointService:
         """Create or CAS-update one exact thread without breaking the main flow."""
         timestamp = _as_utc(changed_at or datetime.now(timezone.utc))
         for _attempt in range(self.max_write_attempts):
-            current = self.repository.get_checkpoint(thread_id, user_id)
+            current = await self.repository.get_checkpoint(thread_id, user_id)
             if (
                 current is not None
                 and status not in _ALLOWED_STATUS_TRANSITIONS[current.status]
@@ -133,7 +133,7 @@ class ThreadCheckpointService:
             ):
                 return current
             try:
-                return self.repository.save_checkpoint(
+                return await self.repository.save_checkpoint(
                     candidate,
                     expected_version=current.version if current is not None else None,
                     reason_code=reason_code,
@@ -150,7 +150,7 @@ class ThreadCheckpointService:
         logger.warning("Checkpoint persistence exhausted bounded CAS retries")
         return None
 
-    def restore_roleplay_context(
+    async def restore_roleplay_context(
         self,
         *,
         user_id: str,
@@ -159,10 +159,10 @@ class ThreadCheckpointService:
         now: datetime | None = None,
     ) -> DurableCheckpointContext | None:
         """Return active memory only with consent, exact scope, freshness and budget."""
-        settings = self.settings_repository.get(user_id)
+        settings = await self.settings_repository.get(user_id)
         if not settings.consent_state.consent_to_practice_summary:
             return None
-        checkpoint = self.repository.get_checkpoint(thread_id, user_id)
+        checkpoint = await self.repository.get_checkpoint(thread_id, user_id)
         if checkpoint is None or checkpoint.status not in _RESTORABLE_STATUSES:
             return None
         if checkpoint.current_scenario_id != expected_scenario_id:

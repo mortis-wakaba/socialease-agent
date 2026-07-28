@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import re
+from dataclasses import dataclass
 
 from app.agents.worksheet import WorksheetAgent
 from app.db.factory import repository_factory
@@ -17,6 +18,9 @@ from app.memory.task_state_store import (
     TaskStateStoreUnavailable,
 )
 from app.models import RiskLevel
+from app.models import SafetyResult
+from app.models_knowledge import Citation
+from app.models_llm import LLMUsage
 from app.models_knowledge import KnowledgeBaseType
 from app.models_worksheet import (
     WORKSHEET_DISCLAIMER,
@@ -36,6 +40,21 @@ from app.services.errors import ServiceNotFoundError
 
 
 WORKSHEET_CRISIS_RESPONSE = crisis_escalation_response(paused_activity="自助练习")
+
+
+@dataclass(frozen=True)
+class PreparedWorksheetCreate:
+    """Validated worksheet content prepared without durable state changes."""
+
+    request: WorksheetCreateRequest
+    safety_result: SafetyResult
+    blocked: bool
+    source_message: str | None
+    fields: WorksheetFields | None
+    citations: list[Citation]
+    missing_fields: list[str]
+    followup_questions: list[str]
+    llm_usage: LLMUsage
 
 
 class WorksheetService:
@@ -72,18 +91,50 @@ class WorksheetService:
         request: WorksheetCreateRequest,
         *,
         conversation_context: ConversationPromptContext | None = None,
+        worksheet_id: str | None = None,
     ) -> WorksheetCreateResponse:
         """Create a non-medical self-reflection worksheet from a message."""
-        safety_result = await self.safety_classifier.classify(request.message)
-        if safety_result.risk_level == RiskLevel.CRISIS:
+        prepared = await self.prepare_worksheet(
+            request,
+            conversation_context=conversation_context,
+        )
+        if prepared.blocked:
             return WorksheetCreateResponse(
                 worksheet=None,
-                safety_result=safety_result,
+                safety_result=prepared.safety_result,
                 missing_fields=[],
                 gentle_followup_questions=[],
                 disclaimer=WORKSHEET_DISCLAIMER,
                 blocked=True,
                 response=WORKSHEET_CRISIS_RESPONSE,
+            )
+        response = await self.persist_prepared_worksheet(
+            prepared,
+            worksheet_id=worksheet_id,
+        )
+        if response.worksheet is not None:
+            await self.after_worksheet_commit(response.worksheet)
+        return response
+
+    async def prepare_worksheet(
+        self,
+        request: WorksheetCreateRequest,
+        *,
+        conversation_context: ConversationPromptContext | None = None,
+    ) -> PreparedWorksheetCreate:
+        """Run safety, extraction, retrieval, and redaction before a DB transaction."""
+        safety_result = await self.safety_classifier.classify(request.message)
+        if safety_result.risk_level == RiskLevel.CRISIS:
+            return PreparedWorksheetCreate(
+                request=request,
+                safety_result=safety_result,
+                blocked=True,
+                source_message=None,
+                fields=None,
+                citations=[],
+                missing_fields=[],
+                followup_questions=[],
+                llm_usage=safety_result.llm_usage,
             )
 
         fields, missing_fields, followup_questions, llm_usage = await self.agent.create_fields(
@@ -94,43 +145,71 @@ class WorksheetService:
             query="CBT 风格反思 情境 自动想法 情绪 强度 证据 替代想法 下一步",
             kb_type=KnowledgeBaseType.SOCIAL_SKILLS,
         )
-        worksheet = self.store.create(
-            user_id=request.user_id,
+        return PreparedWorksheetCreate(
+            request=request,
+            safety_result=safety_result,
+            blocked=False,
             source_message=(
                 None
                 if request.source_event_id
-                else persistence_gate.persist_text(
+                else (await persistence_gate.persist_text(
                     user_id=request.user_id,
                     kind=PersistenceKind.WORKSHEET_SOURCE_MESSAGE,
                     text=request.message,
-                ).persisted_text
+                )).persisted_text
             ),
-            source_event_id=request.source_event_id,
-            fields=_persist_worksheet_fields(request.user_id, fields),
+            fields=await _persist_worksheet_fields(request.user_id, fields),
             citations=rag_response.citations,
             missing_fields=missing_fields,
-            gentle_followup_questions=followup_questions,
+            followup_questions=followup_questions,
+            llm_usage=llm_usage,
         )
-        if not worksheet.completed:
-            await self._save_draft(worksheet)
+
+    async def persist_prepared_worksheet(
+        self,
+        prepared: PreparedWorksheetCreate,
+        *,
+        worksheet_id: str | None = None,
+    ) -> WorksheetCreateResponse:
+        """Persist prepared worksheet state in the caller's DB transaction."""
+        if prepared.blocked or prepared.fields is None:
+            raise ValueError("blocked worksheet cannot be persisted")
+        worksheet = await self.store.create(
+            user_id=prepared.request.user_id,
+            source_message=prepared.source_message,
+            source_event_id=prepared.request.source_event_id,
+            fields=prepared.fields,
+            citations=prepared.citations,
+            missing_fields=prepared.missing_fields,
+            gentle_followup_questions=prepared.followup_questions,
+            worksheet_id=worksheet_id,
+        )
         response = "已生成 CBT 风格自助反思练习。你可以把它当作整理社交压力想法的结构化草稿。"
-        if missing_fields:
+        if prepared.missing_fields:
             response = "已先保存草稿，但还有一些信息可以继续补充。"
 
         return WorksheetCreateResponse(
             worksheet=worksheet,
-            safety_result=safety_result,
-            missing_fields=missing_fields,
-            gentle_followup_questions=followup_questions,
+            safety_result=prepared.safety_result,
+            missing_fields=prepared.missing_fields,
+            gentle_followup_questions=prepared.followup_questions,
             disclaimer=WORKSHEET_DISCLAIMER,
             blocked=False,
             response=response,
-            llm_usage=llm_usage,
+            llm_usage=prepared.llm_usage,
         )
 
-    def get_worksheet(self, worksheet_id: str) -> WorksheetRecord:
+    async def after_worksheet_commit(
+        self,
+        worksheet: WorksheetRecord,
+    ) -> None:
+        """Publish the optional Redis draft after the durable worksheet commits."""
+        if not worksheet.completed:
+            await self._save_draft(worksheet)
+
+    async def get_worksheet(self, worksheet_id: str) -> WorksheetRecord:
         """Return a saved worksheet by id."""
-        worksheet = self.store.get(worksheet_id)
+        worksheet = await self.store.get(worksheet_id)
         if worksheet is None:
             raise ServiceNotFoundError("Worksheet not found")
         return worksheet
@@ -142,7 +221,9 @@ class WorksheetService:
         conversation_context: ConversationPromptContext | None = None,
     ) -> WorksheetCreateResponse:
         """Merge one bounded clarification into a user-owned worksheet draft."""
-        worksheet = self.store.get_for_user(request.worksheet_id, request.user_id)
+        worksheet = await self.store.get_for_user(
+            request.worksheet_id, request.user_id
+        )
         if worksheet is None:
             raise ServiceNotFoundError("Worksheet not found")
         safety_result = await self.safety_classifier.classify(request.message)
@@ -177,7 +258,7 @@ class WorksheetService:
         questions = [self.agent.followup_questions[field] for field in missing[:4]]
         updated = worksheet.model_copy(
             update={
-                "fields": _persist_worksheet_fields(request.user_id, merged),
+                "fields": await _persist_worksheet_fields(request.user_id, merged),
                 "missing_fields": missing,
                 "gentle_followup_questions": questions,
                 "updated_at": datetime.now(timezone.utc),
@@ -185,7 +266,7 @@ class WorksheetService:
             },
             deep=True,
         )
-        updated = self.store.save(updated)
+        updated = await self.store.save(updated)
         if updated.completed:
             await self.draft_store.delete(user_id=request.user_id, task_id=request.worksheet_id)
         else:
@@ -264,27 +345,29 @@ class WorksheetService:
 worksheet_service = WorksheetService()
 
 
-def _persist_worksheet_fields(user_id: str, fields: WorksheetFields) -> WorksheetFields:
+async def _persist_worksheet_fields(
+    user_id: str, fields: WorksheetFields
+) -> WorksheetFields:
     """Redact sensitive identifiers from derived worksheet text fields."""
 
-    def safe_text(value: str | None) -> str | None:
+    async def safe_text(value: str | None) -> str | None:
         if value is None:
             return None
-        return persistence_gate.persist_text(
+        return (await persistence_gate.persist_text(
             user_id=user_id,
             kind=PersistenceKind.WORKSHEET_FIELD,
             text=value,
-        ).persisted_text
+        )).persisted_text
 
     return fields.model_copy(
         update={
-            "situation": safe_text(fields.situation),
-            "automatic_thought": safe_text(fields.automatic_thought),
-            "emotion": safe_text(fields.emotion),
-            "evidence_for": safe_text(fields.evidence_for),
-            "evidence_against": safe_text(fields.evidence_against),
-            "alternative_thought": safe_text(fields.alternative_thought),
-            "next_action": safe_text(fields.next_action),
+            "situation": await safe_text(fields.situation),
+            "automatic_thought": await safe_text(fields.automatic_thought),
+            "emotion": await safe_text(fields.emotion),
+            "evidence_for": await safe_text(fields.evidence_for),
+            "evidence_against": await safe_text(fields.evidence_against),
+            "alternative_thought": await safe_text(fields.alternative_thought),
+            "next_action": await safe_text(fields.next_action),
         }
     )
 

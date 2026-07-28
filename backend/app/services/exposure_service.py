@@ -1,17 +1,20 @@
 """Exposure planning service shared by API routes and harness skills."""
 
+from dataclasses import dataclass
+
 from app.agents.exposure import ExposurePlanner
 from app.db.factory import repository_factory
 from app.knowledge.service import KnowledgeService
 from app.memory.exposure_store import ExposureStore
 from app.db.repositories import SessionReviewRepository
-from app.models import RiskLevel
+from app.models import RiskLevel, SafetyResult
 from app.models_knowledge import KnowledgeBaseType
 from app.models_exposure import (
     ExposureCompleteRequest,
     ExposureCompleteResponse,
     ExposurePlanRequest,
     ExposurePlanResponse,
+    ExposureTask,
     UserExposureResponse,
 )
 from app.privacy.persistence_gate import persistence_gate
@@ -27,6 +30,19 @@ from app.services.intervention_plan_service import (
 
 
 EXPOSURE_CRISIS_RESPONSE = crisis_escalation_response(paused_activity="社交练习计划")
+
+
+@dataclass(frozen=True)
+class PreparedExposurePlan:
+    """Validated exposure plan inputs prepared without durable writes."""
+
+    request: ExposurePlanRequest
+    safety_result: SafetyResult
+    blocked: bool
+    target_scenario: str | None
+    previous_attempts: list[str]
+    tasks: list[ExposureTask]
+    used_review_summaries: bool
 
 
 class ExposureService:
@@ -51,66 +67,109 @@ class ExposureService:
         )
         self.intervention_service = intervention_service or intervention_plan_service
 
-    async def create_plan(self, request: ExposurePlanRequest) -> ExposurePlanResponse:
+    async def create_plan(
+        self,
+        request: ExposurePlanRequest,
+        *,
+        plan_id: str | None = None,
+    ) -> ExposurePlanResponse:
         """Create a graded, stoppable social-practice plan."""
+        prepared = await self.prepare_plan(request)
+        if prepared.blocked:
+            return ExposurePlanResponse(
+                plan=None,
+                safety_result=prepared.safety_result,
+                blocked=True,
+                response=EXPOSURE_CRISIS_RESPONSE,
+            )
+        return await self.persist_prepared_plan(prepared, plan_id=plan_id)
+
+    async def prepare_plan(
+        self,
+        request: ExposurePlanRequest,
+    ) -> PreparedExposurePlan:
+        """Run safety, retrieval, redaction, and planning outside a DB transaction."""
         safety_text = " ".join([request.target_scenario, *request.previous_attempts])
         safety_result = await self.safety_classifier.classify(safety_text)
         if safety_result.risk_level == RiskLevel.CRISIS:
-            return ExposurePlanResponse(
-                plan=None,
+            return PreparedExposurePlan(
+                request=request,
                 safety_result=safety_result,
                 blocked=True,
-                response=EXPOSURE_CRISIS_RESPONSE,
+                target_scenario=None,
+                previous_attempts=[],
+                tasks=[],
+                used_review_summaries=False,
             )
 
         rag_response = self.knowledge.query(
             query="分级暴露 社交练习 阶梯 anxiety_before anxiety_after 降低难度 提高难度",
             kb_type=KnowledgeBaseType.SOCIAL_SKILLS,
         )
-        persisted_target_scenario = persistence_gate.persist_text(
+        persisted_target_scenario = (await persistence_gate.persist_text(
             user_id=request.user_id,
             kind=PersistenceKind.EXPOSURE_TARGET_SCENARIO,
             text=request.target_scenario,
-        ).persisted_text
-        persisted_previous_attempts = persistence_gate.persist_texts(
+        )).persisted_text
+        persisted_previous_attempts = await persistence_gate.persist_texts(
             user_id=request.user_id,
             kind=PersistenceKind.EXPOSURE_PREVIOUS_ATTEMPT,
             texts=request.previous_attempts,
         )
-        review_summaries = self._recent_review_summaries(request.user_id)
+        review_summaries = await self._recent_review_summaries(request.user_id)
         tasks = self.planner.create_tasks(
             target_scenario=persisted_target_scenario,
             current_anxiety_level=request.current_anxiety_level,
             previous_attempts=[*persisted_previous_attempts, *review_summaries],
             citations=rag_response.citations,
         )
-        plan = self.store.create_plan(
-            user_id=request.user_id,
+        return PreparedExposurePlan(
+            request=request,
+            safety_result=safety_result,
+            blocked=False,
             target_scenario=persisted_target_scenario,
-            current_anxiety_level=request.current_anxiety_level,
             previous_attempts=persisted_previous_attempts,
             tasks=tasks,
+            used_review_summaries=bool(review_summaries),
         )
-        intervention_plan = self.intervention_service.create_for_exposure_plan(
-            user_id=request.user_id,
+
+    async def persist_prepared_plan(
+        self,
+        prepared: PreparedExposurePlan,
+        *,
+        plan_id: str | None = None,
+    ) -> ExposurePlanResponse:
+        """Persist the exposure and linked intervention plans atomically."""
+        if prepared.blocked or prepared.target_scenario is None:
+            raise ValueError("blocked exposure plan cannot be persisted")
+        plan = await self.store.create_plan(
+            user_id=prepared.request.user_id,
+            target_scenario=prepared.target_scenario,
+            current_anxiety_level=prepared.request.current_anxiety_level,
+            previous_attempts=prepared.previous_attempts,
+            tasks=prepared.tasks,
+            plan_id=plan_id,
+        )
+        intervention_plan = await self.intervention_service.create_for_exposure_plan(
+            user_id=prepared.request.user_id,
             exposure_plan_id=plan.plan_id,
-            intensity=request.current_anxiety_level,
+            intensity=prepared.request.current_anxiety_level,
         )
-        intervention_view = self.intervention_service.get_view_by_id(
-            user_id=request.user_id,
+        intervention_view = await self.intervention_service.get_view_by_id(
+            user_id=prepared.request.user_id,
             plan_id=intervention_plan.plan_id,
         )
         return ExposurePlanResponse(
             plan=plan,
             intervention_plan_id=intervention_plan.plan_id,
             intervention_plan=intervention_view,
-            safety_result=safety_result,
+            safety_result=prepared.safety_result,
             blocked=False,
             response=(
                 "已生成社交练习计划。"
                 + (
                     "已参考最近复盘中的下一步偏好。"
-                    if review_summaries
+                    if prepared.used_review_summaries
                     else ""
                 )
                 + "请把它当作可调整的小步骤安排，"
@@ -120,7 +179,7 @@ class ExposureService:
 
     async def complete_task(self, request: ExposureCompleteRequest) -> ExposureCompleteResponse:
         """Record task feedback and update the recommended next task."""
-        plan = self.store.get_for_user(request.user_id)
+        plan = await self.store.get_for_user(request.user_id)
         if plan is None:
             raise ServiceNotFoundError("Exposure plan not found")
 
@@ -153,13 +212,13 @@ class ExposureService:
             status=request.status,
             anxiety_before=request.anxiety_before,
             anxiety_after=request.anxiety_after,
-            reflection=persistence_gate.persist_text(
+            reflection=(await persistence_gate.persist_text(
                 user_id=request.user_id,
                 kind=PersistenceKind.EXPOSURE_REFLECTION,
                 text=request.reflection,
-            ).persisted_text,
+            )).persisted_text,
         )
-        updated_plan = self.store.update_after_attempt(
+        updated_plan = await self.store.update_after_attempt(
             user_id=request.user_id,
             attempt=attempt,
             recommended_next_task_id=next_task.task_id if next_task else None,
@@ -176,29 +235,37 @@ class ExposureService:
             response="已记录这次社交练习反馈，并根据你的反馈调整下一步建议。",
         )
 
-    def get_user_plan(self, user_id: str) -> UserExposureResponse:
+    async def get_user_plan(self, user_id: str) -> UserExposureResponse:
         """Return one user's active exposure plan and progress."""
-        plan = self.store.get_for_user(user_id)
+        plan = await self.store.get_for_user(user_id)
         return UserExposureResponse(
             user_id=user_id,
             plan=plan,
-            **self._linked_intervention_payload(user_id=user_id, plan_id=plan.plan_id if plan else None),
+            **await self._linked_intervention_payload(
+                user_id=user_id, plan_id=plan.plan_id if plan else None
+            ),
         )
 
-    def get_plan_by_id(self, plan_id: str, user_id: str) -> UserExposureResponse:
+    async def get_plan_by_id(
+        self, plan_id: str, user_id: str
+    ) -> UserExposureResponse:
         """Return one exposure plan by id if it belongs to the user."""
-        plan = self.store.get_by_id_for_user(plan_id=plan_id, user_id=user_id)
+        plan = await self.store.get_by_id_for_user(
+            plan_id=plan_id, user_id=user_id
+        )
         if plan is None:
             raise ServiceNotFoundError("Exposure plan not found")
         return UserExposureResponse(
             user_id=user_id,
             plan=plan,
-            **self._linked_intervention_payload(user_id=user_id, plan_id=plan.plan_id),
+            **await self._linked_intervention_payload(
+                user_id=user_id, plan_id=plan.plan_id
+            ),
         )
 
-    def _recent_review_summaries(self, user_id: str) -> list[str]:
+    async def _recent_review_summaries(self, user_id: str) -> list[str]:
         """Return privacy-safe summaries from recent session reviews."""
-        reviews = self.session_review_repository.list_for_user(user_id, limit=3)
+        reviews = await self.session_review_repository.list_for_user(user_id, limit=3)
         summaries: list[str] = []
         for review in reviews:
             safe_next_step, _ = redact_sensitive_identifiers(review.next_step_summary)
@@ -209,7 +276,7 @@ class ExposureService:
             )
         return summaries
 
-    def _linked_intervention_payload(
+    async def _linked_intervention_payload(
         self,
         *,
         user_id: str,
@@ -218,13 +285,13 @@ class ExposureService:
         """Return the intervention plan linked to one direct exposure plan."""
         if plan_id is None:
             return {"intervention_plan_id": None, "intervention_plan": None}
-        intervention = self.intervention_service.get_for_session(
+        intervention = await self.intervention_service.get_for_session(
             user_id=user_id,
             session_id=plan_id,
         )
         if intervention is None:
             return {"intervention_plan_id": None, "intervention_plan": None}
-        view = self.intervention_service.get_view_by_id(
+        view = await self.intervention_service.get_view_by_id(
             user_id=user_id,
             plan_id=intervention.plan_id,
         )

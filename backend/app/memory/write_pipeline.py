@@ -75,7 +75,7 @@ class MemoryWritePipeline:
         """Process one bounded batch without raising provider/write errors."""
         timestamp = _as_utc(now or datetime.now(timezone.utc))
         occurrence = _as_utc(occurred_at)
-        settings = self.settings_repository.get(user_id)
+        settings = await self.settings_repository.get(user_id)
         if risk_level == RiskLevel.CRISIS:
             return MemoryPipelineResult(status="skipped")
         if not settings.consent_state.consent_to_practice_summary:
@@ -84,7 +84,7 @@ class MemoryWritePipeline:
             return MemoryPipelineResult(status="skipped")
 
         try:
-            existing_memories = self.memory_repository.list_memories(
+            existing_memories = await self.memory_repository.list_memories(
                 user_id,
                 limit=20,
             )
@@ -131,7 +131,7 @@ class MemoryWritePipeline:
             )
             if decision.action == MemoryPolicyAction.REJECT:
                 try:
-                    self.proposal_repository.record_rejection(
+                    await self.proposal_repository.record_rejection(
                         user_id=user_id,
                         proposal_id=proposal.proposal_id,
                         reason_code=decision.reason.value,
@@ -156,13 +156,13 @@ class MemoryWritePipeline:
                 continue
             try:
                 if decision.action == MemoryPolicyAction.REVOKE:
-                    memory, deduplicated = self._revoke(
+                    memory, deduplicated = await self._revoke(
                         user_id=user_id,
                         proposal=proposal,
                         changed_at=timestamp,
                     )
                     if memory is None:
-                        self.proposal_repository.record_rejection(
+                        await self.proposal_repository.record_rejection(
                             user_id=user_id,
                             proposal_id=proposal.proposal_id,
                             reason_code=(
@@ -190,7 +190,7 @@ class MemoryWritePipeline:
                         )
                     )
                 elif decision.action == MemoryPolicyAction.AUTO_COMMIT:
-                    memory, deduplicated = self._commit(
+                    memory, deduplicated = await self._commit(
                         user_id=user_id,
                         proposal=proposal,
                         safe_summary=decision.safe_summary,
@@ -207,7 +207,7 @@ class MemoryWritePipeline:
                         )
                     )
                 else:
-                    pending, deduplicated = self._save_pending(
+                    pending, deduplicated = await self._save_pending(
                         user_id=user_id,
                         proposal=proposal,
                         safe_summary=decision.safe_summary,
@@ -248,7 +248,7 @@ class MemoryWritePipeline:
             return MemoryPipelineResult(status="committed", items=items)
         return MemoryPipelineResult(status="rejected", items=items)
 
-    def _commit(
+    async def _commit(
         self,
         *,
         user_id: str,
@@ -257,7 +257,7 @@ class MemoryWritePipeline:
         reason_code: str,
         timestamp: datetime,
     ) -> tuple[EpisodicMemoryRecord, bool]:
-        return self.committer.commit(
+        return await self.committer.commit(
             user_id=user_id,
             proposal=proposal,
             safe_summary=safe_summary,
@@ -265,7 +265,7 @@ class MemoryWritePipeline:
             timestamp=timestamp,
         )
 
-    def _save_pending(
+    async def _save_pending(
         self,
         *,
         user_id: str,
@@ -281,7 +281,7 @@ class MemoryWritePipeline:
             memory_type=proposal.memory_type.value,
             summary=safe_summary,
         )
-        existing = self.proposal_repository.get_by_idempotency_key(
+        existing = await self.proposal_repository.get_by_idempotency_key(
             user_id=user_id,
             idempotency_key=idempotency_key,
         )
@@ -311,9 +311,9 @@ class MemoryWritePipeline:
             expires_at=timestamp + timedelta(days=30),
         )
         try:
-            return self.proposal_repository.save_pending(record), False
+            return await self.proposal_repository.save_pending(record), False
         except MemoryConflictError:
-            existing = self.proposal_repository.get_by_idempotency_key(
+            existing = await self.proposal_repository.get_by_idempotency_key(
                 user_id=user_id,
                 idempotency_key=idempotency_key,
             )
@@ -321,7 +321,7 @@ class MemoryWritePipeline:
                 raise
             return existing, True
 
-    def _revoke(
+    async def _revoke(
         self,
         *,
         user_id: str,
@@ -329,7 +329,7 @@ class MemoryWritePipeline:
         changed_at: datetime,
     ) -> tuple[EpisodicMemoryRecord | None, bool]:
         content_hash = memory_content_hash(proposal.summary)
-        existing = self.memory_repository.get_memory_by_content_hash(
+        existing = await self.memory_repository.get_memory_by_content_hash(
             user_id=user_id,
             content_hash=content_hash,
         )
@@ -342,7 +342,7 @@ class MemoryWritePipeline:
             return existing, True
         try:
             return (
-                self.memory_repository.transition_memory(
+                await self.memory_repository.transition_memory(
                     memory_id=existing.memory_id,
                     user_id=user_id,
                     expected_version=existing.version,
@@ -353,7 +353,7 @@ class MemoryWritePipeline:
                 False,
             )
         except MemoryConflictError:
-            current = self.memory_repository.get_memory_by_content_hash(
+            current = await self.memory_repository.get_memory_by_content_hash(
                 user_id=user_id,
                 content_hash=content_hash,
             )

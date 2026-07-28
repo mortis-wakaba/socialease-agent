@@ -43,14 +43,15 @@ def repository() -> PostgresRoleplaySessionRepository:
     return PostgresRoleplaySessionRepository(database_url=TEST_DATABASE_URL)
 
 
-def test_postgres_roleplay_save_get_and_owner_scope(
+@pytest.mark.anyio
+async def test_postgres_roleplay_save_get_and_owner_scope(
     repository: PostgresRoleplaySessionRepository,
 ) -> None:
     session = _roleplay_session(user_id=f"pg_roleplay_user_{uuid4().hex}")
 
-    saved = repository.save(session)
-    fetched = repository.get_for_user(session.session_id, session.user_id)
-    wrong_user = repository.get_for_user(session.session_id, "other_user")
+    saved = await repository.save(session)
+    fetched = await repository.get_for_user(session.session_id, session.user_id)
+    wrong_user = await repository.get_for_user(session.session_id, "other_user")
 
     assert saved.session_id == session.session_id
     assert fetched is not None
@@ -61,21 +62,22 @@ def test_postgres_roleplay_save_get_and_owner_scope(
     assert fetched.messages[0].role == RoleplayMessageRole.AGENT
     assert wrong_user is None
 
-    with repository.engine.connect() as connection:
-        row = connection.execute(
+    async with repository.engine.connect() as connection:
+        row = (await connection.execute(
             text(
                 """SELECT scenario, difficulty
                 FROM roleplay_sessions WHERE session_id = :session_id"""
             ),
             {"session_id": session.session_id},
-        ).mappings().first()
+        )).mappings().first()
 
     assert row is not None
     assert row["scenario"] == "refuse_request"
     assert row["difficulty"] == 3
 
 
-def test_postgres_roleplay_save_upserts_messages_and_features(
+@pytest.mark.anyio
+async def test_postgres_roleplay_save_upserts_messages_and_features(
     repository: PostgresRoleplaySessionRepository,
 ) -> None:
     session = _roleplay_session(user_id=f"pg_roleplay_upsert_user_{uuid4().hex}")
@@ -104,9 +106,9 @@ def test_postgres_roleplay_save_upserts_messages_and_features(
         }
     )
 
-    repository.save(session)
-    repository.save(updated)
-    fetched = repository.get_for_user(session.session_id, session.user_id)
+    await repository.save(session)
+    await repository.save(updated)
+    fetched = await repository.get_for_user(session.session_id, session.user_id)
 
     assert fetched is not None
     assert len(fetched.messages) == 2

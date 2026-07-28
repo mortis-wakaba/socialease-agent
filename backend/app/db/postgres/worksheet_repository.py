@@ -1,25 +1,31 @@
 """PostgreSQL worksheet repository implementation."""
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.config import database_settings
+from app.db.postgres.engine import (
+    postgres_read_connection,
+    postgres_write_connection,
+    shared_postgres_async_engine,
+)
 from app.models_worksheet import WorksheetRecord
 
 
 class PostgresWorksheetRepository:
     """PostgreSQL-backed CBT-style worksheet repository."""
 
-    def __init__(self, database_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+    def __init__(
+        self, database_url: str | None = None, engine: AsyncEngine | None = None
+    ) -> None:
+        self.engine = engine or shared_postgres_async_engine(
+            database_url or database_settings().database_url
         )
 
-    def save(self, record: WorksheetRecord) -> WorksheetRecord:
+    async def save(self, record: WorksheetRecord) -> WorksheetRecord:
         """Persist one worksheet record."""
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with postgres_write_connection(self.engine) as connection:
+            await connection.execute(
                 text(
                     """INSERT INTO worksheets
                     (worksheet_id, user_id, payload, created_at)
@@ -38,11 +44,11 @@ class PostgresWorksheetRepository:
             )
         return record
 
-    def get(self, worksheet_id: str) -> WorksheetRecord | None:
+    async def get(self, worksheet_id: str) -> WorksheetRecord | None:
         """Return one worksheet by id."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with postgres_read_connection(self.engine) as connection:
+            row = (await connection.execute(
                 text("SELECT payload FROM worksheets WHERE worksheet_id = :worksheet_id"),
                 {"worksheet_id": worksheet_id},
-            ).mappings().first()
+            )).mappings().first()
         return WorksheetRecord.model_validate(row["payload"]) if row else None

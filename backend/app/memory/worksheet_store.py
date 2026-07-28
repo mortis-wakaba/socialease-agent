@@ -18,7 +18,7 @@ class WorksheetStore:
     def __init__(self, repository: WorksheetRepository | None = None) -> None:
         self.repository = repository or SQLiteWorksheetRepository()
 
-    def create(
+    async def create(
         self,
         user_id: str,
         source_message: str | None,
@@ -27,10 +27,12 @@ class WorksheetStore:
         citations: list[Citation],
         missing_fields: list[str],
         gentle_followup_questions: list[str],
+        *,
+        worksheet_id: str | None = None,
     ) -> WorksheetRecord:
         """Create and store a worksheet record."""
         record = WorksheetRecord(
-            worksheet_id=str(uuid4()),
+            worksheet_id=worksheet_id or str(uuid4()),
             user_id=user_id,
             source_message=source_message,
             source_event_id=source_event_id,
@@ -43,20 +45,20 @@ class WorksheetStore:
             updated_at=datetime.now(timezone.utc),
             completed=not missing_fields,
         )
-        return self.repository.save(record)
+        return await self.repository.save(record)
 
-    def get(self, worksheet_id: str) -> WorksheetRecord | None:
+    async def get(self, worksheet_id: str) -> WorksheetRecord | None:
         """Return a worksheet by id, if present."""
-        return self.repository.get(worksheet_id)
+        return await self.repository.get(worksheet_id)
 
-    def get_for_user(self, worksheet_id: str, user_id: str) -> WorksheetRecord | None:
+    async def get_for_user(self, worksheet_id: str, user_id: str) -> WorksheetRecord | None:
         """Return a worksheet only when it belongs to the requesting user."""
-        record = self.repository.get(worksheet_id)
+        record = await self.repository.get(worksheet_id)
         return record if record is not None and record.user_id == user_id else None
 
-    def save(self, record: WorksheetRecord) -> WorksheetRecord:
+    async def save(self, record: WorksheetRecord) -> WorksheetRecord:
         """Persist an updated privacy-minimized worksheet draft."""
-        return self.repository.save(record)
+        return await self.repository.save(record)
 
 
 worksheet_store = WorksheetStore()

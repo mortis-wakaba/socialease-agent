@@ -8,7 +8,6 @@ from uuid import uuid4
 from app.conversation.compactor import ConversationCompactor
 from app.conversation.context_manager import ConversationContextManager
 from app.conversation.context_provider import create_conversation_context_provider
-from app.conversation.legacy_importer import LegacyConversationImporter
 from app.conversation.adapters import (
     ExposureModuleAdapter,
     ResourceModuleAdapter,
@@ -17,7 +16,7 @@ from app.conversation.adapters import (
 )
 from app.conversation.module_coordinator import ModuleCoordinator
 from app.conversation.module_policy import ConversationStateError, ModuleStackPolicy
-from app.conversation.repository import ConversationRepository
+from app.conversation.repository import ConversationRepository, ModuleStartJob
 from app.db.factory import repository_factory
 from app.llm.factory import create_llm_client
 from app.memory.token_estimator import ConservativeTokenEstimator
@@ -54,14 +53,12 @@ from app.models_conversation_api import (
     ConversationDeleteResponse,
     ConversationExportCollectionResponse,
     ConversationExportResponse,
-    LegacyRoleplayImportResponse,
 )
 from app.models_conversation_context import (
     ConversationPromptContext,
     ConversationPromptEvent,
     ConversationWorkingContext,
 )
-from app.models_roleplay import RoleplaySession
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
 from app.workflow.engine import AgentHarness
@@ -84,6 +81,10 @@ class ConversationProposalError(ValueError):
     """Raised when a proposal decision fails validation."""
 
 
+class ConversationCommandInProgressError(RuntimeError):
+    """Raised while another worker owns the same logical message command."""
+
+
 class ConversationService:
     """Coordinate safety, routing, proposals, and ordered timeline writes."""
 
@@ -102,7 +103,6 @@ class ConversationService:
         self._repository = (
             repository or repository_factory().conversation_repository()
         )
-        self._legacy_importer = LegacyConversationImporter(self._repository)
         self._safety_classifier = (
             safety_classifier or create_safety_classifier()
         )
@@ -135,7 +135,7 @@ class ConversationService:
         )
         self._proposal_ttl = proposal_ttl
 
-    def create_conversation(
+    async def create_conversation(
         self,
         *,
         user_id: str,
@@ -151,22 +151,22 @@ class ConversationService:
             raise ConversationNoticeError(
                 "The current conversation history notice must be acknowledged."
             )
-        return self._repository.create(
+        return await self._repository.create(
             user_id=user_id,
             title=title,
             history_notice_version=history_notice_version,
         )
 
-    def get_conversation(
+    async def get_conversation(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> Conversation | None:
         """Return one owned conversation."""
-        return self._repository.get_for_user(conversation_id, user_id)
+        return await self._repository.get_for_user(conversation_id, user_id)
 
-    def list_conversations(
+    async def list_conversations(
         self,
         *,
         user_id: str,
@@ -174,31 +174,14 @@ class ConversationService:
         limit: int,
     ) -> ConversationPage:
         """Return a cursor-paginated owner history list."""
-        return self._repository.list_for_user(
+        return await self._repository.list_for_user(
             user_id,
             cursor=cursor,
             limit=limit,
         )
 
-    def import_legacy_roleplay_sessions(
-        self,
-        *,
-        user_id: str,
-        sessions: list[RoleplaySession],
-    ) -> LegacyRoleplayImportResponse:
-        """Backfill owned legacy sessions as archived unified timelines."""
-        if any(session.user_id != user_id for session in sessions):
-            raise ValueError("legacy import owner scope does not match")
-        _, imported_count = (
-            self._legacy_importer.import_roleplay_sessions(sessions)
-        )
-        return LegacyRoleplayImportResponse(
-            user_id=user_id,
-            scanned_count=len(sessions),
-            imported_count=imported_count,
-        )
 
-    def list_events(
+    async def list_events(
         self,
         *,
         conversation_id: str,
@@ -207,26 +190,26 @@ class ConversationService:
         limit: int,
     ) -> ConversationEventPage:
         """Return a cursor-paginated owner timeline."""
-        return self._repository.list_events(
+        return await self._repository.list_events(
             conversation_id=conversation_id,
             user_id=user_id,
             cursor=cursor,
             limit=limit,
         )
 
-    def list_module_stack(
+    async def list_module_stack(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ):
         """Return active module frames for presentation."""
-        return self._repository.list_module_stack(
+        return await self._repository.list_module_stack(
             conversation_id=conversation_id,
             user_id=user_id,
         )
 
-    def list_pending_proposals(
+    async def list_pending_proposals(
         self,
         *,
         conversation_id: str,
@@ -236,7 +219,7 @@ class ConversationService:
         now = datetime.now(UTC)
         return [
             proposal
-            for proposal in self._repository.list_proposals(
+            for proposal in await self._repository.list_proposals(
                 conversation_id=conversation_id,
                 user_id=user_id,
             )
@@ -244,7 +227,7 @@ class ConversationService:
             and proposal.expires_at > now
         ]
 
-    def update_conversation(
+    async def update_conversation(
         self,
         *,
         conversation_id: str,
@@ -254,7 +237,7 @@ class ConversationService:
         status,
     ) -> Conversation | None:
         """Rename or archive/unarchive one conversation optimistically."""
-        current = self._repository.get_for_user(conversation_id, user_id)
+        current = await self._repository.get_for_user(conversation_id, user_id)
         if current is None:
             return None
         if title is None and status is None:
@@ -263,7 +246,7 @@ class ConversationService:
             raise ValueError("use the confirmed delete endpoint")
         if (
             status == ConversationStatus.ARCHIVED
-            and self._repository.list_module_stack(
+            and await self._repository.list_module_stack(
                 conversation_id=conversation_id,
                 user_id=user_id,
             )
@@ -274,7 +257,7 @@ class ConversationService:
                 current.status,
                 status,
             )
-        return self._repository.update_metadata(
+        return await self._repository.update_metadata(
             conversation_id=conversation_id,
             user_id=user_id,
             expected_version=expected_version,
@@ -282,14 +265,14 @@ class ConversationService:
             status=status,
         )
 
-    def export_conversation(
+    async def export_conversation(
         self,
         *,
         conversation_id: str,
         user_id: str,
     ) -> ConversationExportResponse | None:
         """Export a complete decrypted timeline only to its owner."""
-        conversation = self._repository.get_for_user(
+        conversation = await self._repository.get_for_user(
             conversation_id,
             user_id,
         )
@@ -298,7 +281,7 @@ class ConversationService:
         events: list[ConversationEvent] = []
         cursor = None
         while True:
-            page = self._repository.list_events(
+            page = await self._repository.list_events(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 cursor=cursor,
@@ -311,18 +294,18 @@ class ConversationService:
         return ConversationExportResponse(
             conversation=conversation,
             events=events,
-            module_runs=self._repository.list_all_module_runs(
+            module_runs=await self._repository.list_all_module_runs(
                 conversation_id=conversation_id,
                 user_id=user_id,
             ),
-            module_proposals=self._repository.list_proposals(
+            module_proposals=await self._repository.list_proposals(
                 conversation_id=conversation_id,
                 user_id=user_id,
             ),
             exported_at=datetime.now(UTC),
         )
 
-    def export_all_conversations(
+    async def export_all_conversations(
         self,
         *,
         user_id: str,
@@ -331,13 +314,13 @@ class ConversationService:
         exports: list[ConversationExportResponse] = []
         cursor = None
         while True:
-            page = self._repository.list_for_user(
+            page = await self._repository.list_for_user(
                 user_id,
                 cursor=cursor,
                 limit=100,
             )
             for conversation in page.items:
-                exported = self.export_conversation(
+                exported = await self.export_conversation(
                     conversation_id=conversation.conversation_id,
                     user_id=user_id,
                 )
@@ -359,7 +342,7 @@ class ConversationService:
         user_id: str,
     ) -> ConversationDeleteResponse:
         """Delete durable and runtime data attributable to one conversation."""
-        runs = self._repository.list_all_module_runs(
+        runs = await self._repository.list_all_module_runs(
             conversation_id=conversation_id,
             user_id=user_id,
         )
@@ -368,7 +351,7 @@ class ConversationService:
             conversation_id=conversation_id,
             user_id=user_id,
         )
-        counts = self._repository.delete_for_user(
+        counts = await self._repository.delete_for_user(
             conversation_id=conversation_id,
             user_id=user_id,
         )
@@ -386,22 +369,22 @@ class ConversationService:
         user_id: str,
     ) -> ConversationDeleteResponse:
         """Delete every owner conversation and its short-lived contexts."""
-        page = self._repository.list_for_user(user_id, limit=100)
+        page = await self._repository.list_for_user(user_id, limit=100)
         while True:
             for conversation in page.items:
-                runs = self._repository.list_all_module_runs(
+                runs = await self._repository.list_all_module_runs(
                     conversation_id=conversation.conversation_id,
                     user_id=user_id,
                 )
                 await self._module_coordinator.delete_runtime_contexts(runs)
             if page.next_cursor is None:
                 break
-            page = self._repository.list_for_user(
+            page = await self._repository.list_for_user(
                 user_id,
                 cursor=page.next_cursor,
                 limit=100,
             )
-        counts = self._repository.delete_all_for_user(user_id=user_id)
+        counts = await self._repository.delete_all_for_user(user_id=user_id)
         await self._context_manager.delete_user_cache(user_id=user_id)
         await self._module_coordinator.delete_user_cache(user_id=user_id)
         return ConversationDeleteResponse(
@@ -414,6 +397,11 @@ class ConversationService:
         """Close the optional shared conversation-context cache client."""
         await self._context_manager.close()
         await self._module_coordinator.close()
+
+    async def delete_user_runtime_contexts(self, *, user_id: str) -> None:
+        """Erase rebuildable conversation and module projections for one owner."""
+        await self._context_manager.delete_user_cache(user_id=user_id)
+        await self._module_coordinator.delete_user_cache(user_id=user_id)
 
     async def context_health(self) -> bool:
         """Return whether the unified context provider is ready."""
@@ -429,18 +417,70 @@ class ConversationService:
         message: str,
         idempotency_key: str,
     ) -> ConversationMessageResponse:
-        """Append one user turn, with crisis and proposal preemption."""
-        conversation = self._repository.get_for_user(conversation_id, user_id)
+        """Execute one logical turn once and durably replay its final result."""
+        request_hash = sha256(
+            json.dumps(
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "message": message,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        claim = await self._repository.claim_command(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if claim.completed_result is not None:
+            return ConversationMessageResponse.model_validate_json(
+                claim.completed_result
+            )
+        if not claim.acquired:
+            raise ConversationCommandInProgressError(
+                "conversation command is already processing"
+            )
+        response = await self._execute_message(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            message=message,
+            idempotency_key=idempotency_key,
+        )
+        await self._repository.complete_command(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+            result=response.model_dump_json(),
+        )
+        return response
+
+    async def _execute_message(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        message: str,
+        idempotency_key: str,
+    ) -> ConversationMessageResponse:
+        """Append the claimed user turn, with crisis and proposal preemption."""
+        conversation = await self._repository.get_for_user(
+            conversation_id,
+            user_id,
+        )
         if conversation is None:
             raise LookupError("conversation not found")
 
-        stack = self._repository.list_module_stack(
+        stack = await self._repository.list_module_stack(
             conversation_id=conversation_id,
             user_id=user_id,
         )
         active_run = stack[-1] if stack else None
         safety_result = await self._safety_classifier.classify(message)
-        user_event = self._repository.append_event(
+        user_event = await self._repository.append_event(
             conversation_id=conversation_id,
             user_id=user_id,
             event_type=(
@@ -476,13 +516,13 @@ class ConversationService:
             response = crisis_escalation_response(
                 paused_activity="当前对话和练习"
             )
-            crisis_event = self._repository.get_event_by_idempotency(
+            crisis_event = await self._repository.get_event_by_idempotency(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 idempotency_key=f"crisis:{idempotency_key}",
             )
             if crisis_event is None:
-                crisis_event = self._repository.append_event(
+                crisis_event = await self._repository.append_event(
                     conversation_id=conversation_id,
                     user_id=user_id,
                     event_type=ConversationEventType.CRISIS_ESCALATED,
@@ -497,7 +537,7 @@ class ConversationService:
                     ),
                     idempotency_key=f"crisis:{idempotency_key}",
                 )
-            return self._response(
+            return await self._response(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 appended_events=[user_event, *preemption_events, crisis_event],
@@ -513,7 +553,7 @@ class ConversationService:
             and safety_result.risk_level == RiskLevel.LOW
             and _proposal_allowed_for_stack(stack, proposed_module)
         ):
-            proposal = self._create_proposal(
+            proposal = await self._create_proposal(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 source_event=user_event,
@@ -521,13 +561,13 @@ class ConversationService:
                 module_type=proposed_module,
             )
             proposal_copy = _proposal_copy(proposed_module)
-            proposal_event = self._repository.get_event_by_idempotency(
+            proposal_event = await self._repository.get_event_by_idempotency(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 idempotency_key=f"proposal:{idempotency_key}",
             )
             if proposal_event is None:
-                proposal_event = self._repository.append_event(
+                proposal_event = await self._repository.append_event(
                     conversation_id=conversation_id,
                     user_id=user_id,
                     event_type=ConversationEventType.MODULE_PROPOSED,
@@ -546,7 +586,7 @@ class ConversationService:
                     ),
                     idempotency_key=f"proposal:{idempotency_key}",
                 )
-            return self._response(
+            return await self._response(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 appended_events=[user_event, proposal_event],
@@ -565,7 +605,7 @@ class ConversationService:
                 idempotency_key=idempotency_key,
                 context=context,
             )
-            return self._response(
+            return await self._response(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 appended_events=[user_event, module_event],
@@ -575,7 +615,7 @@ class ConversationService:
             )
 
         assistant_key = f"assistant:{idempotency_key}"
-        replay = self._repository.get_event_by_idempotency(
+        replay = await self._repository.get_event_by_idempotency(
             conversation_id=conversation_id,
             user_id=user_id,
             idempotency_key=assistant_key,
@@ -595,7 +635,7 @@ class ConversationService:
                 trusted_intent_result=intent_result,
                 trusted_conversation_context=_prompt_context(context),
             )
-            replay = self._repository.append_event(
+            replay = await self._repository.append_event(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 event_type=ConversationEventType.ASSISTANT_MESSAGE,
@@ -603,7 +643,7 @@ class ConversationService:
                 content=workflow_response.response,
                 idempotency_key=assistant_key,
             )
-        return self._response(
+        return await self._response(
             conversation_id=conversation_id,
             user_id=user_id,
             appended_events=[user_event, replay],
@@ -613,7 +653,7 @@ class ConversationService:
             workflow_response=workflow_response,
         )
 
-    def reject_proposal(
+    async def reject_proposal(
         self,
         *,
         conversation_id: str,
@@ -622,13 +662,13 @@ class ConversationService:
         request_hash: str,
     ) -> ModuleProposal:
         """Reject a pending, unexpired, untampered proposal."""
-        proposal = self._validated_pending_proposal(
+        proposal = await self._validated_pending_proposal(
             conversation_id=conversation_id,
             proposal_id=proposal_id,
             user_id=user_id,
             request_hash=request_hash,
         )
-        rejected = self._repository.transition_proposal(
+        rejected = await self._repository.transition_proposal(
             proposal_id=proposal_id,
             conversation_id=conversation_id,
             user_id=user_id,
@@ -648,7 +688,7 @@ class ConversationService:
         request_hash: str,
     ) -> ModuleControlResponse:
         """Accept one proposal and delegate the confirmed stack push."""
-        proposal = self._repository.get_proposal_for_user(
+        proposal = await self._repository.get_proposal_for_user(
             proposal_id=proposal_id,
             conversation_id=conversation_id,
             user_id=user_id,
@@ -665,7 +705,7 @@ class ConversationService:
         )
         if proposal.status == ModuleProposalStatus.ACCEPTED:
             return await self._module_coordinator.accept(proposal, context)
-        proposal = self._validated_pending_proposal(
+        proposal = await self._validated_pending_proposal(
             conversation_id=conversation_id,
             proposal_id=proposal_id,
             user_id=user_id,
@@ -675,6 +715,35 @@ class ConversationService:
             return await self._module_coordinator.accept(proposal, context)
         except ConversationStateError as exc:
             raise ConversationProposalError(str(exc)) from exc
+
+    async def reconcile_module_start(
+        self,
+        job: ModuleStartJob,
+    ) -> ModuleControlResponse:
+        """Reconcile one lease-owned module startup without a client retry."""
+        run = await self._repository.get_module_run_for_user(
+            module_run_id=job.module_run_id,
+            conversation_id=job.conversation_id,
+            user_id=job.user_id,
+        )
+        proposal = await self._repository.get_proposal_for_user(
+            proposal_id=job.proposal_id,
+            conversation_id=job.conversation_id,
+            user_id=job.user_id,
+        )
+        if run is None or proposal is None:
+            raise LookupError("module reconciliation state not found")
+        context = await self._context_manager.assemble(
+            conversation_id=job.conversation_id,
+            user_id=job.user_id,
+            current_user_message=_module_start_message(proposal),
+            current_event_id=proposal.source_event_id,
+        )
+        return await self._module_coordinator.reconcile_claimed(
+            run=run,
+            context=context,
+            proposal_id=job.proposal_id,
+        )
 
     async def terminate_current_module(
         self,
@@ -708,7 +777,7 @@ class ConversationService:
             user_id=user_id,
         )
 
-    def _validated_pending_proposal(
+    async def _validated_pending_proposal(
         self,
         *,
         conversation_id: str,
@@ -716,7 +785,7 @@ class ConversationService:
         user_id: str,
         request_hash: str,
     ) -> ModuleProposal:
-        proposal = self._repository.get_proposal_for_user(
+        proposal = await self._repository.get_proposal_for_user(
             proposal_id=proposal_id,
             conversation_id=conversation_id,
             user_id=user_id,
@@ -728,7 +797,7 @@ class ConversationService:
         if proposal.status != ModuleProposalStatus.PENDING:
             raise ConversationProposalError("proposal is no longer pending")
         if proposal.expires_at <= datetime.now(UTC):
-            self._repository.transition_proposal(
+            await self._repository.transition_proposal(
                 proposal_id=proposal_id,
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -738,7 +807,7 @@ class ConversationService:
             raise ConversationProposalError("proposal expired")
         return proposal
 
-    def _create_proposal(
+    async def _create_proposal(
         self,
         *,
         conversation_id: str,
@@ -767,9 +836,9 @@ class ConversationService:
             expires_at=datetime.now(UTC) + self._proposal_ttl,
             created_at=datetime.now(UTC),
         )
-        return self._repository.save_proposal(proposal)
+        return await self._repository.save_proposal(proposal)
 
-    def _response(
+    async def _response(
         self,
         *,
         conversation_id: str,
@@ -781,7 +850,7 @@ class ConversationService:
         pending_proposal: ModuleProposal | None = None,
         workflow_response=None,
     ) -> ConversationMessageResponse:
-        conversation = self._repository.get_for_user(
+        conversation = await self._repository.get_for_user(
             conversation_id,
             user_id,
         )
@@ -790,7 +859,7 @@ class ConversationService:
         return ConversationMessageResponse(
             conversation=conversation,
             appended_events=appended_events,
-            active_module_stack=self._repository.list_module_stack(
+            active_module_stack=await self._repository.list_module_stack(
                 conversation_id=conversation_id,
                 user_id=user_id,
             ),

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 import os
@@ -10,8 +12,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from app.auth.tokens import (
+    active_auth_signing_key,
     auth_mode,
-    auth_token_secret,
     create_auth_token,
     create_token_id,
 )
@@ -24,6 +26,11 @@ from app.services.memory_privacy_service import memory_privacy_service
 ACCESS_TOKEN_TTL_SECONDS = 60 * 60
 REFRESH_TOKEN_TTL_DAYS = 14
 PASSWORD_ITERATIONS = 210_000
+PASSWORD_WORKERS = 4
+_PASSWORD_EXECUTOR = ThreadPoolExecutor(
+    max_workers=PASSWORD_WORKERS,
+    thread_name_prefix="password-work",
+)
 
 
 class AccountError(ValueError):
@@ -52,7 +59,7 @@ class AccountService:
     def __init__(self, repository: AccountRepository | None = None) -> None:
         self.repository = repository or repository_factory().account_repository()
 
-    def register(
+    async def register(
         self,
         email: str,
         password: str,
@@ -66,66 +73,101 @@ class AccountService:
         now = _now()
         user_id = f"user_{uuid4().hex}"
         try:
-            self.repository.create_user(
+            await self.repository.create_user(
                 user_id=user_id,
                 email=normalized_email,
-                password_hash=_hash_password(password),
+                password_hash=await _run_password_hash(password),
                 now=now,
             )
         except Exception as exc:
             if "UNIQUE" in str(exc).upper():
                 raise DuplicateAccountError("Email is already registered.") from exc
             raise
-        return self._create_session_response(user_id=user_id, email=normalized_email)
+        return await self._create_session_response(
+            user_id=user_id,
+            email=normalized_email,
+        )
 
-    def login(self, email: str, password: str) -> AuthResponse:
+    async def login(self, email: str, password: str) -> AuthResponse:
         """Validate credentials and return a new authenticated session."""
         normalized_email = _normalize_email(email)
-        account = self._get_by_email(normalized_email)
+        account = await self._get_by_email(normalized_email)
         if account is not None and _is_temporarily_locked(account):
             from app.observability.runtime_events import record_auth_lockout
 
-            record_auth_lockout()
+            await record_auth_lockout()
             raise AccountLockedError("Too many failed login attempts. Please retry later.")
-        if account is None or not _verify_password(password, account.password_hash):
+        password_valid = (
+            account is not None
+            and await _run_password_verify(password, account.password_hash)
+        )
+        if account is None or not password_valid:
             if account is not None:
-                self.repository.record_failed_login(account.user_id, _now())
+                await self.repository.record_failed_login(account.user_id, _now())
             from app.observability.runtime_events import record_auth_failed_login
 
-            record_auth_failed_login()
+            await record_auth_failed_login()
             raise InvalidCredentialsError("Invalid email or password.")
-        self.repository.record_successful_login(account.user_id, _now())
-        return self._create_session_response(user_id=account.user_id, email=account.email)
+        await self.repository.record_successful_login(account.user_id, _now())
+        return await self._create_session_response(
+            user_id=account.user_id,
+            email=account.email,
+        )
 
-    def refresh(self, refresh_token: str) -> AuthResponse:
+    async def refresh(self, refresh_token: str) -> AuthResponse:
         """Rotate a refresh token and issue a new access token."""
         refresh_hash = _hash_refresh_token(refresh_token)
         now = _now()
-        row = self.repository.get_session_by_refresh_hash(refresh_hash)
-        if row is None or row.revoked_at is not None:
-            raise InvalidCredentialsError("Invalid refresh token.")
-        if _parse_datetime(row.expires_at) <= now:
-            self.repository.revoke_session(row.session_id, now)
-            raise InvalidCredentialsError("Refresh token has expired.")
-        self.repository.revoke_session(row.session_id, now)
-        return self._create_session_response(user_id=row.user_id, email=row.email)
+        key_id, secret = active_auth_signing_key()
+        new_session_id = f"session_{uuid4().hex}"
+        new_refresh_token = secrets.token_urlsafe(48)
+        new_access_token_id = create_token_id()
+        row = await self.repository.rotate_session(
+            refresh_hash=refresh_hash,
+            new_session_id=new_session_id,
+            new_refresh_token_hash=_hash_refresh_token(new_refresh_token),
+            new_access_token_id=new_access_token_id,
+            new_expires_at=now + timedelta(days=REFRESH_TOKEN_TTL_DAYS),
+            now=now,
+        )
+        if row is None:
+            raise InvalidCredentialsError("Invalid or expired refresh token.")
+        access_token = create_auth_token(
+            user_id=row.user_id,
+            secret=secret,
+            ttl_seconds=ACCESS_TOKEN_TTL_SECONDS,
+            token_id=new_access_token_id,
+            key_id=key_id,
+        )
+        return AuthResponse(
+            user=AuthUser(user_id=row.user_id, email=row.email),
+            tokens=AuthTokenPair(
+                access_token=access_token,
+                refresh_token=new_refresh_token,
+                expires_in=ACCESS_TOKEN_TTL_SECONDS,
+            ),
+        )
 
-    def logout(self, refresh_token: str) -> bool:
+    async def logout(self, refresh_token: str) -> bool:
         """Revoke a refresh-token session."""
         refresh_hash = _hash_refresh_token(refresh_token)
         now = _now()
-        session_id = self.repository.get_session_id_by_refresh_hash(refresh_hash)
+        session_id = await self.repository.get_session_id_by_refresh_hash(
+            refresh_hash
+        )
         if session_id is None:
             return False
-        self.repository.revoke_session(session_id, now)
+        await self.repository.revoke_session(session_id, now)
         return True
 
-    def delete_account(self, user_id: str) -> AccountDeleteResponse:
+    async def delete_account(self, user_id: str) -> AccountDeleteResponse:
         """Delete one account and its user-owned practice memory records."""
         now = _now()
-        deleted_memory = memory_privacy_service.delete(user_id)
-        revoked_sessions = self.repository.revoke_user_sessions(user_id, now)
-        deleted = self.repository.delete_user(user_id)
+        deleted_memory = await memory_privacy_service.delete_all_user_data(
+            user_id
+        )
+        revoked_sessions = await self.repository.revoke_user_sessions(user_id, now)
+        deleted = await self.repository.delete_user(user_id)
         if not deleted:
             raise InvalidCredentialsError("Account not found.")
         return AccountDeleteResponse(
@@ -134,25 +176,28 @@ class AccountService:
             deleted_memory_counts=deleted_memory.deleted_counts,
         )
 
-    def is_access_token_active(self, token_id: str) -> bool:
+    async def is_access_token_active(self, token_id: str) -> bool:
         """Return whether a revocable access-token id is still active."""
         now = _now()
-        row = self.repository.get_access_token_session(token_id)
+        row = await self.repository.get_access_token_session(token_id)
         if row is None or row.revoked_at is not None:
             return False
         return _parse_datetime(row.expires_at) > now
 
-    def _create_session_response(self, *, user_id: str, email: str) -> AuthResponse:
+    async def _create_session_response(
+        self,
+        *,
+        user_id: str,
+        email: str,
+    ) -> AuthResponse:
         """Persist a refresh session and return token pair."""
-        secret = auth_token_secret()
-        if secret is None:
-            raise AccountError("Auth token secret is not configured.")
+        key_id, secret = active_auth_signing_key()
         now = _now()
         session_id = f"session_{uuid4().hex}"
         refresh_token = secrets.token_urlsafe(48)
         access_token_id = create_token_id()
         expires_at = now + timedelta(days=REFRESH_TOKEN_TTL_DAYS)
-        self.repository.create_session(
+        await self.repository.create_session(
             session_id=session_id,
             user_id=user_id,
             refresh_token_hash=_hash_refresh_token(refresh_token),
@@ -165,6 +210,7 @@ class AccountService:
             secret=secret,
             ttl_seconds=ACCESS_TOKEN_TTL_SECONDS,
             token_id=access_token_id,
+            key_id=key_id,
         )
         return AuthResponse(
             user=AuthUser(user_id=user_id, email=email),
@@ -175,8 +221,8 @@ class AccountService:
             ),
         )
 
-    def _get_by_email(self, email: str) -> AccountRecord | None:
-        return self.repository.get_by_email(email)
+    async def _get_by_email(self, email: str) -> AccountRecord | None:
+        return await self.repository.get_by_email(email)
 
 
 def _hash_password(password: str) -> str:
@@ -191,6 +237,26 @@ def _hash_password(password: str) -> str:
         f"pbkdf2_sha256${PASSWORD_ITERATIONS}$"
         f"{salt.hex()}${digest.hex()}"
     )
+
+
+async def _run_password_hash(password: str) -> str:
+    """Run CPU-bound password derivation outside the event-loop thread."""
+    future = _PASSWORD_EXECUTOR.submit(_hash_password, password)
+    while not future.done():
+        await asyncio.sleep(0.01)
+    return future.result()
+
+
+async def _run_password_verify(password: str, password_hash: str) -> bool:
+    """Run CPU-bound password verification outside the event-loop thread."""
+    future = _PASSWORD_EXECUTOR.submit(
+        _verify_password,
+        password,
+        password_hash,
+    )
+    while not future.done():
+        await asyncio.sleep(0.01)
+    return future.result()
 
 
 def _verify_password(password: str, password_hash: str) -> bool:

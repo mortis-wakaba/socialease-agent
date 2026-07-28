@@ -3,11 +3,11 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Connection
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.db.config import database_settings
+from app.db.postgres.engine import shared_postgres_async_engine
 from app.models_intervention import InterventionPlan
 from app.models_protocols import ProtocolRecord, ProtocolStatus, ProtocolType
 
@@ -15,13 +15,16 @@ from app.models_protocols import ProtocolRecord, ProtocolStatus, ProtocolType
 class PostgresProtocolRepository:
     """PostgreSQL-backed protocol repository with expected-state transitions."""
 
-    def __init__(self, database_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or create_engine(
-            database_url or database_settings().database_url,
-            pool_pre_ping=True,
+    def __init__(
+        self,
+        database_url: str | None = None,
+        engine: AsyncEngine | None = None,
+    ) -> None:
+        self.engine = engine or shared_postgres_async_engine(
+            database_url or database_settings().database_url
         )
 
-    def create(
+    async def create(
         self,
         *,
         user_id: str,
@@ -47,24 +50,28 @@ class PostgresProtocolRepository:
             created_at=now,
             updated_at=now,
         )
-        return self.save(record)
+        return await self.save(record)
 
-    def get_for_user(self, protocol_id: str, user_id: str) -> ProtocolRecord | None:
+    async def get_for_user(
+        self,
+        protocol_id: str,
+        user_id: str,
+    ) -> ProtocolRecord | None:
         """Return a protocol only if it belongs to the user."""
-        with self.engine.connect() as connection:
-            row = connection.execute(
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
                 text(
                     """SELECT payload FROM protocols
                     WHERE protocol_id = :protocol_id AND user_id = :user_id"""
                 ),
                 {"protocol_id": protocol_id, "user_id": user_id},
-            ).mappings().first()
+            )).mappings().first()
         return ProtocolRecord.model_validate(row["payload"]) if row else None
 
-    def save(self, record: ProtocolRecord) -> ProtocolRecord:
+    async def save(self, record: ProtocolRecord) -> ProtocolRecord:
         """Persist one protocol record."""
-        with self.engine.begin() as connection:
-            connection.execute(
+        async with self.engine.begin() as connection:
+            await connection.execute(
                 text(
                     """INSERT INTO protocols
                     (protocol_id, user_id, protocol_type, status, session_id, harness_action,
@@ -87,7 +94,7 @@ class PostgresProtocolRepository:
             )
         return record
 
-    def set_status(
+    async def set_status(
         self,
         *,
         protocol_id: str,
@@ -95,14 +102,14 @@ class PostgresProtocolRepository:
         status: ProtocolStatus,
     ) -> ProtocolRecord | None:
         """Update status for a user-owned protocol."""
-        record = self.get_for_user(protocol_id, user_id)
+        record = await self.get_for_user(protocol_id, user_id)
         if record is None:
             return None
         now = datetime.now(timezone.utc)
         updated = _with_status(record, status, now)
-        return self.save(updated)
+        return await self.save(updated)
 
-    def transition_status(
+    async def transition_status(
         self,
         *,
         protocol_id: str,
@@ -111,13 +118,13 @@ class PostgresProtocolRepository:
         next_status: ProtocolStatus,
     ) -> ProtocolRecord | None:
         """Atomically transition status when the current status matches."""
-        record = self.get_for_user(protocol_id, user_id)
+        record = await self.get_for_user(protocol_id, user_id)
         if record is None or record.status != expected_status:
             return None
         now = datetime.now(timezone.utc)
         updated = _with_status(record, next_status, now)
-        with self.engine.begin() as connection:
-            result = connection.execute(
+        async with self.engine.begin() as connection:
+            result = await connection.execute(
                 text(
                     """UPDATE protocols
                     SET status = :next_status,
@@ -138,10 +145,10 @@ class PostgresProtocolRepository:
             )
         return updated if result.rowcount == 1 else None
 
-    def expire_pending_before(self, cutoff) -> int:
+    async def expire_pending_before(self, cutoff) -> int:
         """Expire pending protocols whose expiration timestamp has passed."""
-        with self.engine.connect() as connection:
-            rows = connection.execute(
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
                 text(
                     """SELECT payload FROM protocols
                     WHERE status = :status
@@ -149,11 +156,11 @@ class PostgresProtocolRepository:
                       AND expires_at <= :cutoff"""
                 ),
                 {"status": ProtocolStatus.PENDING.value, "cutoff": cutoff},
-            ).mappings().all()
+            )).mappings().all()
         expired_count = 0
         for row in rows:
             record = ProtocolRecord.model_validate(row["payload"])
-            if self.transition_status(
+            if await self.transition_status(
                 protocol_id=record.protocol_id,
                 user_id=record.user_id,
                 expected_status=ProtocolStatus.PENDING,
@@ -162,7 +169,7 @@ class PostgresProtocolRepository:
                 expired_count += 1
         return expired_count
 
-    def respond_with_linked_intervention_plan(
+    async def respond_with_linked_intervention_plan(
         self,
         *,
         protocol_id: str,
@@ -171,22 +178,26 @@ class PostgresProtocolRepository:
         now: datetime,
     ) -> ProtocolRecord | None:
         """Respond to a pending protocol and update its linked plan in one transaction."""
-        with self.engine.begin() as connection:
-            record = _locked_protocol(connection, protocol_id=protocol_id, user_id=user_id)
+        async with self.engine.begin() as connection:
+            record = await _locked_protocol(
+                connection,
+                protocol_id=protocol_id,
+                user_id=user_id,
+            )
             if record is None:
                 return None
             if record.expires_at is not None and record.expires_at <= now:
                 updated = _with_status(record, ProtocolStatus.EXPIRED, now)
-                _update_protocol(connection, updated)
+                await _update_protocol(connection, updated)
                 return updated
             if record.status != ProtocolStatus.PENDING:
                 return record
             status = ProtocolStatus.APPROVED if approved else ProtocolStatus.REJECTED
             updated = _with_status(record, status, now)
-            _update_protocol(connection, updated)
+            await _update_protocol(connection, updated)
             plan_id = updated.payload.get("intervention_plan_id")
             if isinstance(plan_id, str):
-                _sync_plan_after_protocol_response(
+                await _sync_plan_after_protocol_response(
                     connection=connection,
                     user_id=user_id,
                     plan_id=plan_id,
@@ -195,7 +206,7 @@ class PostgresProtocolRepository:
                 )
             return updated
 
-    def consume_with_linked_intervention_plan(
+    async def consume_with_linked_intervention_plan(
         self,
         *,
         protocol_id: str,
@@ -208,12 +219,19 @@ class PostgresProtocolRepository:
         result_summary: str | None = None,
     ) -> ProtocolRecord | None:
         """Consume an approved protocol and optionally complete its linked plan atomically."""
-        with self.engine.begin() as connection:
-            record = _locked_protocol(connection, protocol_id=protocol_id, user_id=user_id)
+        async with self.engine.begin() as connection:
+            record = await _locked_protocol(
+                connection,
+                protocol_id=protocol_id,
+                user_id=user_id,
+            )
             if record is None:
                 return None
             if record.expires_at is not None and record.expires_at <= now:
-                _update_protocol(connection, _with_status(record, ProtocolStatus.EXPIRED, now))
+                await _update_protocol(
+                    connection,
+                    _with_status(record, ProtocolStatus.EXPIRED, now),
+                )
                 return None
             if record.status != ProtocolStatus.APPROVED:
                 return None
@@ -224,10 +242,10 @@ class PostgresProtocolRepository:
             if record.session_id is not None and record.session_id != session_id:
                 return None
             updated = _with_status(record, ProtocolStatus.CONSUMED, now)
-            _update_protocol(connection, updated)
+            await _update_protocol(connection, updated)
             plan_id = updated.payload.get("intervention_plan_id")
             if isinstance(plan_id, str) and result_summary is not None:
-                _complete_linked_action_step(
+                await _complete_linked_action_step(
                     connection=connection,
                     user_id=user_id,
                     plan_id=plan_id,
@@ -277,27 +295,30 @@ def _protocol_params(record: ProtocolRecord) -> dict[str, object]:
     }
 
 
-def _locked_protocol(
-    connection: Connection,
+async def _locked_protocol(
+    connection: AsyncConnection,
     *,
     protocol_id: str,
     user_id: str,
 ) -> ProtocolRecord | None:
     """Return one protocol row locked for a transaction."""
-    row = connection.execute(
+    row = (await connection.execute(
         text(
             """SELECT payload FROM protocols
             WHERE protocol_id = :protocol_id AND user_id = :user_id
             FOR UPDATE"""
         ),
         {"protocol_id": protocol_id, "user_id": user_id},
-    ).mappings().first()
+    )).mappings().first()
     return ProtocolRecord.model_validate(row["payload"]) if row else None
 
 
-def _update_protocol(connection: Connection, record: ProtocolRecord) -> None:
+async def _update_protocol(
+    connection: AsyncConnection,
+    record: ProtocolRecord,
+) -> None:
     """Persist an updated protocol inside an existing transaction."""
-    connection.execute(
+    await connection.execute(
         text(
             """UPDATE protocols
             SET status = :status,
@@ -315,27 +336,30 @@ def _update_protocol(connection: Connection, record: ProtocolRecord) -> None:
     )
 
 
-def _locked_intervention_plan(
-    connection: Connection,
+async def _locked_intervention_plan(
+    connection: AsyncConnection,
     *,
     plan_id: str,
     user_id: str,
 ) -> InterventionPlan | None:
     """Return one intervention plan row locked for a transaction."""
-    row = connection.execute(
+    row = (await connection.execute(
         text(
             """SELECT payload FROM intervention_plans
             WHERE plan_id = :plan_id AND user_id = :user_id
             FOR UPDATE"""
         ),
         {"plan_id": plan_id, "user_id": user_id},
-    ).mappings().first()
+    )).mappings().first()
     return InterventionPlan.model_validate(row["payload"]) if row else None
 
 
-def _update_intervention_plan(connection: Connection, plan: InterventionPlan) -> None:
+async def _update_intervention_plan(
+    connection: AsyncConnection,
+    plan: InterventionPlan,
+) -> None:
     """Persist an intervention plan inside an existing transaction."""
-    connection.execute(
+    await connection.execute(
         text(
             """UPDATE intervention_plans
             SET status = :status,
@@ -355,16 +379,20 @@ def _update_intervention_plan(connection: Connection, plan: InterventionPlan) ->
     )
 
 
-def _sync_plan_after_protocol_response(
+async def _sync_plan_after_protocol_response(
     *,
-    connection: Connection,
+    connection: AsyncConnection,
     user_id: str,
     plan_id: str,
     protocol_status: ProtocolStatus,
     updated_at: datetime,
 ) -> None:
     """Update a linked intervention plan after approval or rejection."""
-    plan = _locked_intervention_plan(connection, plan_id=plan_id, user_id=user_id)
+    plan = await _locked_intervention_plan(
+        connection,
+        plan_id=plan_id,
+        user_id=user_id,
+    )
     if plan is None:
         return
     if protocol_status == ProtocolStatus.APPROVED:
@@ -379,7 +407,7 @@ def _sync_plan_after_protocol_response(
         updated = plan.model_copy(
             update={"status": "active", "steps": updated_steps, "updated_at": updated_at}
         )
-        _update_intervention_plan(connection, updated)
+        await _update_intervention_plan(connection, updated)
         return
     if protocol_status == ProtocolStatus.REJECTED:
         updated_steps = [
@@ -400,12 +428,12 @@ def _sync_plan_after_protocol_response(
                 "updated_at": updated_at,
             }
         )
-        _update_intervention_plan(connection, updated)
+        await _update_intervention_plan(connection, updated)
 
 
-def _complete_linked_action_step(
+async def _complete_linked_action_step(
     *,
-    connection: Connection,
+    connection: AsyncConnection,
     user_id: str,
     plan_id: str,
     result_session_id: str | None,
@@ -413,7 +441,11 @@ def _complete_linked_action_step(
     updated_at: datetime,
 ) -> None:
     """Mark the linked action step completed in the same transaction as consume."""
-    plan = _locked_intervention_plan(connection, plan_id=plan_id, user_id=user_id)
+    plan = await _locked_intervention_plan(
+        connection,
+        plan_id=plan_id,
+        user_id=user_id,
+    )
     if plan is None:
         return
     updated_steps = []
@@ -446,4 +478,4 @@ def _complete_linked_action_step(
             "updated_at": updated_at,
         }
     )
-    _update_intervention_plan(connection, updated)
+    await _update_intervention_plan(connection, updated)

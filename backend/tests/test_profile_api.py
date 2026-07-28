@@ -73,9 +73,9 @@ async def test_profile_returns_empty_demo_summary(client: httpx.AsyncClient) -> 
         "preferred_feedback_style": None,
         "preferred_practice_scenarios": [],
     }
-    assert "练习记录与跨会话个性化分开管理" in payload["privacy_notice"]
+    assert "对话历史、练习记录与跨会话 Agent Memory 分开管理" in payload["privacy_notice"]
     assert "随时撤回授权" in payload["privacy_notice"]
-    assert "导出或删除自己拥有的练习记录" in payload["privacy_notice"]
+    assert "独立导出或删除 Agent Memory" in payload["privacy_notice"]
     assert payload["memory_export_available"] is True
     assert payload["memory_delete_available"] is True
     assert payload["deletion_endpoint_reserved"] is False
@@ -127,15 +127,26 @@ async def test_crisis_chat_does_not_enter_profile_summary(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = "profile_crisis_user"
+    created = await client.post(
+        "/api/conversations",
+        headers={"X-Demo-User-Id": user_id},
+        json={
+            "user_id": user_id,
+            "title": "Crisis boundary",
+            "history_notice_version": "2026-07-01",
+            "history_notice_acknowledged": True,
+        },
+    )
     chat_response = await client.post(
-        "/api/chat",
+        f"/api/conversations/{created.json()['conversation_id']}/messages",
+        headers={"X-Demo-User-Id": user_id},
         json={
             "user_id": user_id,
             "message": "我不想活了，可能会伤害自己",
-            "context": {},
+            "idempotency_key": f"crisis-{uuid4().hex}",
         },
     )
-    assert chat_response.json()["risk_level"] == "crisis"
+    assert chat_response.json()["safety_result"]["risk_level"] == "crisis"
 
     response = await client.get(f"/api/users/{user_id}/profile")
 
@@ -389,7 +400,11 @@ async def test_onboarding_profile_can_be_saved_exported_and_deleted(
     assert settings_records
     assert "classroom_speech" in str(settings_records)
 
-    delete_response = await client.delete(f"/api/users/{user_id}/memory")
+    delete_response = await client.request(
+        "DELETE",
+        f"/api/users/{user_id}/memory",
+        json={"confirm_delete": True},
+    )
     get_after_delete = await client.get(f"/api/users/{user_id}/onboarding")
 
     assert delete_response.status_code == 200
@@ -592,8 +607,7 @@ async def test_session_review_next_step_is_redacted_before_persistence(
     assert create_response.status_code == 200
     serialized_create = str(create_response.json())
     serialized_list = str(list_response.json())
-    serialized_export = str(export_response.json()["records"]["session_reviews"])
-    for serialized in [serialized_create, serialized_list, serialized_export]:
+    for serialized in [serialized_create, serialized_list]:
         assert "张三" not in serialized
         assert "13912345678" not in serialized
         assert "review_privacy@example.com" not in serialized
@@ -653,21 +667,24 @@ async def test_memory_control_actions_record_runtime_metrics(
     user_id = f"memory_metric_user_{uuid4().hex}"
     recorded: list[str] = []
 
+    async def record(event: str) -> None:
+        recorded.append(event)
+
     monkeypatch.setattr(
         "app.api.profile.record_memory_export",
-        lambda: recorded.append("export"),
+        lambda: record("export"),
     )
     monkeypatch.setattr(
         "app.api.profile.record_memory_delete",
-        lambda: recorded.append("delete"),
+        lambda: record("delete"),
     )
     monkeypatch.setattr(
         "app.api.profile.record_memory_preferences_saved",
-        lambda: recorded.append("preferences_saved"),
+        lambda: record("preferences_saved"),
     )
     monkeypatch.setattr(
         "app.api.profile.record_memory_preferences_disabled",
-        lambda: recorded.append("preferences_disabled"),
+        lambda: record("preferences_disabled"),
     )
 
     preferences_response = await client.put(
@@ -683,7 +700,11 @@ async def test_memory_control_actions_record_runtime_metrics(
     )
     export_response = await client.get(f"/api/users/{user_id}/memory/export")
     disable_response = await client.delete(f"/api/users/{user_id}/memory/preferences")
-    delete_response = await client.delete(f"/api/users/{user_id}/memory")
+    delete_response = await client.request(
+        "DELETE",
+        f"/api/users/{user_id}/memory",
+        json={"confirm_delete": True},
+    )
 
     assert preferences_response.status_code == 200
     assert export_response.status_code == 200
@@ -702,6 +723,17 @@ async def test_memory_export_and_delete_are_real(
     client: httpx.AsyncClient,
 ) -> None:
     user_id = f"memory_delete_user_{uuid4().hex}"
+    conversation_response = await client.post(
+        "/api/conversations",
+        json={
+            "user_id": user_id,
+            "title": "Memory deletion must preserve history",
+            "history_notice_version": "2026-07-01",
+            "history_notice_acknowledged": True,
+        },
+    )
+    assert conversation_response.status_code == 200
+    conversation_id = conversation_response.json()["conversation_id"]
     await _seed_roleplay(user_id, 4)
     await client.put(
         f"/api/users/{user_id}/memory/preferences",
@@ -732,18 +764,27 @@ async def test_memory_export_and_delete_are_real(
     assert export_response.status_code == 200
     exported = export_response.json()
     assert exported["user_id"] == user_id
-    assert len(exported["records"]["roleplay_sessions"]) == 1
     assert len(exported["records"]["user_memory_settings"]) == 1
-    assert len(exported["records"]["session_reviews"]) == 1
+    assert set(exported["records"]) == {
+        "user_memory_settings",
+        "episodic_memories",
+        "thread_checkpoints",
+        "memory_events",
+        "memory_proposals",
+    }
 
-    delete_response = await client.delete(f"/api/users/{user_id}/memory")
+    delete_response = await client.request(
+        "DELETE",
+        f"/api/users/{user_id}/memory",
+        json={"confirm_delete": True},
+    )
 
     assert delete_response.status_code == 200
     deleted = delete_response.json()
-    assert deleted["deleted_counts"]["roleplay_sessions"] >= 1
     assert deleted["deleted_counts"]["user_memory_settings"] >= 1
-    assert deleted["deleted_counts"]["session_reviews"] >= 1
-    assert deleted["profile_after_delete"]["practice_summary"]["roleplay_session_count"] == 0
+    assert "roleplay_sessions" not in deleted["deleted_counts"]
+    assert "session_reviews" not in deleted["deleted_counts"]
+    assert deleted["profile_after_delete"]["practice_summary"]["roleplay_session_count"] == 1
     assert deleted["profile_after_delete"]["practice_preferences"] == {
         "preferred_roleplay_difficulty": None,
         "preferred_feedback_style": None,
@@ -755,6 +796,12 @@ async def test_memory_export_and_delete_are_real(
     records = export_after_delete.json()["records"]
     assert all(len(rows) == 0 for rows in records.values())
 
+    history_after_delete = await client.get(
+        f"/api/conversations/{conversation_id}",
+        params={"user_id": user_id},
+    )
+    assert history_after_delete.status_code == 200
+
 
 @pytest.mark.anyio
 async def test_memory_export_and_delete_reject_cross_user_access(
@@ -763,14 +810,25 @@ async def test_memory_export_and_delete_reject_cross_user_access(
     owner_id = f"memory_owner_{uuid4().hex}"
     other_id = f"memory_other_{uuid4().hex}"
     await _seed_roleplay(owner_id, 3)
+    await client.put(
+        f"/api/users/{owner_id}/onboarding",
+        json={
+            "onboarding_profile": {
+                "primary_goal": "clearer_classroom_expression",
+                "boundary_acknowledged": True,
+            }
+        },
+    )
 
     export_response = await client.get(
         f"/api/users/{owner_id}/memory/export",
         headers={"X-Demo-User-Id": other_id},
     )
-    delete_response = await client.delete(
+    delete_response = await client.request(
+        "DELETE",
         f"/api/users/{owner_id}/memory",
         headers={"X-Demo-User-Id": other_id},
+        json={"confirm_delete": True},
     )
     owner_export = await client.get(
         f"/api/users/{owner_id}/memory/export",
@@ -779,4 +837,4 @@ async def test_memory_export_and_delete_reject_cross_user_access(
 
     assert export_response.status_code == 403
     assert delete_response.status_code == 403
-    assert len(owner_export.json()["records"]["roleplay_sessions"]) == 1
+    assert len(owner_export.json()["records"]["user_memory_settings"]) == 1

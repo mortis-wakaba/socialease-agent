@@ -38,7 +38,7 @@ async def get_memory_center(
 ) -> MemoryCenterResponse:
     """Return the authenticated owner's bounded Memory Center snapshot."""
     require_owner_path_user(user_id, current_user)
-    return memory_center_service.snapshot(user_id)
+    return await memory_center_service.snapshot(user_id)
 
 
 @router.get(
@@ -51,7 +51,7 @@ async def list_memory_proposals(
 ) -> MemoryProposalListResponse:
     """Return pending candidates that still require an owner decision."""
     require_owner_path_user(user_id, current_user)
-    return memory_center_service.list_proposals(user_id)
+    return await memory_center_service.list_proposals(user_id)
 
 
 @router.put(
@@ -66,7 +66,7 @@ async def update_memory_type_personalization(
 ) -> MemoryTypePersonalizationResponse:
     """Enable or disable one category for future agent personalization."""
     require_owner_path_user(user_id, current_user)
-    disabled = memory_center_service.set_type_personalization(
+    disabled = await memory_center_service.set_type_personalization(
         user_id=user_id,
         memory_type=memory_type,
         enabled=request.enabled,
@@ -92,7 +92,7 @@ async def edit_memory(
     """Edit one memory through safety validation and optimistic locking."""
     require_owner_path_user(user_id, current_user)
     try:
-        return memory_center_service.edit(
+        return await memory_center_service.edit(
             user_id=user_id,
             memory_id=memory_id,
             summary=request.summary,
@@ -117,7 +117,7 @@ async def archive_memory(
     """Archive one owner-scoped episodic memory."""
     require_owner_path_user(user_id, current_user)
     try:
-        return memory_center_service.archive(
+        return await memory_center_service.archive(
             user_id=user_id,
             memory_id=memory_id,
             expected_version=request.expected_version,
@@ -143,7 +143,7 @@ async def restore_memory(
     """Restore one archived or inactive memory."""
     require_owner_path_user(user_id, current_user)
     try:
-        return memory_center_service.restore(
+        return await memory_center_service.restore(
             user_id=user_id,
             memory_id=memory_id,
             expected_version=request.expected_version,
@@ -169,7 +169,7 @@ async def delete_memory(
     """Physically delete one owner-scoped memory body."""
     require_owner_path_user(user_id, current_user)
     try:
-        return memory_center_service.delete(
+        return await memory_center_service.delete(
             user_id=user_id,
             memory_id=memory_id,
             expected_version=request.expected_version,
@@ -191,7 +191,7 @@ async def confirm_memory_proposal(
     """Confirm one pending candidate and erase the proposal body."""
     require_owner_path_user(user_id, current_user)
     try:
-        return memory_center_service.confirm_proposal(
+        return await memory_center_service.confirm_proposal(
             user_id=user_id,
             proposal_id=proposal_id,
             expected_version=request.expected_version,
@@ -215,7 +215,7 @@ async def reject_memory_proposal(
     """Reject one candidate and erase its pending body."""
     require_owner_path_user(user_id, current_user)
     try:
-        return memory_center_service.reject_proposal(
+        return await memory_center_service.reject_proposal(
             user_id=user_id,
             proposal_id=proposal_id,
             expected_version=request.expected_version,

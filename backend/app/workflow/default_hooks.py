@@ -60,17 +60,17 @@ class MetricsHook(NullHarnessHook):
         """Keep the hook active at the action boundary without payload capture."""
         return None
 
-    def after_trace(self, trace: TraceRecord) -> None:
+    async def after_trace(self, trace: TraceRecord) -> None:
         """Record aggregate counters from the persisted trace."""
-        self.repository.record_trace(trace)
+        await self.repository.record_trace(trace)
 
-    def snapshot(self) -> HarnessMetricsSnapshot:
+    async def snapshot(self) -> HarnessMetricsSnapshot:
         """Return a copy of the current aggregate metrics."""
-        return self.repository.snapshot()
+        return await self.repository.snapshot()
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
         """Reset metrics for tests or local demo resets."""
-        self.repository.reset()
+        await self.repository.reset()
 
 
 privacy_guard_hook = PrivacyGuardHook()

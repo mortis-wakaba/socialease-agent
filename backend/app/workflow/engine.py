@@ -3,6 +3,7 @@
 from collections.abc import Iterable
 from datetime import datetime, timezone
 import hashlib
+import inspect
 import json
 import logging
 from time import perf_counter
@@ -38,6 +39,7 @@ from app.models import (
 )
 from app.models_conversation import ConversationEventRole
 from app.models_conversation_context import ConversationPromptContext
+from app.models_protocols import ProtocolStatus
 from app.models_intervention import InterventionPlan
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.actions import HarnessAction
@@ -136,10 +138,12 @@ class AgentHarness:
         stage_started = perf_counter()
         errors: list[str] = []
         request_id = _optional_string(request.context.get("request_id")) or get_request_id()
-        user_profile = self.user_profile_repository.get_summary(request.user_id)
+        user_profile = await self.user_profile_repository.get_summary(request.user_id)
         memory_context = build_memory_context(
             practice_summary=user_profile,
-            memory_settings=self.memory_settings_repository.get(request.user_id),
+            memory_settings=await self.memory_settings_repository.get(
+                request.user_id
+            ),
         )
         run_context = RunContext(
             run_id=run_id,
@@ -229,13 +233,13 @@ class AgentHarness:
         protocol_to_consume = None
         if (
             permission_decision.action == PermissionAction.ASK_CONSENT
-            and protocol_service.is_approved_for_action(
+            and await protocol_service.claim_for_action(
                 protocol_id=approved_protocol_id,
                 user_id=request.user_id,
                 harness_action=harness_action,
                 request_hash=protocol_request_hash,
                 session_id=run_context.session_id,
-            )
+            ) is not None
         ):
             permission_decision = PermissionDecision(
                 action=PermissionAction.ALLOW,
@@ -283,7 +287,7 @@ class AgentHarness:
             PermissionAction.ASK_CONSENT,
             PermissionAction.BLOCK,
         }:
-            skill_result = _permission_limited_result(
+            skill_result = await _permission_limited_result(
                 decision=permission_decision,
                 harness_action=harness_action,
                 user_id=request.user_id,
@@ -298,15 +302,9 @@ class AgentHarness:
                     skill_result_data=skill_result.structured_data,
                 )
                 if protocol_to_consume is not None:
-                    consumed = protocol_service.consume_for_action(
-                        protocol_id=protocol_to_consume,
-                        user_id=request.user_id,
-                        harness_action=harness_action,
-                        request_hash=protocol_request_hash,
-                        session_id=run_context.session_id,
+                    skill_result.structured_data["protocol_status"] = (
+                        ProtocolStatus.CONSUMED.value
                     )
-                    if consumed is not None:
-                        skill_result.structured_data["protocol_status"] = consumed.status.value
             except Exception as exc:
                 category = categorize_error(exc)
                 if category == ErrorCategory.UNKNOWN_FAILURE:
@@ -412,9 +410,11 @@ class AgentHarness:
             or run_context.session_id
         )
         intervention_plan = None
-        linked_intervention_plan_id = protocol_service.linked_intervention_plan_id(
-            protocol_id=protocol_to_consume,
-            user_id=request.user_id,
+        linked_intervention_plan_id = (
+            await protocol_service.linked_intervention_plan_id(
+                protocol_id=protocol_to_consume,
+                user_id=request.user_id,
+            )
         )
         memory_payload: dict[str, object] = {
             "memory_kind": "intervention_plan",
@@ -449,7 +449,7 @@ class AgentHarness:
         elif should_consider_intervention_plan:
             try:
                 if linked_intervention_plan_id is not None:
-                    intervention_plan = intervention_plan_service.mark_action_completed(
+                    intervention_plan = await intervention_plan_service.mark_action_completed(
                         user_id=request.user_id,
                         plan_id=linked_intervention_plan_id,
                         result_session_id=session_id or run_id,
@@ -457,7 +457,7 @@ class AgentHarness:
                     )
                 if intervention_plan is None:
                     protocol_id = _optional_string(skill_result.structured_data.get("protocol_id"))
-                    intervention_plan = _create_intervention_plan(
+                    intervention_plan = await _create_intervention_plan(
                         user_id=request.user_id,
                         session_id=session_id or run_id,
                         harness_action=harness_action,
@@ -468,7 +468,7 @@ class AgentHarness:
                         protocol_id=protocol_id,
                     )
                     if intervention_plan is not None and protocol_id is not None:
-                        protocol_service.link_intervention_plan(
+                        await protocol_service.link_intervention_plan(
                             protocol_id=protocol_id,
                             user_id=request.user_id,
                             intervention_plan_id=intervention_plan.plan_id,
@@ -563,12 +563,12 @@ class AgentHarness:
                 }
 
         latency_ms = (perf_counter() - started) * 1000
-        input_decision = persistence_gate.persist_text(
+        input_decision = await persistence_gate.persist_text(
             user_id=request.user_id,
             kind=PersistenceKind.TRACE_INPUT,
             text=request.message,
         )
-        output_decision = persistence_gate.persist_text(
+        output_decision = await persistence_gate.persist_text(
             user_id=request.user_id,
             kind=PersistenceKind.TRACE_OUTPUT,
             text=skill_result.response,
@@ -699,21 +699,23 @@ class AgentHarness:
         trace = self.trace_logger.prepare(trace)
         trace_persisted = True
         try:
-            self.trace_logger.save(trace)
+            await self.trace_logger.save(trace)
         except Exception as exc:
             trace_persisted = False
             trace = _append_trace_error(
                 trace,
                 format_observability_error(ErrorCategory.TRACE_PERSISTENCE_FAILURE, exc),
             )
-            _record_observability_event_safely("trace_persistence")
+            await _record_observability_event_safely("trace_persistence")
             logger.warning("Trace persistence failed: %s", exc.__class__.__name__)
         observability_hook_failed = False
         for hook in self.hooks:
             method = getattr(hook, "after_trace", None)
             if method is not None:
                 try:
-                    method(trace)
+                    result = method(trace)
+                    if inspect.isawaitable(result):
+                        await result
                 except Exception as exc:
                     observability_hook_failed = True
                     trace = _append_trace_error(
@@ -723,12 +725,12 @@ class AgentHarness:
                             exc,
                         ),
                     )
-                    _record_observability_event_safely("observability_hook")
+                    await _record_observability_event_safely("observability_hook")
                     logger.warning(
                         "Post-trace hook failed: %s",
                         exc.__class__.__name__,
                     )
-        stop_hook_errors = _run_on_stop_hooks(self.hooks, run_context, trace)
+        stop_hook_errors = await _run_on_stop_hooks(self.hooks, run_context, trace)
         for marker in stop_hook_errors:
             trace = _append_trace_error(trace, marker)
         observability_hook_failed = observability_hook_failed or bool(stop_hook_errors)
@@ -1042,7 +1044,7 @@ def _annotate_context_selection(
         )
 
 
-def _permission_limited_result(
+async def _permission_limited_result(
     *,
     decision: PermissionDecision,
     harness_action: HarnessAction,
@@ -1052,7 +1054,7 @@ def _permission_limited_result(
 ) -> SkillResult:
     """Return a bounded response when an action cannot run immediately."""
     if decision.action == PermissionAction.ASK_CONSENT:
-        protocol = protocol_service.create_consent_request(
+        protocol = await protocol_service.create_consent_request(
             user_id=user_id,
             harness_action=harness_action,
             reason=decision.reason,
@@ -1146,7 +1148,7 @@ def _hook_limited_result(
     )
 
 
-def _create_intervention_plan(
+async def _create_intervention_plan(
     *,
     user_id: str,
     session_id: str,
@@ -1163,7 +1165,7 @@ def _create_intervention_plan(
     if permission_decision.action == PermissionAction.BLOCK:
         return None
     intensity = _plan_intensity(harness_action, skill_result_data)
-    return intervention_plan_service.create_for_action(
+    return await intervention_plan_service.create_for_action(
         user_id=user_id,
         session_id=session_id,
         harness_action=harness_action,
@@ -1242,7 +1244,7 @@ def _run_before_memory_write_hooks(
     return None
 
 
-def _run_on_stop_hooks(
+async def _run_on_stop_hooks(
     hooks: tuple[AgentHarnessHook, ...],
     run_context: RunContext,
     trace: TraceRecord,
@@ -1253,7 +1255,9 @@ def _run_on_stop_hooks(
         method = getattr(hook, "on_stop", None)
         if method is not None:
             try:
-                method(run_context, trace)
+                result = method(run_context, trace)
+                if inspect.isawaitable(result):
+                    await result
             except Exception as exc:
                 errors.append(
                     format_observability_error(
@@ -1261,7 +1265,7 @@ def _run_on_stop_hooks(
                         exc,
                     )
                 )
-                _record_observability_event_safely("observability_hook")
+                await _record_observability_event_safely("observability_hook")
                 logger.warning("Stop hook failed: %s", exc.__class__.__name__)
     return errors
 
@@ -1278,17 +1282,17 @@ def _append_trace_error(trace: TraceRecord, marker: str) -> TraceRecord:
     )
 
 
-def _record_observability_event_safely(event: str) -> None:
+async def _record_observability_event_safely(event: str) -> None:
     """Best-effort operational metric that can never block a user response."""
     try:
         if event == "trace_persistence":
             from app.observability.runtime_events import record_trace_persistence_failure
 
-            record_trace_persistence_failure()
+            await record_trace_persistence_failure()
         else:
             from app.observability.runtime_events import record_observability_hook_failure
 
-            record_observability_hook_failure()
+            await record_observability_hook_failure()
     except Exception:
         return
 

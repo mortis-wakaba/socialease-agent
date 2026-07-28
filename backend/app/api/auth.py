@@ -38,6 +38,7 @@ from app.services.account_service import (
     account_service,
     signup_enabled,
 )
+from app.services.conversation_runtime import delete_conversation_runtime_for_user
 from app.services.support_resource_service import support_resource_service
 from app.services.worksheet_service import worksheet_service
 
@@ -84,9 +85,9 @@ async def register(
 ) -> AuthResponse:
     """Create an account and return access/refresh tokens."""
     _require_allowed_cookie_auth_origin(request)
-    check_auth_rate_limit(request, action="register", email=body.email)
+    await check_auth_rate_limit(request, action="register", email=body.email)
     try:
-        auth_response = account_service.register(
+        auth_response = await account_service.register(
             body.email,
             body.password,
             invite_code=body.invite_code,
@@ -113,9 +114,9 @@ async def login(
 ) -> AuthResponse:
     """Authenticate an account and return access/refresh tokens."""
     _require_allowed_cookie_auth_origin(request)
-    check_auth_rate_limit(request, action="login", email=body.email)
+    await check_auth_rate_limit(request, action="login", email=body.email)
     try:
-        auth_response = account_service.login(body.email, body.password)
+        auth_response = await account_service.login(body.email, body.password)
         set_auth_cookies(
             response,
             access_token=auth_response.tokens.access_token,
@@ -141,7 +142,7 @@ async def refresh(
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Refresh token required.")
     try:
-        auth_response = account_service.refresh(refresh_token)
+        auth_response = await account_service.refresh(refresh_token)
         set_auth_cookies(
             response,
             access_token=auth_response.tokens.access_token,
@@ -165,7 +166,7 @@ async def logout(
     if not refresh_token:
         clear_auth_cookies(response)
         raise HTTPException(status_code=401, detail="Refresh token required.")
-    revoked = account_service.logout(refresh_token)
+    revoked = await account_service.logout(refresh_token)
     clear_auth_cookies(response)
     return LogoutResponse(revoked=revoked)
 
@@ -179,14 +180,17 @@ async def delete_account(
     if not current_user.user_id:
         raise HTTPException(status_code=401, detail="Authentication required")
     try:
-        result = account_service.delete_account(current_user.user_id)
+        result = await account_service.delete_account(current_user.user_id)
     except InvalidCredentialsError as error:
         raise HTTPException(status_code=404, detail=str(error))
     except AccountError as error:
         raise HTTPException(status_code=500, detail=str(error))
     await worksheet_service.delete_user_context(current_user.user_id)
     await support_resource_service.delete_user_context(current_user.user_id)
-    record_memory_delete()
+    await delete_conversation_runtime_for_user(
+        user_id=current_user.user_id
+    )
+    await record_memory_delete()
     clear_auth_cookies(response)
     return result
 

@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 import re
 
-from app.conversation.adapters.base import ModuleAdapterResult
+from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
 from app.models_conversation import (
     ExposureMessageEventPayload,
     ExposureParameters,
@@ -29,14 +29,33 @@ class ExposureModuleAdapter:
     def __init__(self, service: ExposureService | None = None) -> None:
         self._service = service or exposure_service
 
-    async def start(
+    async def prepare_start(
         self,
         run: ModuleRun,
         context: ConversationWorkingContext,
-    ) -> ModuleAdapterResult:
+    ) -> PreparedModuleStart:
         del context
         parameters = _parameters(run)
         if parameters.starting_anxiety is None:
+            return PreparedModuleStart(payload=None)
+        prepared = await self._service.prepare_plan(
+            ExposurePlanRequest(
+                user_id=run.user_id,
+                target_scenario=parameters.goal,
+                current_anxiety_level=parameters.starting_anxiety,
+                previous_attempts=[],
+            )
+        )
+        if prepared.blocked:
+            raise ValueError("exposure plan could not be started safely")
+        return PreparedModuleStart(payload=prepared)
+
+    async def persist_start(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+    ) -> ModuleAdapterResult:
+        if prepared.payload is None:
             return ModuleAdapterResult(
                 response=(
                     "已进入分级社交练习。开始制定安全小步骤前，请告诉我当前压力强度"
@@ -47,7 +66,27 @@ class ExposureModuleAdapter:
                     awaiting_anxiety_level=True,
                 ),
             )
-        return await self._create_plan(run, parameters.starting_anxiety)
+        result = await self._service.persist_prepared_plan(
+            prepared.payload,
+            plan_id=run.domain_session_id,
+        )
+        if result.blocked or result.plan is None:
+            raise ValueError("exposure plan could not be started safely")
+        return ModuleAdapterResult(
+            response=result.response,
+            domain_session_id=result.plan.plan_id,
+            event_payload=ExposureMessageEventPayload(
+                plan_id=result.plan.plan_id,
+            ),
+        )
+
+    async def after_start_commit(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+        result: ModuleAdapterResult,
+    ) -> None:
+        del run, prepared, result
 
     async def handle_message(
         self,
@@ -81,7 +120,7 @@ class ExposureModuleAdapter:
         del context
         plan = None
         if run.domain_session_id:
-            plan = self._service.store.get_by_id_for_user(
+            plan = await self._service.store.get_by_id_for_user(
                 plan_id=run.domain_session_id,
                 user_id=run.user_id,
             )
@@ -180,7 +219,8 @@ class ExposureModuleAdapter:
                 target_scenario=parameters.goal,
                 current_anxiety_level=anxiety,
                 previous_attempts=[],
-            )
+            ),
+            plan_id=run.domain_session_id,
         )
         if result.blocked or result.plan is None:
             raise ValueError("exposure plan could not be started safely")

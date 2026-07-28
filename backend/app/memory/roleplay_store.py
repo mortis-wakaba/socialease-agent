@@ -22,17 +22,19 @@ class RoleplaySessionStore:
     def __init__(self, repository: RoleplaySessionRepository | None = None) -> None:
         self.repository = repository or SQLiteRoleplaySessionRepository()
 
-    def create(
+    async def create(
         self,
         user_id: str,
         scenario_spec: ScenarioSpec,
         difficulty: int,
         retrieved_guidance: RoleplayGuidance,
+        *,
+        session_id: str | None = None,
     ) -> RoleplaySession:
         """Create and store a new role-play session."""
         now = datetime.now(timezone.utc)
         session = RoleplaySession(
-            session_id=str(uuid4()),
+            session_id=session_id or str(uuid4()),
             user_id=user_id,
             scenario=None,
             scenario_spec=scenario_spec,
@@ -42,26 +44,26 @@ class RoleplaySessionStore:
             created_at=now,
             updated_at=now,
         )
-        return self.repository.save(session)
+        return await self.repository.save(session)
 
-    def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
+    async def get_for_user(self, session_id: str, user_id: str) -> RoleplaySession | None:
         """Return a session only if it belongs to the user."""
-        return self.repository.get_for_user(session_id, user_id)
+        return await self.repository.get_for_user(session_id, user_id)
 
-    def list_for_user(
+    async def list_for_user(
         self,
         user_id: str,
         limit: int = 20,
         offset: int = 0,
     ) -> list[RoleplaySession]:
         """Return recent sessions for one user."""
-        return self.repository.list_for_user(
+        return await self.repository.list_for_user(
             user_id=user_id,
             limit=limit,
             offset=offset,
         )
 
-    def record_features(
+    async def record_features(
         self,
         *,
         session_id: str,
@@ -69,7 +71,7 @@ class RoleplaySessionStore:
         features: RoleplayMessageFeatures,
     ) -> RoleplaySession | None:
         """Persist privacy-safe turn features without duplicating transcript text."""
-        session = self.repository.get_for_user(session_id, user_id)
+        session = await self.repository.get_for_user(session_id, user_id)
         if session is None:
             return None
         updated = session.model_copy(
@@ -82,9 +84,9 @@ class RoleplaySessionStore:
             },
             deep=True,
         )
-        return self.repository.save(updated)
+        return await self.repository.save(updated)
 
-    def update_status(
+    async def update_status(
         self,
         session_id: str,
         user_id: str,
@@ -92,7 +94,7 @@ class RoleplaySessionStore:
     ) -> RoleplaySession | None:
         """Update a role-play session lifecycle status."""
         now = datetime.now(timezone.utc)
-        session = self.repository.get_for_user(session_id, user_id)
+        session = await self.repository.get_for_user(session_id, user_id)
         if session is None:
             return None
         updated = session.model_copy(
@@ -101,7 +103,7 @@ class RoleplaySessionStore:
                 "updated_at": now,
             }
         )
-        return self.repository.save(updated)
+        return await self.repository.save(updated)
 
 
 roleplay_session_store = RoleplaySessionStore()

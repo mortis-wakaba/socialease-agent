@@ -38,34 +38,34 @@ class InvalidMemoryTransitionError(MemoryRepositoryError):
 class LongTermMemoryRepository(Protocol):
     """Persistence contract shared by SQLite and PostgreSQL adapters."""
 
-    def create_memory(
+    async def create_memory(
         self,
         record: EpisodicMemoryRecord,
         *,
         reason_code: str,
     ) -> EpisodicMemoryRecord: ...
 
-    def get_memory(
+    async def get_memory(
         self,
         memory_id: str,
         user_id: str,
     ) -> EpisodicMemoryRecord | None: ...
 
-    def get_memory_by_idempotency_key(
+    async def get_memory_by_idempotency_key(
         self,
         *,
         user_id: str,
         idempotency_key: str,
     ) -> EpisodicMemoryRecord | None: ...
 
-    def get_memory_by_content_hash(
+    async def get_memory_by_content_hash(
         self,
         *,
         user_id: str,
         content_hash: str,
     ) -> EpisodicMemoryRecord | None: ...
 
-    def list_memories(
+    async def list_memories(
         self,
         user_id: str,
         *,
@@ -73,7 +73,7 @@ class LongTermMemoryRepository(Protocol):
         limit: int = 100,
     ) -> list[EpisodicMemoryRecord]: ...
 
-    def search_memory_candidates(
+    async def search_memory_candidates(
         self,
         *,
         user_id: str,
@@ -86,7 +86,7 @@ class LongTermMemoryRepository(Protocol):
         limit: int = 50,
     ) -> list[EpisodicMemoryRecord]: ...
 
-    def record_retrieval(
+    async def record_retrieval(
         self,
         *,
         user_id: str,
@@ -95,7 +95,7 @@ class LongTermMemoryRepository(Protocol):
         reason_code: str,
     ) -> int: ...
 
-    def transition_memory(
+    async def transition_memory(
         self,
         *,
         memory_id: str,
@@ -106,7 +106,7 @@ class LongTermMemoryRepository(Protocol):
         changed_at: datetime | None = None,
     ) -> EpisodicMemoryRecord: ...
 
-    def update_memory_summary(
+    async def update_memory_summary(
         self,
         *,
         memory_id: str,
@@ -119,7 +119,7 @@ class LongTermMemoryRepository(Protocol):
         changed_at: datetime | None = None,
     ) -> EpisodicMemoryRecord: ...
 
-    def delete_memory(
+    async def delete_memory(
         self,
         *,
         memory_id: str,
@@ -129,7 +129,7 @@ class LongTermMemoryRepository(Protocol):
         changed_at: datetime | None = None,
     ) -> None: ...
 
-    def save_checkpoint(
+    async def save_checkpoint(
         self,
         checkpoint: PracticeThreadCheckpoint,
         *,
@@ -138,20 +138,20 @@ class LongTermMemoryRepository(Protocol):
         changed_at: datetime | None = None,
     ) -> PracticeThreadCheckpoint: ...
 
-    def get_checkpoint(
+    async def get_checkpoint(
         self,
         thread_id: str,
         user_id: str,
     ) -> PracticeThreadCheckpoint | None: ...
 
-    def list_checkpoints(
+    async def list_checkpoints(
         self,
         user_id: str,
         *,
         limit: int = 100,
     ) -> list[PracticeThreadCheckpoint]: ...
 
-    def list_events(
+    async def list_events(
         self,
         *,
         user_id: str,
@@ -197,7 +197,7 @@ class SQLiteLongTermMemoryRepository:
     def __init__(self) -> None:
         initialize_database()
 
-    def create_memory(
+    async def create_memory(
         self,
         record: EpisodicMemoryRecord,
         *,
@@ -237,7 +237,7 @@ class SQLiteLongTermMemoryRepository:
             ) from error
         return record
 
-    def get_memory(
+    async def get_memory(
         self,
         memory_id: str,
         user_id: str,
@@ -251,7 +251,7 @@ class SQLiteLongTermMemoryRepository:
             ).fetchone()
         return _memory_from_row(row) if row else None
 
-    def get_memory_by_idempotency_key(
+    async def get_memory_by_idempotency_key(
         self,
         *,
         user_id: str,
@@ -266,7 +266,7 @@ class SQLiteLongTermMemoryRepository:
             ).fetchone()
         return _memory_from_row(row) if row else None
 
-    def get_memory_by_content_hash(
+    async def get_memory_by_content_hash(
         self,
         *,
         user_id: str,
@@ -291,7 +291,7 @@ class SQLiteLongTermMemoryRepository:
             ).fetchone()
         return _memory_from_row(row) if row else None
 
-    def list_memories(
+    async def list_memories(
         self,
         user_id: str,
         *,
@@ -317,7 +317,7 @@ class SQLiteLongTermMemoryRepository:
             ).fetchall()
         return [_memory_from_row(row) for row in rows]
 
-    def search_memory_candidates(
+    async def search_memory_candidates(
         self,
         *,
         user_id: str,
@@ -368,7 +368,7 @@ class SQLiteLongTermMemoryRepository:
             rows = connection.execute(query, parameters).fetchall()
         return [_memory_from_row(row) for row in rows]
 
-    def record_retrieval(
+    async def record_retrieval(
         self,
         *,
         user_id: str,
@@ -424,7 +424,7 @@ class SQLiteLongTermMemoryRepository:
                 updated_count += 1
         return updated_count
 
-    def transition_memory(
+    async def transition_memory(
         self,
         *,
         memory_id: str,
@@ -482,7 +482,7 @@ class SQLiteLongTermMemoryRepository:
             )
         return updated
 
-    def update_memory_summary(
+    async def update_memory_summary(
         self,
         *,
         memory_id: str,
@@ -555,7 +555,7 @@ class SQLiteLongTermMemoryRepository:
             ) from error
         return updated
 
-    def delete_memory(
+    async def delete_memory(
         self,
         *,
         memory_id: str,
@@ -593,7 +593,7 @@ class SQLiteLongTermMemoryRepository:
                 raise MemoryConflictError("episodic memory was changed concurrently")
             _insert_sqlite_event(connection, event)
 
-    def save_checkpoint(
+    async def save_checkpoint(
         self,
         checkpoint: PracticeThreadCheckpoint,
         *,
@@ -691,7 +691,7 @@ class SQLiteLongTermMemoryRepository:
             )
         return saved
 
-    def get_checkpoint(
+    async def get_checkpoint(
         self,
         thread_id: str,
         user_id: str,
@@ -705,7 +705,7 @@ class SQLiteLongTermMemoryRepository:
             ).fetchone()
         return _checkpoint_from_row(row) if row else None
 
-    def list_checkpoints(
+    async def list_checkpoints(
         self,
         user_id: str,
         *,
@@ -722,7 +722,7 @@ class SQLiteLongTermMemoryRepository:
             ).fetchall()
         return [_checkpoint_from_row(row) for row in rows]
 
-    def list_events(
+    async def list_events(
         self,
         *,
         user_id: str,

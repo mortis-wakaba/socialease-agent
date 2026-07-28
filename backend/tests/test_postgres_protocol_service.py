@@ -49,10 +49,11 @@ def plan_repository() -> PostgresInterventionPlanRepository:
     return PostgresInterventionPlanRepository(database_url=TEST_DATABASE_URL)
 
 
-def test_postgres_protocol_service_approve_and_consume(service: ProtocolService) -> None:
+@pytest.mark.anyio
+async def test_postgres_protocol_service_approve_and_consume(service: ProtocolService) -> None:
     user_id = f"pg_service_user_{uuid4().hex}"
     request_hash = f"pg-service-hash-{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
         reason="test consent",
@@ -61,26 +62,26 @@ def test_postgres_protocol_service_approve_and_consume(service: ProtocolService)
         request_hash=request_hash,
     )
 
-    approved = service.respond(
+    approved = await service.respond(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         approved=True,
     )
-    allowed = service.is_approved_for_action(
+    allowed = await service.is_approved_for_action(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
         request_hash=request_hash,
         session_id="pg-service-session",
     )
-    consumed = service.consume_for_action(
+    consumed = await service.consume_for_action(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
         request_hash=request_hash,
         session_id="pg-service-session",
     )
-    replay = service.consume_for_action(
+    replay = await service.consume_for_action(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
@@ -96,9 +97,10 @@ def test_postgres_protocol_service_approve_and_consume(service: ProtocolService)
     assert replay is None
 
 
-def test_postgres_protocol_service_rejects_wrong_owner(service: ProtocolService) -> None:
+@pytest.mark.anyio
+async def test_postgres_protocol_service_rejects_wrong_owner(service: ProtocolService) -> None:
     user_id = f"pg_owner_user_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.CREATE_EXPOSURE_PLAN,
         reason="test consent",
@@ -107,21 +109,22 @@ def test_postgres_protocol_service_rejects_wrong_owner(service: ProtocolService)
         request_hash="pg-owner-hash",
     )
 
-    wrong_owner_response = service.respond(
+    wrong_owner_response = await service.respond(
         protocol_id=protocol.protocol_id,
         user_id=f"wrong_owner_{uuid4().hex}",
         approved=True,
     )
-    original = service.store.get_for_user(protocol.protocol_id, user_id)
+    original = await service.store.get_for_user(protocol.protocol_id, user_id)
 
     assert wrong_owner_response is None
     assert original is not None
     assert original.status == ProtocolStatus.PENDING
 
 
-def test_postgres_protocol_service_expires_pending(service: ProtocolService) -> None:
+@pytest.mark.anyio
+async def test_postgres_protocol_service_expires_pending(service: ProtocolService) -> None:
     user_id = f"pg_expired_service_user_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.CREATE_WORKSHEET,
         reason="test consent",
@@ -131,20 +134,21 @@ def test_postgres_protocol_service_expires_pending(service: ProtocolService) -> 
         ttl_seconds=-1,
     )
 
-    expired_count = service.expire_pending_protocols(now=datetime.now(timezone.utc))
-    fetched = service.store.get_for_user(protocol.protocol_id, user_id)
+    expired_count = await service.expire_pending_protocols(now=datetime.now(timezone.utc))
+    fetched = await service.store.get_for_user(protocol.protocol_id, user_id)
 
     assert expired_count >= 1
     assert fetched is not None
     assert fetched.status == ProtocolStatus.EXPIRED
 
 
-def test_postgres_protocol_approval_updates_linked_plan_in_transaction(
+@pytest.mark.anyio
+async def test_postgres_protocol_approval_updates_linked_plan_in_transaction(
     service: ProtocolService,
     plan_repository: PostgresInterventionPlanRepository,
 ) -> None:
     user_id = f"pg_plan_approve_user_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
         reason="test consent",
@@ -152,7 +156,7 @@ def test_postgres_protocol_approval_updates_linked_plan_in_transaction(
         session_id="pg-plan-approve-session",
         request_hash="pg-plan-approve-hash",
     )
-    plan = plan_repository.create(
+    plan = await plan_repository.create(
         user_id=user_id,
         session_id="pg-plan-approve-session",
         status="pending_consent",
@@ -162,18 +166,18 @@ def test_postgres_protocol_approval_updates_linked_plan_in_transaction(
             _step("start_roleplay", status="pending"),
         ],
     )
-    linked = service.link_intervention_plan(
+    linked = await service.link_intervention_plan(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         intervention_plan_id=plan.plan_id,
     )
 
-    approved = service.respond(
+    approved = await service.respond(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         approved=True,
     )
-    updated_plan = plan_repository.get_by_id_for_user(plan.plan_id, user_id)
+    updated_plan = await plan_repository.get_by_id_for_user(plan.plan_id, user_id)
 
     assert linked is not None
     assert approved is not None
@@ -184,12 +188,13 @@ def test_postgres_protocol_approval_updates_linked_plan_in_transaction(
     assert updated_plan.steps[1].status == "pending"
 
 
-def test_postgres_protocol_rejection_updates_linked_plan_in_transaction(
+@pytest.mark.anyio
+async def test_postgres_protocol_rejection_updates_linked_plan_in_transaction(
     service: ProtocolService,
     plan_repository: PostgresInterventionPlanRepository,
 ) -> None:
     user_id = f"pg_plan_reject_user_{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.CREATE_EXPOSURE_PLAN,
         reason="test consent",
@@ -197,7 +202,7 @@ def test_postgres_protocol_rejection_updates_linked_plan_in_transaction(
         session_id="pg-plan-reject-session",
         request_hash="pg-plan-reject-hash",
     )
-    plan = plan_repository.create(
+    plan = await plan_repository.create(
         user_id=user_id,
         session_id="pg-plan-reject-session",
         status="pending_consent",
@@ -207,18 +212,18 @@ def test_postgres_protocol_rejection_updates_linked_plan_in_transaction(
             _step("create_ladder", status="pending"),
         ],
     )
-    service.link_intervention_plan(
+    await service.link_intervention_plan(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         intervention_plan_id=plan.plan_id,
     )
 
-    rejected = service.respond(
+    rejected = await service.respond(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         approved=False,
     )
-    updated_plan = plan_repository.get_by_id_for_user(plan.plan_id, user_id)
+    updated_plan = await plan_repository.get_by_id_for_user(plan.plan_id, user_id)
 
     assert rejected is not None
     assert rejected.status == ProtocolStatus.REJECTED
@@ -227,13 +232,14 @@ def test_postgres_protocol_rejection_updates_linked_plan_in_transaction(
     assert [step.status for step in updated_plan.steps] == ["cancelled", "cancelled"]
 
 
-def test_postgres_protocol_consume_can_complete_linked_plan_in_transaction(
+@pytest.mark.anyio
+async def test_postgres_protocol_consume_can_complete_linked_plan_in_transaction(
     service: ProtocolService,
     plan_repository: PostgresInterventionPlanRepository,
 ) -> None:
     user_id = f"pg_plan_consume_user_{uuid4().hex}"
     request_hash = f"pg-plan-consume-hash-{uuid4().hex}"
-    protocol = service.create_consent_request(
+    protocol = await service.create_consent_request(
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
         reason="test consent",
@@ -241,7 +247,7 @@ def test_postgres_protocol_consume_can_complete_linked_plan_in_transaction(
         session_id="pg-plan-consume-session",
         request_hash=request_hash,
     )
-    plan = plan_repository.create(
+    plan = await plan_repository.create(
         user_id=user_id,
         session_id="pg-plan-consume-session",
         status="pending_consent",
@@ -251,19 +257,19 @@ def test_postgres_protocol_consume_can_complete_linked_plan_in_transaction(
             _step("start_roleplay", status="pending"),
         ],
     )
-    service.link_intervention_plan(
+    await service.link_intervention_plan(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         intervention_plan_id=plan.plan_id,
     )
-    approved = service.respond(
+    approved = await service.respond(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         approved=True,
     )
     assert approved is not None
 
-    consumed = service.consume_for_action(
+    consumed = await service.consume_for_action(
         protocol_id=protocol.protocol_id,
         user_id=user_id,
         harness_action=HarnessAction.START_ROLEPLAY,
@@ -272,7 +278,7 @@ def test_postgres_protocol_consume_can_complete_linked_plan_in_transaction(
         result_session_id="roleplay-result-session",
         result_summary="Executed start_roleplay.",
     )
-    updated_plan = plan_repository.get_by_id_for_user(plan.plan_id, user_id)
+    updated_plan = await plan_repository.get_by_id_for_user(plan.plan_id, user_id)
 
     assert consumed is not None
     assert consumed.status == ProtocolStatus.CONSUMED

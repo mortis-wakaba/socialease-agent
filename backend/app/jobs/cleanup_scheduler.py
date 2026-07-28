@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import signal
-import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -37,7 +37,7 @@ class CleanupScheduler:
         service: RetentionService,
         config: CleanupSchedulerConfig,
         *,
-        sleep_fn: Callable[[float], None] = time.sleep,
+        sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now_fn: Callable[[], datetime] | None = None,
         logger: logging.Logger | None = None,
         run_lock: CleanupRunLock | None = None,
@@ -57,7 +57,7 @@ class CleanupScheduler:
         """Request a graceful stop after the current iteration."""
         self._stop_requested = True
 
-    def run_once(self) -> RetentionResult:
+    async def run_once(self) -> RetentionResult:
         """Run one cleanup iteration and log aggregate counts only."""
         if self.config.dry_run:
             result = RetentionResult(
@@ -69,7 +69,7 @@ class CleanupScheduler:
             )
             self._log_result(result, dry_run=True)
             return result
-        if not self.run_lock.acquire():
+        if not await self.run_lock.acquire():
             self.last_run_skipped_due_to_lock = True
             self.logger.info(
                 "cleanup_scheduler_iteration_skipped lock_backend=%s reason=lock_held",
@@ -78,29 +78,29 @@ class CleanupScheduler:
             return RetentionResult(expired_protocols=0, cancelled_intervention_plans=0)
         self.last_run_skipped_due_to_lock = False
         try:
-            result = self.service.run_once(
+            result = await self.service.run_once(
                 now=self.now_fn(),
                 abandoned_plan_minutes=self.config.abandoned_plan_minutes,
                 trace_retention_days=self.config.trace_retention_days,
                 protocol_retention_days=self.config.protocol_retention_days,
             )
         finally:
-            self.run_lock.release()
+            await self.run_lock.release()
         self._log_result(result, dry_run=False)
         return result
 
-    def run_forever(self, *, max_runs: int | None = None) -> int:
+    async def run_forever(self, *, max_runs: int | None = None) -> int:
         """Run cleanup repeatedly until stopped or max_runs is reached."""
         runs = 0
         while not self._stop_requested:
             try:
-                self.run_once()
+                await self.run_once()
             except Exception:
                 self.logger.exception("cleanup_scheduler_iteration_failed")
             runs += 1
             if max_runs is not None and runs >= max_runs:
                 break
-            self.sleep_fn(self.config.interval_seconds)
+            await self.sleep_fn(self.config.interval_seconds)
         return runs
 
     def _log_result(self, result: RetentionResult, *, dry_run: bool) -> None:
@@ -195,9 +195,9 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_stop)
 
     if args.run_once:
-        scheduler.run_once()
+        asyncio.run(scheduler.run_once())
         return
-    scheduler.run_forever(max_runs=args.max_runs)
+    asyncio.run(scheduler.run_forever(max_runs=args.max_runs))
 
 
 if __name__ == "__main__":

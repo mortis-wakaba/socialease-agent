@@ -99,19 +99,19 @@ class HarnessMetricsSnapshot:
 class MetricsRepository:
     """Persistence contract for aggregate harness metrics."""
 
-    def record_trace(self, trace: TraceRecord) -> None:
+    async def record_trace(self, trace: TraceRecord) -> None:
         """Record one non-identifying metrics event from a trace."""
         raise NotImplementedError
 
-    def record_runtime_event(self, event_name: str, *, count: int = 1) -> None:
+    async def record_runtime_event(self, event_name: str, *, count: int = 1) -> None:
         """Record one non-identifying runtime event outside a trace."""
         raise NotImplementedError
 
-    def snapshot(self) -> HarnessMetricsSnapshot:
+    async def snapshot(self) -> HarnessMetricsSnapshot:
         """Return aggregate metrics."""
         raise NotImplementedError
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
         """Clear metrics for tests or local demo resets."""
         raise NotImplementedError
 
@@ -123,22 +123,22 @@ class InMemoryMetricsRepository(MetricsRepository):
         self._lock = Lock()
         self._snapshot = HarnessMetricsSnapshot()
 
-    def record_trace(self, trace: TraceRecord) -> None:
+    async def record_trace(self, trace: TraceRecord) -> None:
         """Record one trace into memory."""
         with self._lock:
             _record_into_snapshot(self._snapshot, trace)
 
-    def record_runtime_event(self, event_name: str, *, count: int = 1) -> None:
+    async def record_runtime_event(self, event_name: str, *, count: int = 1) -> None:
         """Record one runtime event into memory."""
         with self._lock:
             _increment_by(self._snapshot.runtime_event_counts, event_name, count)
 
-    def snapshot(self) -> HarnessMetricsSnapshot:
+    async def snapshot(self) -> HarnessMetricsSnapshot:
         """Return a copy of in-memory metrics."""
         with self._lock:
             return _copy_snapshot(self._snapshot)
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
         """Clear in-memory metrics."""
         with self._lock:
             self._snapshot = HarnessMetricsSnapshot()
@@ -150,7 +150,7 @@ class SQLiteMetricsRepository(MetricsRepository):
     def __init__(self) -> None:
         initialize_database()
 
-    def record_trace(self, trace: TraceRecord) -> None:
+    async def record_trace(self, trace: TraceRecord) -> None:
         """Persist one non-identifying metrics event."""
         _ensure_runtime_metric_table()
         with connect() as connection:
@@ -183,7 +183,7 @@ class SQLiteMetricsRepository(MetricsRepository):
                 ),
             )
 
-    def record_runtime_event(self, event_name: str, *, count: int = 1) -> None:
+    async def record_runtime_event(self, event_name: str, *, count: int = 1) -> None:
         """Persist a non-identifying runtime event."""
         _ensure_runtime_metric_table()
         with connect() as connection:
@@ -195,7 +195,7 @@ class SQLiteMetricsRepository(MetricsRepository):
                     (event_name, datetime.now(timezone.utc).isoformat()),
                 )
 
-    def snapshot(self) -> HarnessMetricsSnapshot:
+    async def snapshot(self) -> HarnessMetricsSnapshot:
         """Return aggregate metrics from persisted metric events."""
         _ensure_runtime_metric_table()
         snapshot = HarnessMetricsSnapshot()
@@ -217,7 +217,7 @@ class SQLiteMetricsRepository(MetricsRepository):
             _increment_by(snapshot.runtime_event_counts, row["event_name"], int(row["event_count"]))
         return snapshot
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
         """Clear persisted metrics for tests or local demo resets."""
         _ensure_runtime_metric_table()
         with connect() as connection:

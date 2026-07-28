@@ -5,10 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from app.conversation.adapters.base import ModuleAdapterResult
+from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
 from app.conversation.module_coordinator import ModuleCoordinator
 from app.conversation.module_policy import ConversationStateError
 from app.conversation.repository import SQLiteConversationRepository
+from app.db.engine import connect
 from app.models_conversation import (
     ExposureMessageEventPayload,
     ExposureParameters,
@@ -42,14 +43,32 @@ class RecordingAdapter:
         self.module_type = module_type
         self.actions: list[str] = []
 
-    async def start(
+    async def prepare_start(
         self,
         run: ModuleRun,
         context: ConversationWorkingContext,
-    ) -> ModuleAdapterResult:
+    ) -> PreparedModuleStart:
         assert context.conversation_id == run.conversation_id
-        self.actions.append(f"start:{run.module_run_id}")
-        return self._result(run, "started")
+        self.actions.append(f"prepare:{run.module_run_id}")
+        return PreparedModuleStart(payload=self._result(run, "started"))
+
+    async def persist_start(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+    ) -> ModuleAdapterResult:
+        self.actions.append(f"persist:{run.module_run_id}")
+        assert isinstance(prepared.payload, ModuleAdapterResult)
+        return prepared.payload
+
+    async def after_start_commit(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+        result: ModuleAdapterResult,
+    ) -> None:
+        del prepared, result
+        self.actions.append(f"after_commit:{run.module_run_id}")
 
     async def handle_message(
         self,
@@ -134,6 +153,24 @@ class FailingTerminateAdapter(RecordingAdapter):
         raise RuntimeError("runtime unavailable")
 
 
+class FailOnceStartAdapter(RecordingAdapter):
+    """Fail the first replayable startup before succeeding."""
+
+    def __init__(self, module_type: ModuleType) -> None:
+        super().__init__(module_type)
+        self.failed = False
+
+    async def persist_start(
+        self,
+        run: ModuleRun,
+        prepared: PreparedModuleStart,
+    ) -> ModuleAdapterResult:
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("transient startup failure")
+        return await super().persist_start(run, prepared)
+
+
 @pytest.fixture
 def repository(
     monkeypatch: pytest.MonkeyPatch,
@@ -155,7 +192,7 @@ def anyio_backend() -> str:
 async def test_roleplay_exposure_nested_push_pop_and_resume(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(
+    conversation = await repository.create(
         user_id="owner",
         title="Nested",
         history_notice_version=HISTORY_NOTICE_VERSION,
@@ -179,10 +216,10 @@ async def test_roleplay_exposure_nested_push_pop_and_resume(
         proposal_id="proposal-exposure",
         module_type=ModuleType.EXPOSURE,
     )
-    repository.save_proposal(roleplay_proposal)
+    await repository.save_proposal(roleplay_proposal)
     context = _working_context(conversation.conversation_id)
     first = await coordinator.accept(roleplay_proposal, context)
-    repository.save_proposal(exposure_proposal)
+    await repository.save_proposal(exposure_proposal)
     nested = await coordinator.accept(exposure_proposal, context)
 
     assert [run.module_type for run in nested.active_module_stack] == [
@@ -233,7 +270,7 @@ async def test_roleplay_exposure_nested_push_pop_and_resume(
 async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Policy")
+    conversation = await repository.create(user_id="owner", title="Policy")
     roleplay_adapter = RecordingAdapter(ModuleType.ROLEPLAY)
     resource_adapter = RecordingAdapter(ModuleType.RESOURCE)
     coordinator = ModuleCoordinator(
@@ -248,7 +285,7 @@ async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
         proposal_id="proposal-roleplay",
         module_type=ModuleType.ROLEPLAY,
     )
-    repository.save_proposal(roleplay)
+    await repository.save_proposal(roleplay)
     context = _working_context(conversation.conversation_id)
     first = await coordinator.accept(roleplay, context)
     replay = await coordinator.accept(
@@ -258,7 +295,7 @@ async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
     assert len(first.active_module_stack) == 1
     assert len(replay.active_module_stack) == 1
     assert len(
-        [action for action in roleplay_adapter.actions if action.startswith("start:")]
+        [action for action in roleplay_adapter.actions if action.startswith("persist:")]
     ) == 1
 
     resource = _proposal(
@@ -266,10 +303,10 @@ async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
         proposal_id="proposal-resource",
         module_type=ModuleType.RESOURCE,
     )
-    repository.save_proposal(resource)
+    await repository.save_proposal(resource)
     with pytest.raises(ConversationStateError):
         await coordinator.accept(resource, context)
-    stored = repository.get_proposal_for_user(
+    stored = await repository.get_proposal_for_user(
         proposal_id=resource.proposal_id,
         conversation_id=conversation.conversation_id,
         user_id="owner",
@@ -279,10 +316,66 @@ async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
 
 
 @pytest.mark.anyio
+async def test_failed_startup_keeps_atomic_frame_and_replays_outbox(
+    repository: SQLiteConversationRepository,
+) -> None:
+    conversation = await repository.create(user_id="owner", title="Replay")
+    adapter = FailOnceStartAdapter(ModuleType.ROLEPLAY)
+    coordinator = ModuleCoordinator(
+        repository=repository,
+        adapters={ModuleType.ROLEPLAY: adapter},
+    )
+    proposal = _proposal(
+        conversation_id=conversation.conversation_id,
+        proposal_id="proposal-replayable-start",
+        module_type=ModuleType.ROLEPLAY,
+    )
+    await repository.save_proposal(proposal)
+    context = _working_context(conversation.conversation_id)
+
+    with pytest.raises(RuntimeError, match="transient startup failure"):
+        await coordinator.accept(proposal, context)
+
+    stored = await repository.get_proposal_for_user(
+        proposal_id=proposal.proposal_id,
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+    )
+    stack = await repository.list_module_stack(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+    )
+    with connect() as connection:
+        outbox = connection.execute(
+            """SELECT status, attempt_count, last_error_code
+            FROM conversation_module_start_outbox"""
+        ).fetchone()
+    assert stored is not None
+    assert stored.status is ModuleProposalStatus.ACCEPTED
+    assert len(stack) == 1
+    assert outbox["status"] == "pending"
+    assert outbox["attempt_count"] == 1
+    assert outbox["last_error_code"] == "RuntimeError"
+
+    replay = await coordinator.accept(stored, context)
+
+    assert len(replay.active_module_stack) == 1
+    with connect() as connection:
+        completed = connection.execute(
+            "SELECT status, attempt_count FROM conversation_module_start_outbox"
+        ).fetchone()
+    assert completed["status"] == "completed"
+    assert completed["attempt_count"] == 2
+    assert len(
+        [action for action in adapter.actions if action.startswith("persist:")]
+    ) == 1
+
+
+@pytest.mark.anyio
 async def test_active_module_receives_messages_on_same_timeline(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Message")
+    conversation = await repository.create(user_id="owner", title="Message")
     adapter = RecordingAdapter(ModuleType.ROLEPLAY)
     coordinator = ModuleCoordinator(
         repository=repository,
@@ -293,7 +386,7 @@ async def test_active_module_receives_messages_on_same_timeline(
         proposal_id="proposal-roleplay-message",
         module_type=ModuleType.ROLEPLAY,
     )
-    repository.save_proposal(proposal)
+    await repository.save_proposal(proposal)
     started = await coordinator.accept(
         proposal,
         _working_context(conversation.conversation_id),
@@ -319,7 +412,7 @@ async def test_active_module_receives_messages_on_same_timeline(
     assert replay_result.response == result.response
     assert replay_event.event_id == event.event_id
     assert adapter.actions.count("message:我的练习回复") == 1
-    refreshed = repository.get_module_run_for_user(
+    refreshed = await repository.get_module_run_for_user(
         module_run_id=event.module_run_id or "",
         conversation_id=conversation.conversation_id,
         user_id="owner",
@@ -332,7 +425,7 @@ async def test_active_module_receives_messages_on_same_timeline(
 async def test_crisis_preemption_stops_nested_stack_even_if_runtime_fails(
     repository: SQLiteConversationRepository,
 ) -> None:
-    conversation = repository.create(user_id="owner", title="Crisis nested")
+    conversation = await repository.create(user_id="owner", title="Crisis nested")
     roleplay_adapter = RecordingAdapter(ModuleType.ROLEPLAY)
     exposure_adapter = FailingTerminateAdapter(ModuleType.EXPOSURE)
     coordinator = ModuleCoordinator(
@@ -352,10 +445,10 @@ async def test_crisis_preemption_stops_nested_stack_even_if_runtime_fails(
         proposal_id="crisis-exposure",
         module_type=ModuleType.EXPOSURE,
     )
-    repository.save_proposal(roleplay)
+    await repository.save_proposal(roleplay)
     context = _working_context(conversation.conversation_id)
     await coordinator.accept(roleplay, context)
-    repository.save_proposal(exposure)
+    await repository.save_proposal(exposure)
     await coordinator.accept(exposure, context)
 
     events = await coordinator.preempt_for_crisis(
@@ -364,11 +457,11 @@ async def test_crisis_preemption_stops_nested_stack_even_if_runtime_fails(
     )
 
     assert len(events) == 2
-    assert repository.list_module_stack(
+    assert await repository.list_module_stack(
         conversation_id=conversation.conversation_id,
         user_id="owner",
     ) == []
-    refreshed = repository.get_for_user(
+    refreshed = await repository.get_for_user(
         conversation.conversation_id,
         "owner",
     )

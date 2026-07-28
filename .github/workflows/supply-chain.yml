@@ -1,0 +1,81 @@
+name: Supply chain
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Audit locked Python dependencies
+        run: |
+          python -m pip install pip-audit
+          pip-audit --requirement backend/requirements.lock
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Block high vulnerabilities in frontend production dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Block critical vulnerabilities in the complete frontend tree
+        working-directory: frontend
+        run: npm audit --audit-level=critical
+
+      - name: Report high vulnerabilities in frontend build tooling
+        continue-on-error: true
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+      - name: Build production images
+        run: |
+          docker build -f Dockerfile.backend -t socialease-backend:scan .
+          docker build -f Dockerfile.frontend -t socialease-frontend:scan .
+
+      - name: Generate backend SBOM
+        uses: anchore/sbom-action@43a17d6e7add2b5535efe4dcae9952337c479a93
+        with:
+          image: socialease-backend:scan
+          artifact-name: socialease-backend.spdx.json
+          format: spdx-json
+
+      - name: Generate frontend SBOM
+        uses: anchore/sbom-action@43a17d6e7add2b5535efe4dcae9952337c479a93
+        with:
+          image: socialease-frontend:scan
+          artifact-name: socialease-frontend.spdx.json
+          format: spdx-json
+
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: socialease-backend:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: socialease-frontend:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
