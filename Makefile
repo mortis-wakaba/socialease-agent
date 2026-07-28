@@ -1,4 +1,4 @@
-.PHONY: dev-backend dev-calendar-mcp dev-frontend test-backend test-calendar-mcp test-postgres-runtime test-redis-context eval eval-gate eval-memory-vector eval-llm eval-output-guardrail prompt-version-check update-prompt-versions privacy-check typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
+.PHONY: dev-backend dev-calendar-mcp dev-frontend test-backend test-calendar-mcp test-postgres-runtime test-redis-context eval eval-gate eval-memory-vector eval-llm eval-output-guardrail prompt-version-check update-prompt-versions privacy-check lock-python typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
 
 dev-backend:
 	cd backend && uvicorn app.main:app --reload
@@ -45,6 +45,10 @@ update-prompt-versions:
 
 privacy-check:
 	python scripts/check_repository_privacy.py
+
+lock-python:
+	cd backend && PIP_TOOLS_CACHE_DIR=/tmp/socialease-pip-tools-cache pip-compile --generate-hashes --output-file=requirements-runtime.lock requirements-runtime.txt
+	cd backend && PIP_TOOLS_CACHE_DIR=/tmp/socialease-pip-tools-cache pip-compile --generate-hashes --output-file=requirements.lock requirements.txt
 
 typecheck-frontend:
 	cd frontend && npm run typecheck
