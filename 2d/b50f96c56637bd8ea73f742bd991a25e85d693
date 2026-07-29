@@ -1,0 +1,41 @@
+backend/app/evals/models.py
+  s_e6b965dea9786d::t_b6fd0a6c371f2c 113-118,133-135,163-174
+  s_38b53f6c90704c::t_17c413b6b2c98b 175-176
+backend/app/evals/memory_retrieval_ablation.py
+  s_e6b965dea9786d::t_9ae775ad522ccc 1-439
+backend/tests/test_memory_retrieval_ablation.py
+  s_e6b965dea9786d::t_9ae775ad522ccc 1-148
+backend/app/memory/recall.py
+  s_e6b965dea9786d::t_b6fd0a6c371f2c 148,156,201,204
+  s_e6b965dea9786d::t_f8fd7d0e8cbfc4 182-183,187,191,196,202-203
+  s_38b53f6c90704c::t_3762a5878e2b7f 205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "2db50f96c56637bd8ea73f742bd991a25e85d693",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_e6b965dea9786d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fac99-450f-7543-be90-4349da3e087e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
