@@ -1,0 +1,24 @@
+Makefile
+  s_e1ccc081df8139::t_30db502dac1686 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "1648154659c521065fde3c14a9f9adf3e25aff62",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_e1ccc081df8139": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fadcc-8ca1-7b70-a2ee-25c8f2ad75d2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
