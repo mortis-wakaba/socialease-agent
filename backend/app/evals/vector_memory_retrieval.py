@@ -22,6 +22,10 @@ from app.evals.memory_retrieval import (
     evaluate_classical_strategy,
     record_from_fixture,
 )
+from app.evals.memory_retrieval_scale import (
+    build_scale_background_memories,
+    build_scale_retrieval_cases,
+)
 from app.evals.metrics import ratio
 from app.evals.models import (
     EvalMetric,
@@ -50,6 +54,9 @@ SEMANTIC_THRESHOLD = 0.50
 HYBRID_SEMANTIC_WEIGHT = 0.75
 VECTOR_RECALL_GAIN_GATE = 0.10
 WARM_P95_LATENCY_GATE_MS = 250.0
+CLASSICAL_CANDIDATE_WINDOW = 100
+MIN_VECTOR_GATE_CASES = 50
+MIN_VECTOR_GATE_INDEXED_MEMORIES = 2000
 
 
 @dataclass(frozen=True)
@@ -69,10 +76,26 @@ def run_vector_memory_retrieval_benchmark(
     cases = [
         *load_memory_retrieval_cases(),
         *load_memory_vector_challenge_cases(),
+        *build_scale_retrieval_cases(),
     ]
     provider = embedder or FastEmbedBgeSmallZh()
     strategies: dict[str, MemoryRetrievalStrategyReport] = {}
     outcomes_by_strategy: dict[str, list[dict[str, Any]]] = {}
+
+    background_by_user = {
+        user_id: [
+            record_from_fixture(item)
+            for item in build_scale_background_memories(user_id=user_id)
+        ]
+        for user_id in {case.user_id for case in cases}
+    }
+    records_by_case = {
+        case.id: [
+            *[record_from_fixture(item) for item in case.memories],
+            *background_by_user[case.user_id],
+        ]
+        for case in cases
+    }
 
     for strategy in (
         MemoryRetrievalStrategy.RECENT,
@@ -82,14 +105,12 @@ def run_vector_memory_retrieval_benchmark(
         report, outcomes = evaluate_classical_strategy(
             cases,
             strategy=strategy,
+            records_by_case=records_by_case,
+            candidate_window_limit=CLASSICAL_CANDIDATE_WINDOW,
         )
         strategies[strategy.value] = report
         outcomes_by_strategy[strategy.value] = outcomes
 
-    records_by_case = {
-        case.id: [record_from_fixture(item) for item in case.memories]
-        for case in cases
-    }
     unique_summaries = list(
         dict.fromkeys(
             record.summary
@@ -134,7 +155,12 @@ def run_vector_memory_retrieval_benchmark(
             -item.p95_query_latency_ms,
         ),
     )
-    vector_gate_met = passes_vector_gate(
+    indexed_memory_count = len(unique_summaries)
+    scale_gate_met = (
+        len(cases) >= MIN_VECTOR_GATE_CASES
+        and indexed_memory_count >= MIN_VECTOR_GATE_INDEXED_MEMORIES
+    )
+    vector_gate_met = scale_gate_met and passes_vector_gate(
         candidate=best_semantic,
         baseline=sql_report,
     )
@@ -143,7 +169,6 @@ def run_vector_memory_retrieval_benchmark(
         if vector_gate_met
         else MemoryRetrievalBenchmarkStrategy.SQL_TEXT
     )
-    indexed_memory_count = len(unique_summaries)
     report = MemoryRetrievalBenchmarkReport(
         selected_strategy=selected_strategy,
         strategies=strategies,
@@ -155,6 +180,8 @@ def run_vector_memory_retrieval_benchmark(
         model_size_mb=provider.model_size_mb,
         cold_start_latency_ms=cold_start_latency_ms,
         indexed_memory_count=indexed_memory_count,
+        max_candidates_per_query=max(map(len, records_by_case.values())),
+        classical_candidate_window=CLASSICAL_CANDIDATE_WINDOW,
         estimated_index_bytes=indexed_memory_count * provider.dimensions * 4,
         document_embedding_latency_ms=round(
             document_embedding_latency_ms,
@@ -162,6 +189,7 @@ def run_vector_memory_retrieval_benchmark(
         ),
         vector_evaluated=True,
         hybrid_evaluated=True,
+        scale_gate_met=scale_gate_met,
         vector_gate_met=vector_gate_met,
     )
     return report, outcomes_by_strategy

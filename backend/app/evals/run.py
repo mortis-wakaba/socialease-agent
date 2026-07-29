@@ -39,12 +39,13 @@ from app.evals.models import (
 )
 from app.knowledge.service import KnowledgeService
 from app.models import Intent, RiskLevel, SafetyResult
+from app.memory.settings_store import InMemoryUserMemorySettingsRepository
 from app.safety.actions import HarnessAction
 from app.safety.permissions import PermissionAction, SafetyPermissionGate
 from app.privacy.persistence_gate import PersistenceGate
 from app.privacy.policy import PersistenceKind
 from app.protocols.service import ProtocolService
-from app.services.retention_service import retention_service
+from app.protocols.store import InMemoryProtocolRepository
 from app.models_knowledge import Citation
 from app.models_roleplay import (
     RoleplayGuidance,
@@ -902,7 +903,7 @@ def _eval_response_boundary(case: ProductBoundaryEvalCase) -> bool:
 
 def _eval_privacy_redaction(case: ProductBoundaryEvalCase) -> bool:
     """Evaluate privacy persistence-gate behavior."""
-    gate = PersistenceGate()
+    gate = PersistenceGate(repository=InMemoryUserMemorySettingsRepository())
     text = str(case.input.get("text", ""))
     kind = PersistenceKind(str(case.input.get("kind", "trace_input")))
     previous_trace_output_mode = os.environ.get("SOCIALEASE_TRACE_OUTPUT_MODE")
@@ -947,7 +948,7 @@ async def _eval_consent_replay_async(
     case: ProductBoundaryEvalCase,
 ) -> bool:
     """Run the async consent repository contract from the synchronous CLI."""
-    service = ProtocolService()
+    service = ProtocolService(store=InMemoryProtocolRepository())
     user_id = f"eval_consent_{uuid4().hex}"
     request_hash = str(case.input.get("request_hash", "eval-hash"))
     harness_action = HarnessAction(str(case.input.get("harness_action", "start_roleplay")))
@@ -992,7 +993,7 @@ async def _eval_cross_user_access_async(
     case: ProductBoundaryEvalCase,
 ) -> bool:
     """Run async owner-scope checks from the synchronous eval CLI."""
-    service = ProtocolService()
+    service = ProtocolService(store=InMemoryProtocolRepository())
     owner = f"{case.input.get('owner', 'owner')}_{uuid4().hex}"
     other = f"{case.input.get('other', 'other')}_{uuid4().hex}"
     protocol = await service.create_consent_request(
@@ -1019,11 +1020,20 @@ async def _eval_stale_plan_cancellation_async(
     case: ProductBoundaryEvalCase,
 ) -> bool:
     """Run the async retention path from the synchronous eval CLI."""
-    from app.memory.intervention_plan_store import intervention_plan_store
+    from app.memory.intervention_plan_store import (
+        InMemoryInterventionPlanRepository,
+    )
     from app.models_intervention import InterventionStep
+    from app.protocols.store import InMemoryProtocolRepository
+    from app.services.retention_service import RetentionService
 
     user_id = f"eval_stale_plan_{uuid4().hex}"
-    plan = await intervention_plan_store.create(
+    intervention_plans = InMemoryInterventionPlanRepository()
+    service = RetentionService(
+        protocol_repository=InMemoryProtocolRepository(),
+        intervention_plan_repository=intervention_plans,
+    )
+    plan = await intervention_plans.create(
         user_id=user_id,
         session_id=f"eval-session-{uuid4().hex}",
         status="pending_consent",
@@ -1038,16 +1048,16 @@ async def _eval_stale_plan_cancellation_async(
             )
         ],
     )
-    plan = await intervention_plan_store.save(
+    plan = await intervention_plans.save(
         plan.model_copy(update={"updated_at": datetime.now(timezone.utc) - timedelta(hours=2)})
     )
-    cancelled = await retention_service.cancel_abandoned_intervention_plans(
+    cancelled = await service.cancel_abandoned_intervention_plans(
         older_than_minutes=int(
             case.input.get("older_than_minutes", 60)
         ),
         now=datetime.now(timezone.utc),
     )
-    updated = await intervention_plan_store.get_by_id_for_user(
+    updated = await intervention_plans.get_by_id_for_user(
         plan.plan_id,
         user_id,
     )

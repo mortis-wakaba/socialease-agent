@@ -86,16 +86,14 @@ OAuth Token 管理；不能把共享 Token、用户日程正文或凭据写入 T
 
 | 变量 | 必需场景 | 含义 |
 |---|---|---|
-| `SOCIALEASE_DATABASE_URL` | staging/production target | 数据库 URL；为空时使用本地 SQLite 默认值 |
-| `SOCIALEASE_DB_PATH` | local/Docker | SQLite 数据库路径覆盖 |
-| `SOCIALEASE_SQLITE_TIMEOUT_SECONDS` | local | SQLite busy timeout |
+| `SOCIALEASE_DATABASE_URL` | all runtimes | PostgreSQL URL；本地默认值连接 Compose PostgreSQL |
 | `SOCIALEASE_CONVERSATION_CONTENT_KEY` | production auth | 32 字节随机密钥的 URL-safe Base64；用于 Conversation 正文 AES-256-GCM，加密模式缺少或格式错误时拒绝初始化 Conversation 持久化 |
 | `SOCIALEASE_CONVERSATION_CONTENT_KEY_VERSION` | production auth | 非秘密的密钥版本标签；用于识别密文所需密钥，轮换前必须先设计旧密文重加密流程 |
 | `SOCIALEASE_TEST_DATABASE_URL` | integration tests | 集成测试使用的 PostgreSQL URL |
 | `SOCIALEASE_BACKUP_DIR` | staging/production | `scripts/backup_database.sh` 的备份输出目录 |
 
-SQLite 是默认本地开发运行时，demo auth 未配置内容密钥时会明确使用本地明文保护器。
-Production auth 不允许这一降级。PostgreSQL repository adapters 已覆盖当前主要运行路径，
+PostgreSQL 是唯一持久化运行时。Demo auth 未配置内容密钥时会明确使用本地明文保护器，
+Production auth 不允许这一内容保护降级。PostgreSQL repository adapters 已覆盖当前运行路径，
 但真实试点前仍需在 secret manager 中生成和保管内容密钥，并完成托管备份、恢复演练、
 密钥轮换方案和 migration 检查。不要在已有密文仍需读取时直接替换或删除旧密钥。
 

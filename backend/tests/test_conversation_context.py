@@ -7,7 +7,7 @@ import pytest
 
 from app.conversation.compactor import ConversationCompactor
 from app.conversation.context_manager import ConversationContextManager
-from app.conversation.repository import SQLiteConversationRepository
+from app.db.postgres.conversation_repository import PostgresConversationRepository
 from app.memory.token_estimator import ConservativeTokenEstimator
 from app.models_conversation import (
     ConversationEvent,
@@ -36,11 +36,9 @@ class UnsafeSummaryLLM:
 def repository(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-) -> SQLiteConversationRepository:
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "context.db"))
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
+) -> PostgresConversationRepository:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return SQLiteConversationRepository()
+    return PostgresConversationRepository()
 
 
 @pytest.fixture
@@ -51,7 +49,7 @@ def anyio_backend() -> str:
 
 @pytest.mark.anyio
 async def test_context_is_bounded_compacted_and_restored_across_instances(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Long timeline")
     for index in range(18):
@@ -89,7 +87,7 @@ async def test_context_is_bounded_compacted_and_restored_across_instances(
     assert context.diagnostics.estimated_tokens <= 700
     assert context.recent_events[-1].sequence_no == 18
 
-    restored_repository = SQLiteConversationRepository()
+    restored_repository = PostgresConversationRepository()
     restored = await restored_repository.get_compact_summary(
         conversation_id=conversation.conversation_id,
         user_id="owner",
@@ -99,7 +97,7 @@ async def test_context_is_bounded_compacted_and_restored_across_instances(
 
 @pytest.mark.anyio
 async def test_recent_history_selects_complete_turns_without_orphaned_replies(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Turn selection")
     messages = [
@@ -213,7 +211,7 @@ async def test_compactor_excludes_crisis_injection_and_model_inference() -> None
 
 @pytest.mark.anyio
 async def test_current_request_is_retained_before_older_events(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Priority")
     for index in range(8):

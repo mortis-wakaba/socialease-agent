@@ -10,7 +10,8 @@ dev-frontend:
 	cd frontend && npm run dev
 
 test-backend:
-	cd backend && pytest
+	test -n "$(SOCIALEASE_TEST_DATABASE_URL)" || (echo "Set SOCIALEASE_TEST_DATABASE_URL to an isolated disposable PostgreSQL database" && exit 1)
+	cd backend && SOCIALEASE_DATABASE_URL="$(SOCIALEASE_TEST_DATABASE_URL)" SOCIALEASE_TEST_DATABASE_URL="$(SOCIALEASE_TEST_DATABASE_URL)" pytest
 
 test-calendar-mcp:
 	cd backend && pytest -p no:rerunfailures -q tests/test_calendar_provider.py tests/test_calendar_skill.py tests/test_calendar_mcp_contract.py tests/test_calendar_api.py

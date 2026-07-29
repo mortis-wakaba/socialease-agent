@@ -3,7 +3,8 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from app.db.repositories import ExposureRepository, SQLiteExposureRepository
+from app.db.factory import repository_factory
+from app.db.repositories import ExposureRepository
 from app.models_exposure import (
     EXPOSURE_DISCLAIMER,
     ExposureAttempt,
@@ -16,7 +17,7 @@ class ExposureStore:
     """Coordinate active exposure plans and repository persistence."""
 
     def __init__(self, repository: ExposureRepository | None = None) -> None:
-        self.repository = repository or SQLiteExposureRepository()
+        self.repository = repository or repository_factory().exposure_repository()
 
     async def create_plan(
         self,

@@ -1,26 +1,21 @@
-"""Privacy-aware memory settings store."""
+"""Repository contract for durable user memory settings."""
 
-from datetime import datetime, timezone
 from typing import Protocol
 
-from app.db.config import database_settings
-from app.db.engine import connect
-from app.db.providers import DatabaseProvider, resolve_database_provider
-from app.db.session import initialize_database
 from app.models_memory import (
     AgentMemoryType,
     PracticePreferences,
-    UserOnboardingProfile,
     UserConsentState,
     UserMemorySettings,
+    UserOnboardingProfile,
 )
-from app.memory.settings_payload import load_user_memory_settings_payload
 
 
 class UserMemorySettingsRepository(Protocol):
-    """Persistence contract for privacy-aware memory settings."""
+    """Persistence contract for user-controlled memory settings."""
 
     async def get(self, user_id: str) -> UserMemorySettings: ...
+
     async def save(
         self,
         *,
@@ -32,21 +27,15 @@ class UserMemorySettingsRepository(Protocol):
     ) -> UserMemorySettings: ...
 
 
-class SQLiteUserMemorySettingsRepository:
-    """SQLite-backed low-sensitivity memory settings repository."""
+class InMemoryUserMemorySettingsRepository:
+    """Non-persistent memory-settings fake for unit tests and evals."""
 
     def __init__(self) -> None:
-        if resolve_database_provider(database_settings().database_url) == DatabaseProvider.SQLITE:
-            initialize_database()
+        self._settings: dict[str, UserMemorySettings] = {}
 
     async def get(self, user_id: str) -> UserMemorySettings:
-        """Return memory settings or privacy-preserving defaults."""
-        with connect() as connection:
-            row = connection.execute(
-                "SELECT payload FROM user_memory_settings WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()
-        return load_user_memory_settings_payload(row["payload"] if row else None)
+        """Return saved settings or the domain default."""
+        return self._settings.get(user_id, UserMemorySettings())
 
     async def save(
         self,
@@ -57,26 +46,23 @@ class SQLiteUserMemorySettingsRepository:
         onboarding_profile: UserOnboardingProfile | None = None,
         disabled_memory_types: list[AgentMemoryType] | None = None,
     ) -> UserMemorySettings:
-        """Persist explicit user memory settings."""
+        """Merge and save one user's settings."""
         current = await self.get(user_id)
-        settings = UserMemorySettings(
-            consent_state=consent_state or current.consent_state,
-            practice_preferences=practice_preferences or current.practice_preferences,
-            onboarding_profile=onboarding_profile or current.onboarding_profile,
-            disabled_memory_types=(
-                disabled_memory_types
-                if disabled_memory_types is not None
-                else current.disabled_memory_types
-            ),
-        )
-        with connect() as connection:
-            connection.execute(
-                """INSERT OR REPLACE INTO user_memory_settings
-                (user_id, payload, updated_at) VALUES (?, ?, ?)""",
-                (
-                    user_id,
-                    settings.model_dump_json(),
-                    datetime.now(timezone.utc).isoformat(),
+        settings = current.model_copy(
+            update={
+                "consent_state": consent_state or current.consent_state,
+                "practice_preferences": (
+                    practice_preferences or current.practice_preferences
                 ),
-            )
+                "onboarding_profile": (
+                    onboarding_profile or current.onboarding_profile
+                ),
+                "disabled_memory_types": (
+                    disabled_memory_types
+                    if disabled_memory_types is not None
+                    else current.disabled_memory_types
+                ),
+            }
+        )
+        self._settings[user_id] = settings
         return settings

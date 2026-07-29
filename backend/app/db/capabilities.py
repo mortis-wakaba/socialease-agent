@@ -1,8 +1,7 @@
-"""Runtime database capability checks for production-shaped persistence paths."""
+"""Explicit PostgreSQL-only runtime capability report."""
 
 from dataclasses import dataclass
 
-from app.auth.tokens import auth_mode
 from app.db.config import database_settings
 from app.db.providers import DatabaseProvider, resolve_database_provider
 
@@ -15,27 +14,29 @@ SUPPORTED_POSTGRES_REPOSITORIES = (
     "exposure",
     "user_profile",
     "memory_settings",
+    "long_term_memory",
+    "memory_proposal",
     "session_review",
     "protocol",
     "intervention_plan",
     "metrics",
     "account",
+    "calendar_outbox",
+    "conversation_deletion",
+    "account_deletion",
 )
-SQLITE_REPOSITORIES = (
-    "conversation",
-    "trace",
-    "roleplay",
-    "worksheet",
-    "exposure",
-    "user_profile",
-    "memory_settings",
-    "session_review",
-    "protocol",
-    "intervention_plan",
-    "metrics",
-    "account",
+FULL_RUNTIME_REPOSITORIES = SUPPORTED_POSTGRES_REPOSITORIES
+POSTGRES_CAPABILITIES = (
+    "async_transactions",
+    "row_level_locking",
+    "optimistic_versioning",
+    "multi_instance_runtime",
+    "transactional_outbox",
+    "owner_scoped_deletion",
 )
-FULL_RUNTIME_REPOSITORIES = SQLITE_REPOSITORIES
+POSTGRES_UNAVAILABLE_CAPABILITIES = (
+    "vector_similarity_search",
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,8 @@ class DatabaseCapabilityReport:
     database_url: str
     supported_repositories: tuple[str, ...]
     missing_runtime_repositories: tuple[str, ...]
+    capabilities: tuple[str, ...]
+    unavailable_capabilities: tuple[str, ...]
     full_runtime_supported: bool
     notes: str
 
@@ -58,15 +61,6 @@ def database_capability_report(database_url: str | None = None) -> DatabaseCapab
     """Return the support matrix for one database URL."""
     resolved_url = database_url or database_settings().database_url
     provider = resolve_database_provider(resolved_url)
-    if provider == DatabaseProvider.SQLITE:
-        return DatabaseCapabilityReport(
-            provider=provider,
-            database_url=resolved_url,
-            supported_repositories=SQLITE_REPOSITORIES,
-            missing_runtime_repositories=(),
-            full_runtime_supported=True,
-            notes="SQLite is the default full demo runtime.",
-        )
     if provider == DatabaseProvider.POSTGRES:
         missing = tuple(
             repository
@@ -78,12 +72,14 @@ def database_capability_report(database_url: str | None = None) -> DatabaseCapab
             database_url=resolved_url,
             supported_repositories=SUPPORTED_POSTGRES_REPOSITORIES,
             missing_runtime_repositories=missing,
-            full_runtime_supported=True,
+            capabilities=POSTGRES_CAPABILITIES,
+            unavailable_capabilities=POSTGRES_UNAVAILABLE_CAPABILITIES,
+            full_runtime_supported=not missing,
             notes=(
-                "PostgreSQL currently supports conversation, trace, roleplay, "
-                "worksheet, exposure, "
-                "user_profile, memory_settings, session_review, protocol, "
-                "intervention_plan, metrics and account repositories."
+                "PostgreSQL is the only runtime persistence provider. "
+                "Vector similarity search is not enabled because the current "
+                "large-scale memory eval does not pass its safety gate. "
+                "No SQLite or demo persistence fallback is available."
             ),
         )
     raise AssertionError(f"Unhandled database provider: {provider!r}")
@@ -92,10 +88,6 @@ def database_capability_report(database_url: str | None = None) -> DatabaseCapab
 def validate_runtime_database_support(database_url: str | None = None) -> DatabaseCapabilityReport:
     """Fail early when the configured provider cannot run the full API runtime."""
     report = database_capability_report(database_url)
-    if report.provider == DatabaseProvider.SQLITE and auth_mode() == "production":
-        raise DatabaseCapabilityError(
-            "Production requires PostgreSQL; SQLite is limited to local demo and tests."
-        )
     if report.full_runtime_supported:
         return report
     supported = ", ".join(report.supported_repositories)

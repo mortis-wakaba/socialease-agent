@@ -11,6 +11,9 @@ jobs:
   backend:
     name: Backend tests and evals
     runs-on: ubuntu-latest
+    env:
+      SOCIALEASE_DATABASE_URL: postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease
+      SOCIALEASE_TEST_DATABASE_URL: postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease
     services:
       postgres:
         image: postgres:16@sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54
@@ -68,8 +71,6 @@ jobs:
 
       - name: Run PostgreSQL integration tests
         working-directory: backend
-        env:
-          SOCIALEASE_TEST_DATABASE_URL: postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease
         run: pytest -q tests/test_postgres_*.py tests/test_heavier_load.py::test_fresh_postgres_database_can_upgrade_to_head_when_configured
 
       - name: Run shared Redis task-state integration tests

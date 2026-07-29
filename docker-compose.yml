@@ -41,14 +41,13 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     environment:
-      SOCIALEASE_DB_PATH: /data/socialease.db
       LLM_ENABLED: ${LLM_ENABLED:-false}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai_compatible}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
-      SOCIALEASE_DATABASE_URL: ${SOCIALEASE_DATABASE_URL:-sqlite:////data/socialease.db}
+      SOCIALEASE_DATABASE_URL: ${SOCIALEASE_DATABASE_URL:-postgresql+psycopg://socialease:socialease@postgres:5432/socialease}
       SOCIALEASE_CORS_ORIGINS: ${SOCIALEASE_CORS_ORIGINS:-http://127.0.0.1:3000,http://localhost:3000}
       SOCIALEASE_REDIS_URL: ${SOCIALEASE_DOCKER_REDIS_URL:-redis://redis:6379/0}
       SOCIALEASE_REQUIRE_REDIS: ${SOCIALEASE_REQUIRE_REDIS:-false}
@@ -59,9 +58,13 @@ services:
       SUPPORT_SEARCH_TTL_SECONDS: ${SUPPORT_SEARCH_TTL_SECONDS:-1800}
     ports:
       - "8000:8000"
-    volumes:
-      - socialease-data:/data
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -92,5 +95,4 @@ services:
       start_period: 20s
 
 volumes:
-  socialease-data:
   socialease-postgres-data:

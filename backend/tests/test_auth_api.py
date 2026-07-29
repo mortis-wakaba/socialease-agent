@@ -10,10 +10,10 @@ import pytest
 
 from app.auth.rate_limit import reset_auth_rate_limiters_for_tests
 from app.auth.tokens import create_auth_token
-from app.db.engine import connect
 from app.main import app
 from app.observability.request_logging import PROCESS_TIME_HEADER
 from app.services.account_service import InvalidCredentialsError, account_service
+from tests.postgres_test_support import execute_sql, fetch_one
 
 
 TEST_AUTH_SECRET = "test-real-account-secret"
@@ -268,11 +268,12 @@ async def test_login_rejects_wrong_password(client: httpx.AsyncClient) -> None:
     )
 
     assert response.status_code == 401
-    with connect() as connection:
-        row = connection.execute(
-            "SELECT failed_login_count, last_failed_login_at FROM users WHERE email = ?",
-            (email,),
-        ).fetchone()
+    row = await fetch_one(
+        """SELECT failed_login_count, last_failed_login_at
+        FROM users WHERE email = :email""",
+        {"email": email},
+    )
+    assert row is not None
     assert row["failed_login_count"] == 1
     assert row["last_failed_login_at"] is not None
 
@@ -366,12 +367,12 @@ async def test_successful_login_updates_audit_fields(client: httpx.AsyncClient) 
     )
 
     assert response.status_code == 200
-    with connect() as connection:
-        row = connection.execute(
-            """SELECT failed_login_count, last_login_at, last_failed_login_at
-            FROM users WHERE email = ?""",
-            (email,),
-        ).fetchone()
+    row = await fetch_one(
+        """SELECT failed_login_count, last_login_at, last_failed_login_at
+        FROM users WHERE email = :email""",
+        {"email": email},
+    )
+    assert row is not None
     assert row["failed_login_count"] == 0
     assert row["last_login_at"] is not None
     assert row["last_failed_login_at"] is not None
@@ -585,24 +586,25 @@ async def test_delete_account_revokes_session_and_removes_login(
     access_token = payload["tokens"]["access_token"]
     user_id = payload["user"]["user_id"]
     headers = {"Authorization": f"Bearer {access_token}"}
-    with connect() as connection:
-        connection.execute(
-            """INSERT INTO conversations
+    await execute_sql(
+        """INSERT INTO conversations
             (conversation_id, user_id, title, status, active_module_depth,
              version, history_notice_version, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                f"account-delete-{uuid4().hex}",
-                user_id,
-                "Account delete conversation",
-                "active",
-                0,
-                1,
-                "test-notice",
-                "2026-07-27T00:00:00+00:00",
-                "2026-07-27T00:00:00+00:00",
-            ),
-        )
+            VALUES (:conversation_id, :user_id, :title, :status,
+                    :active_module_depth, :version, :history_notice_version,
+                    :created_at, :updated_at)""",
+        {
+            "conversation_id": f"account-delete-{uuid4().hex}",
+            "user_id": user_id,
+            "title": "Account delete conversation",
+            "status": "active",
+            "active_module_depth": 0,
+            "version": 1,
+            "history_notice_version": "test-notice",
+            "created_at": "2026-07-27T00:00:00+00:00",
+            "updated_at": "2026-07-27T00:00:00+00:00",
+        },
+    )
 
     delete_response = await client.delete("/api/auth/account", headers=headers)
     profile_after_delete = await client.get(

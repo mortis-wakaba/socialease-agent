@@ -8,6 +8,7 @@ fi
 
 BACKUP_FILE="$1"
 TARGET_URL="${SOCIALEASE_RESTORE_TEST_DATABASE_URL:-}"
+PG_TARGET_URL="${TARGET_URL/postgresql+psycopg:/postgresql:}"
 
 if [[ ! -f "$BACKUP_FILE" ]]; then
   echo "Backup file not found: $BACKUP_FILE" >&2
@@ -15,23 +16,6 @@ if [[ ! -f "$BACKUP_FILE" ]]; then
 fi
 
 if [[ -z "$TARGET_URL" ]]; then
-  if [[ "$BACKUP_FILE" == *.db ]]; then
-    TMP_DB="$(mktemp /tmp/socialease-restore-drill-XXXXXX.db)"
-    cp "$BACKUP_FILE" "$TMP_DB"
-    python - "$TMP_DB" <<'PY'
-import sqlite3
-import sys
-
-db_path = sys.argv[1]
-with sqlite3.connect(db_path) as connection:
-    result = connection.execute("PRAGMA integrity_check").fetchone()[0]
-    if result != "ok":
-        raise SystemExit(f"SQLite integrity_check failed: {result}")
-print(f"SQLite restore drill passed for {db_path}")
-PY
-    rm -f "$TMP_DB"
-    exit 0
-  fi
   echo "SOCIALEASE_RESTORE_TEST_DATABASE_URL is required for PostgreSQL restore drills." >&2
   exit 1
 fi
@@ -47,5 +31,5 @@ if ! command -v pg_restore >/dev/null 2>&1; then
 fi
 
 echo "Running PostgreSQL restore drill into SOCIALEASE_RESTORE_TEST_DATABASE_URL."
-pg_restore "$BACKUP_FILE" --dbname="$TARGET_URL" --clean --if-exists --no-owner
+pg_restore "$BACKUP_FILE" --dbname="$PG_TARGET_URL" --clean --if-exists --no-owner
 echo "PostgreSQL restore drill completed."

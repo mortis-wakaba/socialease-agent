@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 from app.calendar.outbox import CalendarActionJob, CalendarActionOutbox
@@ -44,6 +45,15 @@ class CalendarOutboxProcessor:
             job_id=job_id,
         )
         if not jobs:
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                replay = await self.outbox.get(job_id)
+                if replay is None:
+                    raise LookupError("calendar outbox job not found")
+                if replay.status == "completed" and replay.result is not None:
+                    return CalendarEventResponse.model_validate(replay.result)
+                if replay.status != "processing":
+                    break
             raise CalendarOutboxUnavailable("calendar action is queued")
         job = jobs[0]
         try:

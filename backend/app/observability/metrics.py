@@ -5,8 +5,6 @@ from datetime import datetime, timezone
 import json
 from threading import Lock
 
-from app.db.engine import connect
-from app.db.session import initialize_database
 from app.models import RiskLevel, TraceRecord
 
 
@@ -144,89 +142,11 @@ class InMemoryMetricsRepository(MetricsRepository):
             self._snapshot = HarnessMetricsSnapshot()
 
 
-class SQLiteMetricsRepository(MetricsRepository):
-    """SQLite-backed metrics backend storing only aggregate-safe fields."""
-
-    def __init__(self) -> None:
-        initialize_database()
-
-    async def record_trace(self, trace: TraceRecord) -> None:
-        """Persist one non-identifying metrics event."""
-        _ensure_runtime_metric_table()
-        with connect() as connection:
-            connection.execute(
-                """INSERT INTO harness_metric_events
-                (intent, risk_level, selected_agent, permission_action, latency_ms,
-                is_crisis, fallback_used, hook_blocked, memory_write_blocked,
-                product_boundary_eval, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    trace.intent_result.intent.value,
-                    trace.safety_result.risk_level.value,
-                    trace.selected_agent,
-                    trace.permission_action,
-                    trace.latency_ms,
-                    int(trace.safety_result.risk_level == RiskLevel.CRISIS),
-                    int(
-                        trace.safety_result.llm_usage.fallback_used
-                        or trace.intent_result.llm_usage.fallback_used
-                    ),
-                    int(any(error.startswith("before_action_blocked:") for error in trace.errors)),
-                    int(
-                        any(
-                            error.startswith("before_memory_write_blocked:")
-                            for error in trace.errors
-                        )
-                    ),
-                    _product_boundary_eval_label(trace),
-                    trace.created_at.isoformat(),
-                ),
-            )
-
-    async def record_runtime_event(self, event_name: str, *, count: int = 1) -> None:
-        """Persist a non-identifying runtime event."""
-        _ensure_runtime_metric_table()
-        with connect() as connection:
-            for _ in range(max(0, count)):
-                connection.execute(
-                    """INSERT INTO harness_runtime_metric_events
-                    (event_name, created_at)
-                    VALUES (?, ?)""",
-                    (event_name, datetime.now(timezone.utc).isoformat()),
-                )
-
-    async def snapshot(self) -> HarnessMetricsSnapshot:
-        """Return aggregate metrics from persisted metric events."""
-        _ensure_runtime_metric_table()
-        snapshot = HarnessMetricsSnapshot()
-        with connect() as connection:
-            rows = connection.execute(
-                """SELECT intent, risk_level, selected_agent, permission_action, latency_ms,
-                is_crisis, fallback_used, hook_blocked, memory_write_blocked,
-                product_boundary_eval
-                FROM harness_metric_events"""
-            ).fetchall()
-            runtime_rows = connection.execute(
-                """SELECT event_name, COUNT(*) AS event_count
-                FROM harness_runtime_metric_events
-                GROUP BY event_name"""
-            ).fetchall()
-        for row in rows:
-            _record_row_into_snapshot(snapshot, row)
-        for row in runtime_rows:
-            _increment_by(snapshot.runtime_event_counts, row["event_name"], int(row["event_count"]))
-        return snapshot
-
-    async def reset(self) -> None:
-        """Clear persisted metrics for tests or local demo resets."""
-        _ensure_runtime_metric_table()
-        with connect() as connection:
-            connection.execute("DELETE FROM harness_metric_events")
-            connection.execute("DELETE FROM harness_runtime_metric_events")
-
-
-def _record_into_snapshot(snapshot: HarnessMetricsSnapshot, trace: TraceRecord) -> None:
-    """Update a snapshot from one trace without storing identifying fields."""
+def _record_into_snapshot(
+    snapshot: HarnessMetricsSnapshot,
+    trace: TraceRecord,
+) -> None:
+    """Update a snapshot from one trace without identifying fields."""
     snapshot.total_runs += 1
     snapshot.total_latency_ms += trace.latency_ms
     snapshot.latency_values_ms.append(trace.latency_ms)
@@ -237,34 +157,60 @@ def _record_into_snapshot(snapshot: HarnessMetricsSnapshot, trace: TraceRecord) 
         _increment(snapshot.permission_counts, trace.permission_action)
     if trace.safety_result.risk_level == RiskLevel.CRISIS:
         snapshot.crisis_runs += 1
-    if trace.safety_result.llm_usage.fallback_used or trace.intent_result.llm_usage.fallback_used:
+    if (
+        trace.safety_result.llm_usage.fallback_used
+        or trace.intent_result.llm_usage.fallback_used
+    ):
         snapshot.fallback_runs += 1
-    if any(error.startswith("before_action_blocked:") for error in trace.errors):
+    if any(
+        error.startswith("before_action_blocked:")
+        for error in trace.errors
+    ):
         snapshot.hook_blocked_runs += 1
-    if any(error.startswith("before_memory_write_blocked:") for error in trace.errors):
+    if any(
+        error.startswith("before_memory_write_blocked:")
+        for error in trace.errors
+    ):
         snapshot.memory_write_blocked_runs += 1
-    _increment(snapshot.product_boundary_eval_counts, _product_boundary_eval_label(trace))
+    _increment(
+        snapshot.product_boundary_eval_counts,
+        _product_boundary_eval_label(trace),
+    )
 
 
-def _record_row_into_snapshot(snapshot: HarnessMetricsSnapshot, row) -> None:
-    """Update a snapshot from one persisted SQLite row."""
+def _record_row_into_snapshot(
+    snapshot: HarnessMetricsSnapshot,
+    row: object,
+) -> None:
+    """Update a snapshot from one aggregate-safe database row."""
     snapshot.total_runs += 1
-    latency = float(row["latency_ms"])
+    latency = float(row["latency_ms"])  # type: ignore[index]
     snapshot.total_latency_ms += latency
     snapshot.latency_values_ms.append(latency)
-    _increment(snapshot.intent_counts, row["intent"])
-    _increment(snapshot.risk_counts, row["risk_level"])
-    _increment(snapshot.selected_agent_counts, row["selected_agent"])
-    if row["permission_action"]:
-        _increment(snapshot.permission_counts, row["permission_action"])
-    snapshot.crisis_runs += int(row["is_crisis"])
-    snapshot.fallback_runs += int(row["fallback_used"])
-    snapshot.hook_blocked_runs += int(row["hook_blocked"])
-    snapshot.memory_write_blocked_runs += int(row["memory_write_blocked"])
-    _increment(snapshot.product_boundary_eval_counts, row["product_boundary_eval"])
+    for field, counts in (
+        ("intent", snapshot.intent_counts),
+        ("risk_level", snapshot.risk_counts),
+        ("selected_agent", snapshot.selected_agent_counts),
+    ):
+        _increment(counts, row[field])  # type: ignore[index]
+    permission = row["permission_action"]  # type: ignore[index]
+    if permission:
+        _increment(snapshot.permission_counts, permission)
+    snapshot.crisis_runs += int(row["is_crisis"])  # type: ignore[index]
+    snapshot.fallback_runs += int(row["fallback_used"])  # type: ignore[index]
+    snapshot.hook_blocked_runs += int(row["hook_blocked"])  # type: ignore[index]
+    snapshot.memory_write_blocked_runs += int(
+        row["memory_write_blocked"]  # type: ignore[index]
+    )
+    _increment(
+        snapshot.product_boundary_eval_counts,
+        row["product_boundary_eval"],  # type: ignore[index]
+    )
 
 
-def _copy_snapshot(snapshot: HarnessMetricsSnapshot) -> HarnessMetricsSnapshot:
+def _copy_snapshot(
+    snapshot: HarnessMetricsSnapshot,
+) -> HarnessMetricsSnapshot:
     """Return a deep-enough copy for callers."""
     return HarnessMetricsSnapshot(
         total_runs=snapshot.total_runs,
@@ -278,7 +224,9 @@ def _copy_snapshot(snapshot: HarnessMetricsSnapshot) -> HarnessMetricsSnapshot:
         risk_counts=dict(snapshot.risk_counts),
         selected_agent_counts=dict(snapshot.selected_agent_counts),
         permission_counts=dict(snapshot.permission_counts),
-        product_boundary_eval_counts=dict(snapshot.product_boundary_eval_counts),
+        product_boundary_eval_counts=dict(
+            snapshot.product_boundary_eval_counts
+        ),
         runtime_event_counts=dict(snapshot.runtime_event_counts),
     )
 
@@ -308,26 +256,6 @@ def _increment_by(counts: dict[str, int], key: str, value: int) -> None:
     if value <= 0:
         return
     counts[key] = counts.get(key, 0) + value
-
-
-def _ensure_runtime_metric_table() -> None:
-    """Create the runtime metrics table for existing local SQLite databases."""
-    with connect() as connection:
-        connection.execute(
-            """CREATE TABLE IF NOT EXISTS harness_runtime_metric_events (
-            metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_name TEXT NOT NULL,
-            created_at TEXT NOT NULL
-            )"""
-        )
-        connection.execute(
-            """CREATE INDEX IF NOT EXISTS idx_harness_runtime_metric_events_name
-            ON harness_runtime_metric_events(event_name)"""
-        )
-        connection.execute(
-            """CREATE INDEX IF NOT EXISTS idx_harness_runtime_metric_events_created_at
-            ON harness_runtime_metric_events(created_at)"""
-        )
 
 
 def _percentile(values: list[float], percentile: int) -> float:

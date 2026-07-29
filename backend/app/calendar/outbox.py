@@ -12,10 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.config import database_settings
-from app.db.engine import connect
 from app.db.postgres.engine import shared_postgres_async_engine
-from app.db.providers import DatabaseProvider, resolve_database_provider
-from app.db.session import initialize_database
 from app.models_protocols import ProtocolRecord, ProtocolStatus
 
 
@@ -60,16 +57,7 @@ class CalendarActionOutbox:
         engine: AsyncEngine | None = None,
     ) -> None:
         self.database_url = database_url or database_settings().database_url
-        self.provider = resolve_database_provider(self.database_url)
-        self.engine = (
-            engine
-            if self.provider is DatabaseProvider.POSTGRES
-            else None
-        )
-        if self.provider is DatabaseProvider.POSTGRES and self.engine is None:
-            self.engine = shared_postgres_async_engine(self.database_url)
-        if self.provider is DatabaseProvider.SQLITE:
-            initialize_database()
+        self.engine = engine or shared_postgres_async_engine(self.database_url)
 
     async def enqueue(
         self,
@@ -82,16 +70,7 @@ class CalendarActionOutbox:
         payload: dict[str, object],
     ) -> CalendarActionJob | None:
         """Atomically consume exact consent and enqueue its external action."""
-        if self.provider is DatabaseProvider.POSTGRES:
-            return await self._enqueue_postgres(
-                protocol_id=protocol_id,
-                user_id=user_id,
-                action_type=action_type,
-                request_hash=request_hash,
-                idempotency_key=idempotency_key,
-                payload=payload,
-            )
-        return self._enqueue_sqlite(
+        return await self._enqueue_postgres(
             protocol_id=protocol_id,
             user_id=user_id,
             action_type=action_type,
@@ -109,14 +88,7 @@ class CalendarActionOutbox:
         job_id: str | None = None,
     ) -> list[CalendarActionJob]:
         """Lease due jobs with concurrent-claim protection."""
-        if self.provider is DatabaseProvider.POSTGRES:
-            return await self._claim_postgres(
-                worker_id=worker_id,
-                limit=limit,
-                lease_seconds=lease_seconds,
-                job_id=job_id,
-            )
-        return self._claim_sqlite(
+        return await self._claim_postgres(
             worker_id=worker_id,
             limit=limit,
             lease_seconds=lease_seconds,
@@ -132,41 +104,23 @@ class CalendarActionOutbox:
     ) -> bool:
         """Complete only the lease owned by the caller."""
         now = datetime.now(UTC)
-        if self.provider is DatabaseProvider.POSTGRES:
-            assert self.engine is not None
-            async with self.engine.begin() as connection:
-                updated = await connection.execute(
-                    text(
-                        """UPDATE calendar_action_outbox
-                        SET status = 'completed', result = CAST(:result AS jsonb),
-                            completed_at = :now, updated_at = :now,
-                            lease_owner = NULL, lease_expires_at = NULL,
-                            last_error_code = NULL
-                        WHERE job_id = :job_id AND status = 'processing'
-                          AND lease_owner = :lease_owner"""
-                    ),
-                    {
-                        "job_id": job_id,
-                        "lease_owner": lease_owner,
-                        "result": json.dumps(result),
-                        "now": now,
-                    },
-                )
-            return updated.rowcount == 1
-        with connect() as connection:
-            updated = connection.execute(
-                """UPDATE calendar_action_outbox
-                SET status = 'completed', result = ?, completed_at = ?,
-                    updated_at = ?, lease_owner = NULL, lease_expires_at = NULL,
-                    last_error_code = NULL
-                WHERE job_id = ? AND status = 'processing' AND lease_owner = ?""",
-                (
-                    json.dumps(result),
-                    now.isoformat(),
-                    now.isoformat(),
-                    job_id,
-                    lease_owner,
+        async with self.engine.begin() as connection:
+            updated = await connection.execute(
+                text(
+                    """UPDATE calendar_action_outbox
+                    SET status = 'completed', result = CAST(:result AS jsonb),
+                        completed_at = :now, updated_at = :now,
+                        lease_owner = NULL, lease_expires_at = NULL,
+                        last_error_code = NULL
+                    WHERE job_id = :job_id AND status = 'processing'
+                      AND lease_owner = :lease_owner"""
                 ),
+                {
+                    "job_id": job_id,
+                    "lease_owner": lease_owner,
+                    "result": json.dumps(result),
+                    "now": now,
+                },
             )
         return updated.rowcount == 1
 
@@ -178,77 +132,45 @@ class CalendarActionOutbox:
         error_code: str,
     ) -> str | None:
         """Apply bounded exponential backoff or move a job to dead letter."""
-        if self.provider is DatabaseProvider.POSTGRES:
-            return await self._retry_postgres(job_id, lease_owner, error_code)
-        return self._retry_sqlite(job_id, lease_owner, error_code)
+        return await self._retry_postgres(job_id, lease_owner, error_code)
 
     async def get(self, job_id: str) -> CalendarActionJob | None:
         """Return one job by id."""
-        if self.provider is DatabaseProvider.POSTGRES:
-            assert self.engine is not None
-            async with self.engine.connect() as connection:
-                row = (
-                    await connection.execute(
-                        text(
-                            """SELECT * FROM calendar_action_outbox
-                            WHERE job_id = :job_id"""
-                        ),
-                        {"job_id": job_id},
-                    )
-                ).mappings().first()
-            return _postgres_job(row) if row else None
-        with connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM calendar_action_outbox WHERE job_id = ?",
-                (job_id,),
-            ).fetchone()
-        return _sqlite_job(row) if row else None
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        """SELECT * FROM calendar_action_outbox
+                        WHERE job_id = :job_id"""
+                    ),
+                    {"job_id": job_id},
+                )
+            ).mappings().first()
+        return _postgres_job(row) if row else None
 
     async def health(self) -> OutboxHealth:
         """Return queue counts without payloads or user identifiers."""
         now = datetime.now(UTC)
-        if self.provider is DatabaseProvider.POSTGRES:
-            assert self.engine is not None
-            async with self.engine.connect() as connection:
-                row = (
-                    await connection.execute(
-                        text(
-                            """SELECT
-                            COUNT(*) FILTER (WHERE status = 'pending') AS pending,
-                            COUNT(*) FILTER (WHERE status = 'processing') AS processing,
-                            COUNT(*) FILTER (WHERE status = 'dead_letter') AS dead_letter,
-                            MIN(created_at) FILTER (
-                                WHERE status IN ('pending', 'processing')
-                            ) AS oldest
-                            FROM calendar_action_outbox"""
-                        )
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        """SELECT
+                        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                        COUNT(*) FILTER (WHERE status = 'processing') AS processing,
+                        COUNT(*) FILTER (WHERE status = 'dead_letter') AS dead_letter,
+                        MIN(created_at) FILTER (
+                            WHERE status IN ('pending', 'processing')
+                        ) AS oldest
+                        FROM calendar_action_outbox"""
                     )
-                ).mappings().one()
-            oldest = row["oldest"]
-            return OutboxHealth(
-                pending=int(row["pending"]),
-                processing=int(row["processing"]),
-                dead_letter=int(row["dead_letter"]),
-                oldest_pending_seconds=max(
-                    0, int((now - oldest).total_seconds())
-                ) if oldest else 0,
-            )
-        with connect() as connection:
-            rows = connection.execute(
-                """SELECT status, COUNT(*) AS count, MIN(created_at) AS oldest
-                FROM calendar_action_outbox GROUP BY status"""
-            ).fetchall()
-        counts = {row["status"]: int(row["count"]) for row in rows}
-        oldest_values = [
-            datetime.fromisoformat(row["oldest"])
-            for row in rows
-            if row["status"] in {"pending", "processing"} and row["oldest"]
-        ]
-        oldest = min(oldest_values) if oldest_values else None
+                )
+            ).mappings().one()
+        oldest = row["oldest"]
         return OutboxHealth(
-            pending=counts.get("pending", 0),
-            processing=counts.get("processing", 0),
-            dead_letter=counts.get("dead_letter", 0),
+            pending=int(row["pending"]),
+            processing=int(row["processing"]),
+            dead_letter=int(row["dead_letter"]),
             oldest_pending_seconds=max(
                 0, int((now - oldest).total_seconds())
             ) if oldest else 0,
@@ -287,6 +209,18 @@ class CalendarActionOutbox:
                 ).mappings().first()
                 if row is None:
                     return None
+                existing = (
+                    await connection.execute(
+                        text(
+                            """SELECT * FROM calendar_action_outbox
+                            WHERE protocol_id = :protocol_id"""
+                        ),
+                        {"protocol_id": protocol_id},
+                    )
+                ).mappings().first()
+                if existing is not None:
+                    job = _postgres_job(existing)
+                    return job if _same_request(job, values) else None
                 protocol = ProtocolRecord.model_validate(row["payload"])
                 if not _valid_protocol(protocol, values, now):
                     return None
@@ -342,93 +276,6 @@ class CalendarActionOutbox:
             )
         return job
 
-    def _enqueue_sqlite(self, **values: object) -> CalendarActionJob | None:
-        now = datetime.now(UTC)
-        protocol_id = values["protocol_id"]
-        with connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                if protocol_id is not None:
-                    row = connection.execute(
-                        "SELECT * FROM calendar_action_outbox WHERE protocol_id = ?",
-                        (protocol_id,),
-                    ).fetchone()
-                    if row is not None:
-                        job = _sqlite_job(row)
-                        connection.commit()
-                        return job if _same_request(job, values) else None
-                    protocol_row = connection.execute(
-                        """SELECT payload FROM protocols
-                        WHERE protocol_id = ? AND user_id = ?""",
-                        (protocol_id, values["user_id"]),
-                    ).fetchone()
-                    if protocol_row is None:
-                        connection.rollback()
-                        return None
-                    protocol = ProtocolRecord.model_validate_json(
-                        protocol_row["payload"]
-                    )
-                    if not _valid_protocol(protocol, values, now):
-                        connection.rollback()
-                        return None
-                    consumed = protocol.model_copy(
-                        update={
-                            "status": ProtocolStatus.CONSUMED,
-                            "consumed_at": now,
-                            "updated_at": now,
-                        }
-                    )
-                    connection.execute(
-                        """UPDATE protocols SET status = ?, payload = ?, updated_at = ?
-                        WHERE protocol_id = ?""",
-                        (
-                            ProtocolStatus.CONSUMED.value,
-                            consumed.model_dump_json(),
-                            now.isoformat(),
-                            protocol_id,
-                        ),
-                    )
-                else:
-                    row = connection.execute(
-                        """SELECT * FROM calendar_action_outbox
-                        WHERE protocol_id IS NULL AND user_id = ?
-                          AND action_type = ? AND request_hash = ?""",
-                        (
-                            values["user_id"],
-                            values["action_type"],
-                            values["request_hash"],
-                        ),
-                    ).fetchone()
-                    if row is not None:
-                        connection.commit()
-                        return _sqlite_job(row)
-                job = _new_job(values, now)
-                connection.execute(
-                    """INSERT INTO calendar_action_outbox
-                    (job_id, protocol_id, user_id, action_type, request_hash,
-                     idempotency_key, payload, status, attempt_count, max_attempts,
-                     next_attempt_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)""",
-                    (
-                        job.job_id,
-                        job.protocol_id,
-                        job.user_id,
-                        job.action_type,
-                        job.request_hash,
-                        job.idempotency_key,
-                        json.dumps(job.payload),
-                        job.max_attempts,
-                        now.isoformat(),
-                        now.isoformat(),
-                        now.isoformat(),
-                    ),
-                )
-                connection.commit()
-                return job
-            except Exception:
-                connection.rollback()
-                raise
-
     async def _claim_postgres(
         self, *, worker_id: str, limit: int, lease_seconds: int, job_id: str | None
     ) -> list[CalendarActionJob]:
@@ -470,48 +317,6 @@ class CalendarActionOutbox:
             ).mappings().all()
         return [_postgres_job(row) for row in rows]
 
-    def _claim_sqlite(
-        self, *, worker_id: str, limit: int, lease_seconds: int, job_id: str | None
-    ) -> list[CalendarActionJob]:
-        now = datetime.now(UTC)
-        with connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            rows = connection.execute(
-                """SELECT job_id FROM calendar_action_outbox
-                WHERE (? IS NULL OR job_id = ?)
-                  AND ((status = 'pending' AND next_attempt_at <= ?)
-                    OR (status = 'processing' AND lease_expires_at <= ?))
-                ORDER BY next_attempt_at, created_at LIMIT ?""",
-                (
-                    job_id,
-                    job_id,
-                    now.isoformat(),
-                    now.isoformat(),
-                    max(1, min(limit, 100)),
-                ),
-            ).fetchall()
-            claimed: list[CalendarActionJob] = []
-            for row in rows:
-                connection.execute(
-                    """UPDATE calendar_action_outbox
-                    SET status = 'processing', attempt_count = attempt_count + 1,
-                        lease_owner = ?, lease_expires_at = ?, updated_at = ?
-                    WHERE job_id = ?""",
-                    (
-                        worker_id,
-                        (now + timedelta(seconds=max(1, lease_seconds))).isoformat(),
-                        now.isoformat(),
-                        row["job_id"],
-                    ),
-                )
-                claimed_row = connection.execute(
-                    "SELECT * FROM calendar_action_outbox WHERE job_id = ?",
-                    (row["job_id"],),
-                ).fetchone()
-                claimed.append(_sqlite_job(claimed_row))
-            connection.commit()
-        return claimed
-
     async def _retry_postgres(
         self, job_id: str, lease_owner: str, error_code: str
     ) -> str | None:
@@ -547,38 +352,6 @@ class CalendarActionOutbox:
                     "job_id": job_id,
                 },
             )
-        return status
-
-    def _retry_sqlite(
-        self, job_id: str, lease_owner: str, error_code: str
-    ) -> str | None:
-        now = datetime.now(UTC)
-        with connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """SELECT attempt_count, max_attempts
-                FROM calendar_action_outbox
-                WHERE job_id = ? AND status = 'processing' AND lease_owner = ?""",
-                (job_id, lease_owner),
-            ).fetchone()
-            if row is None:
-                connection.rollback()
-                return None
-            status, next_attempt = _retry_state(row, now)
-            connection.execute(
-                """UPDATE calendar_action_outbox SET status = ?,
-                next_attempt_at = ?, last_error_code = ?,
-                lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
-                WHERE job_id = ?""",
-                (
-                    status,
-                    next_attempt.isoformat(),
-                    error_code[:64],
-                    now.isoformat(),
-                    job_id,
-                ),
-            )
-            connection.commit()
         return status
 
 
@@ -641,21 +414,4 @@ def _postgres_job(row: object) -> CalendarActionJob:
         max_attempts=int(row["max_attempts"]),  # type: ignore[index]
         lease_owner=row["lease_owner"],  # type: ignore[index]
         result=row["result"],  # type: ignore[index]
-    )
-
-
-def _sqlite_job(row: object) -> CalendarActionJob:
-    return CalendarActionJob(
-        job_id=row["job_id"],  # type: ignore[index]
-        protocol_id=row["protocol_id"],  # type: ignore[index]
-        user_id=row["user_id"],  # type: ignore[index]
-        action_type=row["action_type"],  # type: ignore[index]
-        request_hash=row["request_hash"],  # type: ignore[index]
-        idempotency_key=row["idempotency_key"],  # type: ignore[index]
-        payload=json.loads(row["payload"]),  # type: ignore[index]
-        status=row["status"],  # type: ignore[index]
-        attempt_count=int(row["attempt_count"]),  # type: ignore[index]
-        max_attempts=int(row["max_attempts"]),  # type: ignore[index]
-        lease_owner=row["lease_owner"],  # type: ignore[index]
-        result=json.loads(row["result"]) if row["result"] else None,  # type: ignore[index]
     )

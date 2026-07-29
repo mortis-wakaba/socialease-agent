@@ -7,7 +7,8 @@ from app.models_protocols import (
     ProtocolStatus,
     ProtocolType,
 )
-from app.db.factory import ProtocolRepository, repository_factory
+from app.db.factory import repository_factory
+from app.protocols.store import ProtocolRepository
 from app.safety.actions import HarnessAction
 
 

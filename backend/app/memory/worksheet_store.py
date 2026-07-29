@@ -3,7 +3,8 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from app.db.repositories import SQLiteWorksheetRepository, WorksheetRepository
+from app.db.factory import repository_factory
+from app.db.repositories import WorksheetRepository
 from app.models_worksheet import (
     WORKSHEET_DISCLAIMER,
     WorksheetFields,
@@ -16,7 +17,7 @@ class WorksheetStore:
     """Coordinate worksheet creation and repository persistence."""
 
     def __init__(self, repository: WorksheetRepository | None = None) -> None:
-        self.repository = repository or SQLiteWorksheetRepository()
+        self.repository = repository or repository_factory().worksheet_repository()
 
     async def create(
         self,

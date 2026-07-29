@@ -4,7 +4,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import lru_cache
+import os
 
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -20,10 +22,13 @@ _BOUND_CONNECTION: ContextVar[AsyncConnection | None] = ContextVar(
 
 @lru_cache(maxsize=8)
 def shared_postgres_async_engine(database_url: str) -> AsyncEngine:
-    """Return one event-loop-safe engine per normalized database URL."""
+    """Return one engine per URL; isolated tests avoid cross-loop pooling."""
+    engine_options: dict[str, object] = {"pool_pre_ping": True}
+    if os.getenv("SOCIALEASE_TEST_DATABASE_URL") == database_url:
+        engine_options["poolclass"] = NullPool
     engine = create_async_engine(
         _async_psycopg_url(database_url),
-        pool_pre_ping=True,
+        **engine_options,
     )
     _ENGINE_REGISTRY.add(engine)
     return engine

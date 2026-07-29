@@ -135,16 +135,15 @@ Redis-backed task state CI: passed
 已实现：
 
 - Conversation、Event、Module Proposal/Run、Compact Summary 和幂等删除回执的
-  SQLite/PostgreSQL 持久化；
+  PostgreSQL 持久化；
 - Conversation History 默认长期保留到用户主动删除，独立于模型 Working Context 和
   consent-gated Agent Memory；
 - production 会话正文使用 AES-256-GCM，缺少内容密钥时 fail closed；
 - 单个/全部 Conversation 的导出和事务化级联删除，覆盖领域 Session、Redis Context、
   Pending Memory Proposal 和来源于该会话的长期 Memory；
 - 旧 Role-play Session 可幂等导入只读归档时间线，不进行新旧双写；
-- SQLite 本地开发持久化；
 - repository interfaces for storage replacement;
-- repository factory with SQLite default and PostgreSQL adapters for trace, roleplay, worksheet, exposure, user profile, memory settings, protocol, intervention plan, metrics, account, and session records;
+- PostgreSQL-only repository factory and adapters for trace, roleplay, worksheet, exposure, user profile, memory settings, protocol, intervention plan, metrics, account, and session records;
 - Redis typed state for unified Conversation Context、Module Overlay、Worksheet Draft 和
   Resource Citation 指代，production 默认要求配置并纳入 `/ready`；
 - explicit database runtime capability check with a clear support matrix;

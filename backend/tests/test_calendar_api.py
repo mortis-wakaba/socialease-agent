@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import date, datetime, timezone
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -158,7 +159,7 @@ async def test_concurrent_calendar_replay_keeps_external_side_effect_idempotent(
 ) -> None:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
     monkeypatch.setenv("SOCIALEASE_ENFORCE_DIRECT_ACTION_CONSENT", "true")
-    user_id = "calendar-api-concurrent-owner"
+    user_id = f"calendar-api-concurrent-{uuid4().hex}"
     payload = _create_payload(user_id)
     pending = await client.post("/api/calendar/events", json=payload)
     protocol_id = pending.json()["detail"]["protocol_id"]

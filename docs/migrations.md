@@ -1,6 +1,6 @@
 # SocialEase 数据库迁移规范
 
-项目使用 Alembic 管理 PostgreSQL schema。SQLite 仍用于本地开发路径，但任何影响 PostgreSQL repository 的 schema 变化都必须对应 Alembic revision。
+项目仅使用 PostgreSQL 持久化，并通过 Alembic 管理 schema。任何影响 repository 的 schema 变化都必须对应 Alembic revision。
 
 ## 命名规范
 

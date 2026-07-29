@@ -16,7 +16,7 @@ from app.conversation.context_provider import (
     CachedConversationProjection,
     ProtectedConversationProjection,
 )
-from app.conversation.repository import SQLiteConversationRepository
+from app.db.postgres.conversation_repository import PostgresConversationRepository
 from app.memory.task_state_store import (
     DisabledTaskStateStore,
     InMemoryTaskStateStore,
@@ -40,16 +40,14 @@ def anyio_backend() -> str:
 def repository(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-) -> SQLiteConversationRepository:
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "context-cache.db"))
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
+) -> PostgresConversationRepository:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return SQLiteConversationRepository()
+    return PostgresConversationRepository()
 
 
 @pytest.mark.anyio
 async def test_cache_hit_and_version_miss_match_database_projection(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Cached")
     await repository.append_event(
@@ -101,7 +99,7 @@ async def test_cache_hit_and_version_miss_match_database_projection(
 
 @pytest.mark.anyio
 async def test_cache_failure_falls_back_to_authoritative_database(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Degraded")
     provider = CachedConversationContextProvider(
@@ -122,7 +120,7 @@ async def test_cache_failure_falls_back_to_authoritative_database(
 
 @pytest.mark.anyio
 async def test_concurrent_cache_misses_are_single_flight(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Single flight")
@@ -179,7 +177,7 @@ async def test_cache_outage_cannot_block_durable_deletion() -> None:
 
 @pytest.mark.anyio
 async def test_encrypted_cache_never_stores_plaintext_projection(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Encrypted")
     await repository.append_event(
@@ -220,7 +218,7 @@ async def test_encrypted_cache_never_stores_plaintext_projection(
 
 @pytest.mark.anyio
 async def test_owner_mismatched_cached_projection_is_rebuilt(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Scoped")
     store: InMemoryTaskStateStore[ProtectedConversationProjection] = (
@@ -269,7 +267,7 @@ async def test_owner_mismatched_cached_projection_is_rebuilt(
 @pytest.mark.anyio
 @pytest.mark.redis_integration
 async def test_real_redis_context_cache_round_trip_when_configured(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     redis_url = os.getenv("SOCIALEASE_TEST_REDIS_URL")
     if not redis_url:

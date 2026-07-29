@@ -16,7 +16,7 @@ Use this skill when the user wants to simulate or rehearse a social scenario, su
 ## Output contract
 
 - Next role-play turn.
-- Session state persisted in SQLite.
+- Session state persisted through the repository contract in PostgreSQL.
 - Structured feedback with clarity, naturalness, assertiveness, and empathy dimensions.
 - Citations from social-skills or product-rubric knowledge.
 
