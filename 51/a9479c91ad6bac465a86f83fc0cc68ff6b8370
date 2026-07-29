@@ -1,0 +1,24 @@
+backend/tests/test_calendar_outbox.py
+  s_38b53f6c90704c::t_00af606be09b50 18-22,220
+  s_38b53f6c90704c::t_4bffb93f1ebfa9 3,207-219,221-245
+  s_38b53f6c90704c::t_9fd05342f77376 246-247
+backend/app/calendar/outbox_processor.py
+  s_38b53f6c90704c::t_4bffb93f1ebfa9 24-27,52,80-98
+  s_38b53f6c90704c::t_4f78165ea39b1b 99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "51a9479c91ad6bac465a86f83fc0cc68ff6b8370",
+  "prompts": {},
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
