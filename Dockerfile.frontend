@@ -43,6 +43,11 @@ ENV NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOSTICS=$NEXT_PUBLIC_SOCIALEASE_SHOW_DIAGNOS
 COPY --from=builder --chown=node:node /app/frontend/.next/standalone ./
 COPY --from=builder --chown=node:node /app/frontend/.next/static ./.next/static
 
+# Keep the pinned base image while requiring the patched OpenSSL packages.
+RUN apk add --no-cache --upgrade \
+      'libcrypto3>=3.5.7-r0' \
+      'libssl3>=3.5.7-r0'
+
 # The production server only needs the Node.js runtime. Package managers belong
 # in the builder stage and unnecessarily expand the runtime attack surface.
 RUN rm -rf \
