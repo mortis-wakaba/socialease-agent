@@ -1,0 +1,21 @@
+.github/workflows/ci.yml
+  s_38b53f6c90704c::t_e42d25f4636991 47,172
+.github/workflows/supply-chain.yml
+  s_38b53f6c90704c::t_e42d25f4636991 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "8f61968e7d294cfcd59001af1c3714558677b9f1",
+  "prompts": {},
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
