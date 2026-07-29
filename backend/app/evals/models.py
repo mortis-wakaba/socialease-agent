@@ -110,6 +110,12 @@ class MemoryRetrievalBenchmarkStrategy(str, Enum):
     SQL_TEXT = "sql_text"
     VECTOR = "vector"
     HYBRID = "hybrid"
+    DENSE_ONLY = "dense_only"
+    BM25_ONLY = "bm25_only"
+    MULTI_ROUTE = "dense_bm25_metadata"
+    MULTI_QUERY = "multi_query"
+    CROSS_ENCODER = "cross_encoder"
+    FULL_PIPELINE = "full_pipeline"
 
 
 class MemoryRetrievalStrategyReport(BaseModel):
@@ -124,6 +130,9 @@ class MemoryRetrievalStrategyReport(BaseModel):
     no_memory_abstention: "EvalMetric"
     context_token_budget: "EvalMetric"
     case_pass_rate: "EvalMetric"
+    relevant_mrr: "EvalMetric | None" = None
+    abstention_precision: "EvalMetric | None" = None
+    abstention_recall: "EvalMetric | None" = None
     mean_query_latency_ms: float = Field(default=0.0, ge=0.0)
     p95_query_latency_ms: float = Field(default=0.0, ge=0.0)
 
@@ -149,6 +158,20 @@ class MemoryRetrievalBenchmarkReport(BaseModel):
     hybrid_evaluated: bool = False
     scale_gate_met: bool = False
     vector_gate_met: bool = False
+
+
+class MemoryRetrievalAblationReport(BaseModel):
+    """Comparable v2 ablations and an explicit production adoption decision."""
+
+    selected_strategy: MemoryRetrievalBenchmarkStrategy
+    baseline_strategy: MemoryRetrievalBenchmarkStrategy
+    strategies: dict[str, MemoryRetrievalStrategyReport]
+    dataset_case_count: int = Field(ge=0)
+    held_out_case_count: int = Field(ge=0)
+    indexed_memory_count: int = Field(ge=0)
+    reranker_provider: str
+    reranker_model: str
+    adoption_gate_met: bool
 
 
 class RoleplayFeedbackEvalCase(BaseModel):

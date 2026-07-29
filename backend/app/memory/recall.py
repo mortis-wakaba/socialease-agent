@@ -145,6 +145,7 @@ class MultiRouteMemoryRecall:
         per_channel_limit: int = 20,
         dense_min_score: float = 0.0,
         rrf_k: int = 60,
+        enabled_channels: set[MemoryRecallChannel] | None = None,
     ) -> None:
         self.embedder = embedder
         self.hard_filter = hard_filter or MemoryHardFilter()
@@ -152,6 +153,7 @@ class MultiRouteMemoryRecall:
         self.per_channel_limit = min(max(per_channel_limit, 1), 50)
         self.dense_min_score = min(max(dense_min_score, -1.0), 1.0)
         self.rrf_k = min(max(rrf_k, 1), 100)
+        self.enabled_channels = enabled_channels or set(MemoryRecallChannel)
 
     def recall(
         self,
@@ -177,24 +179,29 @@ class MultiRouteMemoryRecall:
                 ),
             )
 
-        route_results = {
-            MemoryRecallChannel.DENSE: self._dense(
+        route_factories = {
+            MemoryRecallChannel.DENSE: lambda: self._dense(
                 query=expanded.original,
                 records=eligible,
             ),
-            MemoryRecallChannel.BM25: self._bm25(
+            MemoryRecallChannel.BM25: lambda: self._bm25(
                 query=expanded.original,
                 records=eligible,
             ),
-            MemoryRecallChannel.METADATA: self._metadata(
+            MemoryRecallChannel.METADATA: lambda: self._metadata(
                 request=request,
                 records=eligible,
                 now=now,
             ),
-            MemoryRecallChannel.MULTI_QUERY: self._expanded(
+            MemoryRecallChannel.MULTI_QUERY: lambda: self._expanded(
                 queries=expanded.variants[1:],
                 records=eligible,
             ),
+        }
+        route_results = {
+            channel: factory()
+            for channel, factory in route_factories.items()
+            if channel in self.enabled_channels
         }
         candidates = self._fuse(route_results, eligible)
         diagnostics = MultiRouteRecallDiagnostics(
