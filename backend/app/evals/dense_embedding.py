@@ -1,7 +1,8 @@
 """Optional local dense embedder used only by memory retrieval benchmarks."""
 
 from collections.abc import Sequence
-from typing import Protocol
+
+from app.memory.recall import DenseEmbeddingProvider
 
 
 BGE_SMALL_ZH_MODEL = "BAAI/bge-small-zh-v1.5"
@@ -9,20 +10,6 @@ BGE_SMALL_ZH_FASTEMBED_REVISION = "46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59"
 BGE_SMALL_ZH_DIMENSIONS = 512
 BGE_SMALL_ZH_MODEL_SIZE_MB = 90.0
 BGE_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章："
-
-
-class DenseEmbeddingProvider(Protocol):
-    """Batch embedding contract independent of one inference library."""
-
-    provider_name: str
-    model_name: str
-    model_revision: str
-    dimensions: int
-    model_size_mb: float
-
-    def embed_queries(self, texts: Sequence[str]) -> list[list[float]]: ...
-
-    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
 
 
 class FastEmbedBgeSmallZh:
