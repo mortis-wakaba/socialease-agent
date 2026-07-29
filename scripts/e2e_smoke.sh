@@ -9,7 +9,7 @@ FRONTEND_URL="http://127.0.0.1:${FRONTEND_PORT}"
 TMP_DIR="$(mktemp -d)"
 BACKEND_LOG="${TMP_DIR}/backend.log"
 FRONTEND_LOG="${TMP_DIR}/frontend.log"
-DB_PATH="${TMP_DIR}/socialease-smoke.db"
+DATABASE_URL="${SOCIALEASE_DATABASE_URL:?Set SOCIALEASE_DATABASE_URL to an isolated disposable PostgreSQL database}"
 BACKEND_PID=""
 FRONTEND_PID=""
 
@@ -50,18 +50,25 @@ raise SystemExit(1)
 PY
 }
 
+echo "Migrating SocialEase smoke database"
+(
+  cd "${ROOT_DIR}/backend"
+  SOCIALEASE_DATABASE_URL="${DATABASE_URL}" alembic upgrade head
+)
+
 echo "Starting SocialEase backend smoke server on ${BACKEND_URL}"
 (
   cd "${ROOT_DIR}/backend"
-  SOCIALEASE_DATABASE_URL="sqlite:///${DB_PATH}" \
+  SOCIALEASE_DATABASE_URL="${DATABASE_URL}" \
   SOCIALEASE_AUTH_MODE=production \
-  SOCIALEASE_AUTH_TOKEN_SECRET="smoke-test-secret-change-me" \
+  SOCIALEASE_AUTH_TOKEN_SECRET="smoke-test-auth-signing-key-at-least-32-bytes" \
   SOCIALEASE_CONVERSATION_CONTENT_KEY="c3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3M=" \
   SOCIALEASE_CONVERSATION_CONTENT_KEY_VERSION="smoke-v1" \
   SOCIALEASE_ENABLE_SIGNUP=true \
   SOCIALEASE_AUTH_COOKIE_ENABLED=true \
   SOCIALEASE_AUTH_COOKIE_SECURE=false \
   SOCIALEASE_AUTH_RATE_LIMIT_PER_MINUTE=1000 \
+  SOCIALEASE_CALENDAR_MCP_URL="${SOCIALEASE_CALENDAR_MCP_URL:-https://calendar-mcp.invalid/mcp}" \
   SOCIALEASE_ENFORCE_DIRECT_ACTION_CONSENT=true \
   SOCIALEASE_ENABLE_DEVELOPER_ENDPOINTS=true \
   SOCIALEASE_CORS_ORIGINS="${FRONTEND_URL}" \
