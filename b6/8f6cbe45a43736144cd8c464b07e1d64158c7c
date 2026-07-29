@@ -1,0 +1,26 @@
+backend/app/memory/abstention.py
+  s_e6b965dea9786d::t_f7c1da919bf756 1-220
+backend/tests/test_memory_abstention.py
+  s_e6b965dea9786d::t_f7c1da919bf756 1-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "b68f6cbe45a43736144cd8c464b07e1d64158c7c",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_e6b965dea9786d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fac99-450f-7543-be90-4349da3e087e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
