@@ -1,0 +1,23 @@
+backend/requirements-runtime.txt
+  s_38b53f6c90704c::t_55a2d68b1b0897 8
+backend/requirements-runtime.lock
+  s_38b53f6c90704c::t_f6a71364f377f9 248-294
+backend/requirements.lock
+  s_38b53f6c90704c::t_18771956601d25 248-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "02ef2d810cb935d4485bb79240ea6d5267037c25",
+  "prompts": {},
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
