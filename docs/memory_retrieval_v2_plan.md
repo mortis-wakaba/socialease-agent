@@ -124,3 +124,33 @@ memory summary，不包含 user id、联系方式、原始聊天或其他租户�
 
 每阶段先运行对应单元测试；最后运行 backend 全量测试、隐私检查、既有 memory eval
 和新 v2 消融。模型依赖不可用时，模型评测必须明确标记未执行，不能报告通过。
+
+## 实施记录（2026-07-29）
+
+阶段 1–6 已作为独立候选链路实现，生产 `EpisodicMemoryRetriever` 仍默认使用
+SQL Text。当前没有引入 pgvector 或其他向量数据库。
+
+- 新增统一 `MemoryHardFilter` 和无正文拒绝原因；
+- 新增 Dense、BM25、Metadata、Multi-Query 召回及 RRF 融合；
+- 新增本地 FastEmbed BGE Cross-Encoder adapter、校验权重和二次硬过滤；
+- 新增显式 Abstention policy；
+- 新增七组消融 runner 和 `make eval-memory-ablation`；
+- 新增 16 条 held-out 人工案例。完整评测共 75 条 query、2,160 条去重摘要，
+  每个规模案例包含 2,048 条背景记忆。
+
+确定性 embedding/reranker 替身的全规模运行只验证了评测器的规模、指标和 Gate
+契约，`adoption_gate_met=false`，不能代表真实模型效果。真实
+`BAAI/bge-reranker-base` 首次下载因执行环境无法连接 Hugging Face 而未完成，
+因此真实 Cross-Encoder Gate 状态是“未评测”，不是“通过”。
+
+验证结果：
+
+- PostgreSQL 全量后端：`554 passed, 6 skipped`；
+- Repository privacy check：通过；
+- deterministic eval gate：通过；
+- Prompt version check：通过（本次未修改生产 Prompt）；
+- migration discipline check：通过（本次未修改 schema）。
+
+下一决策点：在可访问模型缓存的环境运行 `make eval-memory-ablation`。只有 held-out
+安全指标全部为 1.0、相关性增益和延迟 Gate 同时通过，才进入 PostgreSQL + pgvector
+adapter 的存储设计；否则继续使用 PostgreSQL SQL Text，并针对失败的消融层调优。
