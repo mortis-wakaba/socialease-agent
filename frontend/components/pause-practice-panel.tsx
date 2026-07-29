@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { currentUserId } from "@/lib/auth";
@@ -22,13 +22,10 @@ export function PausePracticePanel({
   onPersistPause?: () => Promise<void>;
   persistedMessage?: string;
 }) {
-  const [paused, setPaused] = useState(initialPaused);
+  const [locallyPaused, setLocallyPaused] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setPaused(initialPaused);
-  }, [initialPaused]);
+  const paused = initialPaused || locallyPaused;
 
   async function pausePractice() {
     setStatus(null);
@@ -37,28 +34,28 @@ export function PausePracticePanel({
         setSaving(true);
         try {
           await onPersistPause();
-          setPaused(true);
+          setLocallyPaused(true);
           setStatus(persistedMessage);
         } catch (err) {
-          setPaused(false);
+          setLocallyPaused(false);
           setStatus(err instanceof Error ? err.message : "无法保存暂停状态");
         } finally {
           setSaving(false);
         }
         return;
       }
-      setPaused(true);
+      setLocallyPaused(true);
       setStatus("已在本页暂停；这不会写入账号里的练习计划状态。");
       return;
     }
     setSaving(true);
     try {
       const result = await api.pauseInterventionPlan(interventionPlanId, currentUserId());
-      setPaused(true);
+      setLocallyPaused(true);
       setStatus(persistedMessage);
       onPaused?.(result.plan);
     } catch (err) {
-      setPaused(false);
+      setLocallyPaused(false);
       setStatus(err instanceof Error ? err.message : "无法保存暂停状态");
     } finally {
       setSaving(false);

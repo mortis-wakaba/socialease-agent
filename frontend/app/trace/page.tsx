@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useDeveloperAccess } from "@/lib/use-developer-access";
 import { AuthGuard } from "@/components/auth-guard";
@@ -23,8 +24,21 @@ import {
 } from "@/components/ui";
 
 export default function TracePage() {
+  return (
+    <Suspense>
+      <TracePageFromQuery />
+    </Suspense>
+  );
+}
+
+function TracePageFromQuery() {
+  const initialRunId = useSearchParams().get("run_id") ?? "";
+  return <TraceView key={initialRunId} initialRunId={initialRunId} />;
+}
+
+function TraceView({ initialRunId }: { initialRunId: string }) {
   const developerAccess = useDeveloperAccess();
-  const [runId, setRunId] = useState("");
+  const [runId, setRunId] = useState(initialRunId);
   const [trace, setTrace] = useState<TraceRecord | null>(null);
   const [plan, setPlan] = useState<InterventionPlanView | null>(null);
   const [loading, setLoading] = useState(false);
@@ -83,13 +97,19 @@ export default function TracePage() {
     if (!developerAccess.ready || !developerAccess.allowed) {
       return;
     }
-    const queryRunId = new URLSearchParams(window.location.search).get("run_id");
-    if (!queryRunId) {
+    if (!initialRunId) {
       return;
     }
-    setRunId(queryRunId);
-    void loadTrace(queryRunId);
-  }, [developerAccess.ready, developerAccess.allowed, loadTrace]);
+    const timeoutId = window.setTimeout(() => {
+      void loadTrace(initialRunId);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    developerAccess.ready,
+    developerAccess.allowed,
+    initialRunId,
+    loadTrace
+  ]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

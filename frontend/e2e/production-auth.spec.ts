@@ -196,6 +196,25 @@ test("production mode allows developer users to open trace page", async ({ page 
   await expect(page.getByRole("button", { name: "Load Trace" })).toBeVisible();
 });
 
+test("production mode loads a trace linked by run_id", async ({ page }) => {
+  await loginAs(page, ["user", "developer"]);
+  await page.route(`${API}/auth/me`, async (route) => {
+    await route.fulfill({
+      json: authMe(["user", "developer"], true)
+    });
+  });
+  let traceRequested = false;
+  await page.route(`${API}/runs/linked-run`, async (route) => {
+    traceRequested = true;
+    await route.fulfill({ status: 404, json: { detail: "Trace not found" } });
+  });
+
+  await page.goto("/trace?run_id=linked-run");
+
+  await expect(page.getByPlaceholder("Paste run_id")).toHaveValue("linked-run");
+  await expect.poll(() => traceRequested).toBe(true);
+});
+
 async function loginAs(page: Page, roles: string[]) {
   await page.addInitScript((nextRoles) => {
     window.localStorage.setItem("socialease.bearerToken", `token-${nextRoles.join("-")}`);
