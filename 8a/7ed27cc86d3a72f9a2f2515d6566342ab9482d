@@ -1,0 +1,23 @@
+.github/workflows/supply-chain.yml
+  s_38b53f6c90704c::t_29523dfb243a5c 20,31
+.github/dependabot.yml
+  s_38b53f6c90704c::t_29523dfb243a5c 23-26
+.github/workflows/ci.yml
+  s_38b53f6c90704c::t_29523dfb243a5c 42,99,102,169,179,202
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "8a7ed27cc86d3a72f9a2f2515d6566342ab9482d",
+  "prompts": {},
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
