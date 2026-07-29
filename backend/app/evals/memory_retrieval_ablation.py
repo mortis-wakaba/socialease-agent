@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
 import math
 from time import perf_counter
 from typing import Any
 
 from app.evals.loader import (
     load_memory_retrieval_cases,
+    load_memory_retrieval_v2_heldout_cases,
     load_memory_vector_challenge_cases,
 )
 from app.evals.memory_retrieval import (
@@ -116,11 +118,15 @@ def run_memory_retrieval_ablation(
     held_out_case_count: int = 0,
 ) -> tuple[MemoryRetrievalAblationReport, dict[str, list[dict[str, Any]]]]:
     """Compare each added retrieval component against the SQL Text baseline."""
+    held_out_cases = load_memory_retrieval_v2_heldout_cases() if cases is None else []
     eval_cases = cases or [
         *load_memory_retrieval_cases(),
         *load_memory_vector_challenge_cases(),
         *build_scale_retrieval_cases(),
+        *held_out_cases,
     ]
+    if cases is None:
+        held_out_case_count = len(held_out_cases)
     background_by_user = (
         {
             user_id: [
@@ -437,3 +443,28 @@ def _percentile_95(values: list[float]) -> float:
     ordered = sorted(values)
     index = min(len(ordered) - 1, math.ceil(len(ordered) * 0.95) - 1)
     return round(ordered[index], 6)
+
+
+def main() -> None:
+    """Run the full local-model ablation and print content-free evidence."""
+    from app.evals.cross_encoder import FastEmbedBgeReranker
+    from app.evals.dense_embedding import FastEmbedBgeSmallZh
+
+    report, outcomes = run_memory_retrieval_ablation(
+        embedder=FastEmbedBgeSmallZh(),
+        reranker_provider=FastEmbedBgeReranker(),
+    )
+    print(
+        json.dumps(
+            {
+                "report": report.model_dump(mode="json"),
+                "outcomes": outcomes,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

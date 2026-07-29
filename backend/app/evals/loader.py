@@ -75,6 +75,14 @@ def load_memory_vector_challenge_cases() -> list[MemoryRetrievalEvalCase]:
     )
 
 
+def load_memory_retrieval_v2_heldout_cases() -> list[MemoryRetrievalEvalCase]:
+    """Load held-out safety and relevance cases not used for threshold tuning."""
+    return load_jsonl(
+        DATA_DIR / "memory_retrieval_v2_heldout.jsonl",
+        MemoryRetrievalEvalCase,
+    )
+
+
 def load_memory_scale_seeds() -> list[MemoryRetrievalScaleSeed]:
     """Load compact human-authored seeds for the large-corpus benchmark."""
     return load_jsonl(
