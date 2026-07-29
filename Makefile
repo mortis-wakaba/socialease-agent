@@ -33,7 +33,7 @@ eval-memory-vector:
 	cd backend && python -m app.evals.vector_memory_retrieval
 
 eval-memory-ablation:
-	cd backend && python -m app.evals.memory_retrieval_ablation
+	@cd backend && python -m app.evals.memory_retrieval_ablation
 
 eval-llm:
 	cd backend && RUN_LLM_EVALS=true pytest -m llm_eval tests/test_deepeval_quality.py tests/test_output_guardrail_quality.py
