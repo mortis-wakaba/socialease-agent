@@ -67,7 +67,7 @@ def load_user_memory_settings_payload(payload: str | dict[str, Any] | None) -> U
 
 
 def _parse_payload(payload: str | dict[str, Any]) -> dict[str, Any]:
-    """Parse a SQLite JSON string or PostgreSQL JSON object into a dict."""
+    """Parse a legacy JSON string or PostgreSQL JSON object into a dict."""
     if isinstance(payload, dict):
         return payload
     try:

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.models_intervention import InterventionPlan, InterventionPlanView, InterventionStep, InterventionStepView
-from app.memory.intervention_plan_store import InterventionPlanStore
+from app.memory.intervention_plan_store import InterventionPlanRepository
 from app.db.factory import repository_factory
 from app.safety.actions import HarnessAction
 
@@ -12,7 +12,7 @@ from app.safety.actions import HarnessAction
 class InterventionPlanService:
     """Create small, explicit plans for lead harness actions."""
 
-    def __init__(self, store: InterventionPlanStore | None = None) -> None:
+    def __init__(self, store: InterventionPlanRepository | None = None) -> None:
         self.store = store or repository_factory().intervention_plan_repository()
 
     async def create_for_action(

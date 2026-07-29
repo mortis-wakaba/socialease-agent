@@ -8,7 +8,7 @@ import sys
 
 
 def test_app_imports_with_postgres_runtime_configuration() -> None:
-    """Postgres runtime should not initialize SQLite globals during import."""
+    """Postgres runtime should import without initializing a database connection."""
     env = {
         **os.environ,
         "SOCIALEASE_DATABASE_URL": (

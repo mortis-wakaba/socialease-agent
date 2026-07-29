@@ -1,21 +1,55 @@
-"""Intervention plan store backed by SQLite."""
+"""Repository contract for session-level intervention plans."""
 
-from datetime import datetime, timezone
+from datetime import datetime
+from typing import Protocol
 from uuid import uuid4
 
-from app.db.config import database_settings
-from app.db.engine import connect
-from app.db.providers import DatabaseProvider, resolve_database_provider
-from app.db.session import initialize_database
+from datetime import timezone
+
 from app.models_intervention import InterventionPlan, InterventionStep
 
 
-class InterventionPlanStore:
-    """Persist session-level intervention plans."""
+class InterventionPlanRepository(Protocol):
+    """Persistence contract for session-level intervention plans."""
+
+    async def create(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        steps: list[InterventionStep],
+        status: str = "active",
+        protocol_id: str | None = None,
+    ) -> InterventionPlan: ...
+
+    async def save(self, plan: InterventionPlan) -> InterventionPlan: ...
+
+    async def get_for_session(
+        self,
+        session_id: str,
+        user_id: str,
+    ) -> InterventionPlan | None: ...
+
+    async def get_by_id_for_user(
+        self,
+        plan_id: str,
+        user_id: str,
+    ) -> InterventionPlan | None: ...
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 20,
+    ) -> list[InterventionPlan]: ...
+
+    async def cancel_pending_consent_before(self, cutoff: datetime) -> int: ...
+
+
+class InMemoryInterventionPlanRepository:
+    """Non-persistent intervention-plan fake for unit tests and evals."""
 
     def __init__(self) -> None:
-        if resolve_database_provider(database_settings().database_url) == DatabaseProvider.SQLITE:
-            initialize_database()
+        self._plans: dict[str, InterventionPlan] = {}
 
     async def create(
         self,
@@ -26,7 +60,7 @@ class InterventionPlanStore:
         status: str = "active",
         protocol_id: str | None = None,
     ) -> InterventionPlan:
-        """Create and persist an active intervention plan."""
+        """Create one in-memory plan."""
         now = datetime.now(timezone.utc)
         plan = InterventionPlan(
             plan_id=str(uuid4()),
@@ -38,78 +72,65 @@ class InterventionPlanStore:
             created_at=now,
             updated_at=now,
         )
-        return await self.save(plan)
-
-    async def save(self, plan: InterventionPlan) -> InterventionPlan:
-        """Persist one intervention plan."""
-        with connect() as connection:
-            connection.execute(
-                """INSERT OR REPLACE INTO intervention_plans
-                (plan_id, user_id, session_id, status, payload, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    plan.plan_id,
-                    plan.user_id,
-                    plan.session_id,
-                    plan.status,
-                    plan.model_dump_json(),
-                    plan.created_at.isoformat(),
-                    plan.updated_at.isoformat(),
-                ),
-            )
+        self._plans[plan.plan_id] = plan
         return plan
 
-    async def get_for_session(self, session_id: str, user_id: str) -> InterventionPlan | None:
-        """Return the intervention plan for a user session."""
-        with connect() as connection:
-            row = connection.execute(
-                "SELECT payload FROM intervention_plans WHERE session_id = ? AND user_id = ?",
-                (session_id, user_id),
-            ).fetchone()
-        return InterventionPlan.model_validate_json(row["payload"]) if row else None
+    async def save(self, plan: InterventionPlan) -> InterventionPlan:
+        """Save one in-memory plan."""
+        self._plans[plan.plan_id] = plan
+        return plan
 
-    async def get_by_id_for_user(self, plan_id: str, user_id: str) -> InterventionPlan | None:
-        """Return an intervention plan by id only if it belongs to the user."""
-        with connect() as connection:
-            row = connection.execute(
-                "SELECT payload FROM intervention_plans WHERE plan_id = ? AND user_id = ?",
-                (plan_id, user_id),
-            ).fetchone()
-        return InterventionPlan.model_validate_json(row["payload"]) if row else None
+    async def get_for_session(
+        self,
+        session_id: str,
+        user_id: str,
+    ) -> InterventionPlan | None:
+        """Return a user-owned plan by session."""
+        return next(
+            (
+                plan
+                for plan in self._plans.values()
+                if plan.session_id == session_id and plan.user_id == user_id
+            ),
+            None,
+        )
 
-    async def list_for_user(self, user_id: str, limit: int = 20) -> list[InterventionPlan]:
-        """Return recent intervention plans for one user."""
-        with connect() as connection:
-            rows = connection.execute(
-                """SELECT payload FROM intervention_plans
-                WHERE user_id = ?
-                ORDER BY updated_at DESC
-                LIMIT ?""",
-                (user_id, limit),
-            ).fetchall()
-        return [InterventionPlan.model_validate_json(row["payload"]) for row in rows]
+    async def get_by_id_for_user(
+        self,
+        plan_id: str,
+        user_id: str,
+    ) -> InterventionPlan | None:
+        """Return a plan only for its owner."""
+        plan = self._plans.get(plan_id)
+        return plan if plan is not None and plan.user_id == user_id else None
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 20,
+    ) -> list[InterventionPlan]:
+        """Return recent user-owned plans."""
+        plans = [plan for plan in self._plans.values() if plan.user_id == user_id]
+        return sorted(plans, key=lambda plan: plan.updated_at, reverse=True)[:limit]
 
     async def cancel_pending_consent_before(self, cutoff: datetime) -> int:
-        """Cancel abandoned pending-consent plans before a cutoff timestamp."""
-        with connect() as connection:
-            rows = connection.execute(
-                """SELECT payload FROM intervention_plans
-                WHERE status = ? AND updated_at <= ?""",
-                ("pending_consent", cutoff.isoformat()),
-            ).fetchall()
-        cancelled_count = 0
-        for row in rows:
-            plan = InterventionPlan.model_validate_json(row["payload"])
-            updated_steps = [
+        """Cancel pending-consent plans at or before the cutoff."""
+        cancelled = 0
+        for plan_id, plan in tuple(self._plans.items()):
+            if plan.status != "pending_consent" or plan.updated_at > cutoff:
+                continue
+            steps = [
                 step.model_copy(update={"status": "cancelled"})
                 if step.status in {"pending", "in_progress"}
                 else step
                 for step in plan.steps
             ]
-            updated = plan.model_copy(update={"status": "cancelled", "steps": updated_steps})
-            await self.save(updated)
-            cancelled_count += 1
-        return cancelled_count
-
-
-intervention_plan_store = InterventionPlanStore()
+            self._plans[plan_id] = plan.model_copy(
+                update={
+                    "status": "cancelled",
+                    "steps": steps,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            )
+            cancelled += 1
+        return cancelled

@@ -5,8 +5,8 @@ from uuid import uuid4
 
 from app.db.repositories import (
     RoleplaySessionRepository,
-    SQLiteRoleplaySessionRepository,
 )
+from app.db.factory import repository_factory
 from app.models_roleplay import (
     RoleplayGuidance,
     RoleplayMessageFeatures,
@@ -20,7 +20,7 @@ class RoleplaySessionStore:
     """Coordinate role-play session creation and repository persistence."""
 
     def __init__(self, repository: RoleplaySessionRepository | None = None) -> None:
-        self.repository = repository or SQLiteRoleplaySessionRepository()
+        self.repository = repository or repository_factory().roleplay_repository()
 
     async def create(
         self,

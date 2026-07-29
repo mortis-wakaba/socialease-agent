@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
-from app.db.factory import repository_factory
 from app.memory.long_term_repository import (
     InvalidMemoryTransitionError,
+    LongTermMemoryRepository,
     MemoryConflictError,
     MemoryNotFoundError,
 )
@@ -68,8 +68,10 @@ def _checkpoint(user_id: str, thread_id: str) -> PracticeThreadCheckpoint:
 
 
 @pytest.mark.anyio
-async def test_episodic_memory_lifecycle_is_scoped_versioned_and_audited() -> None:
-    repository = repository_factory().long_term_memory_repository()
+async def test_episodic_memory_lifecycle_is_scoped_versioned_and_audited(
+    long_term_memory_repository_contract: LongTermMemoryRepository,
+) -> None:
+    repository = long_term_memory_repository_contract
     user_id = f"episodic_owner_{uuid4().hex}"
     other_user_id = f"episodic_other_{uuid4().hex}"
     original = _memory(user_id)
@@ -127,8 +129,10 @@ async def test_episodic_memory_lifecycle_is_scoped_versioned_and_audited() -> No
 
 
 @pytest.mark.anyio
-async def test_memory_rejects_stale_version_invalid_transition_and_duplicate_id() -> None:
-    repository = repository_factory().long_term_memory_repository()
+async def test_memory_rejects_stale_version_invalid_transition_and_duplicate_id(
+    long_term_memory_repository_contract: LongTermMemoryRepository,
+) -> None:
+    repository = long_term_memory_repository_contract
     user_id = f"episodic_conflict_{uuid4().hex}"
     record = _memory(user_id)
     await repository.create_memory(record, reason_code="completed_practice")
@@ -170,8 +174,10 @@ async def test_memory_rejects_stale_version_invalid_transition_and_duplicate_id(
 
 
 @pytest.mark.anyio
-async def test_memory_delete_physically_removes_body_but_keeps_content_free_event() -> None:
-    repository = repository_factory().long_term_memory_repository()
+async def test_memory_delete_physically_removes_body_but_keeps_content_free_event(
+    long_term_memory_repository_contract: LongTermMemoryRepository,
+) -> None:
+    repository = long_term_memory_repository_contract
     user_id = f"episodic_delete_{uuid4().hex}"
     record = _memory(user_id)
     await repository.create_memory(record, reason_code="completed_practice")
@@ -192,8 +198,10 @@ async def test_memory_delete_physically_removes_body_but_keeps_content_free_even
 
 
 @pytest.mark.anyio
-async def test_checkpoint_compare_and_swap_prevents_silent_overwrite() -> None:
-    repository = repository_factory().long_term_memory_repository()
+async def test_checkpoint_compare_and_swap_prevents_silent_overwrite(
+    long_term_memory_repository_contract: LongTermMemoryRepository,
+) -> None:
+    repository = long_term_memory_repository_contract
     user_id = f"checkpoint_owner_{uuid4().hex}"
     other_user_id = f"checkpoint_other_{uuid4().hex}"
     thread_id = f"thread_{uuid4().hex}"
@@ -236,8 +244,10 @@ async def test_checkpoint_compare_and_swap_prevents_silent_overwrite() -> None:
 
 
 @pytest.mark.anyio
-async def test_user_export_and_delete_cover_all_long_term_memory_tables() -> None:
-    repository = repository_factory().long_term_memory_repository()
+async def test_user_export_and_delete_cover_all_long_term_memory_tables(
+    long_term_memory_repository_contract: LongTermMemoryRepository,
+) -> None:
+    repository = long_term_memory_repository_contract
     user_id = f"long_term_export_{uuid4().hex}"
     record = _memory(user_id)
     checkpoint = _checkpoint(user_id, f"thread_{uuid4().hex}")

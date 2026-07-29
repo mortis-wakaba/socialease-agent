@@ -122,12 +122,13 @@ class ModuleCoordinator:
                     run=run,
                     parent=parent,
                 )
-                if not await self._repository.claim_module_start(
-                    module_run_id=run.module_run_id
-                ):
-                    raise ConversationConcurrencyError(
-                        "module startup could not be claimed"
-                    )
+            if not await self._repository.claim_module_start(
+                module_run_id=run.module_run_id
+            ):
+                raise ConversationConcurrencyError(
+                    "module startup could not be claimed"
+                )
+            async with self._repository.module_start_transaction():
                 run, result, parent = await self._start_domain_session(
                     run=run,
                     prepared=prepared,

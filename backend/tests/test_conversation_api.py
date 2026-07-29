@@ -1,7 +1,5 @@
 """API tests for unified conversations and proposal confirmation boundaries."""
 
-from pathlib import Path
-
 import httpx
 import pytest
 
@@ -18,10 +16,7 @@ def anyio_backend() -> str:
 @pytest.fixture
 async def client(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> httpx.AsyncClient:
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "api.db"))
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
     monkeypatch.setenv("LLM_ENABLED", "false")
     conversation_service.cache_clear()

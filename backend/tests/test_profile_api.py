@@ -7,7 +7,6 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from app.db.engine import connect
 from app.main import app
 from app.models_exposure import (
     ExposureCompleteRequest,
@@ -17,6 +16,7 @@ from app.models_exposure import (
 from app.models_roleplay import RoleplayStartRequest
 from app.services.exposure_service import exposure_service
 from app.services.roleplay_service import roleplay_service
+from tests.postgres_test_support import execute_sql
 
 
 @pytest.fixture
@@ -337,16 +337,18 @@ async def test_memory_settings_schema_evolution_payload_is_sanitized(
         },
         "unexpected_free_text": raw_sensitive_values[0],
     }
-    with connect() as connection:
-        connection.execute(
-            """INSERT OR REPLACE INTO user_memory_settings
-            (user_id, payload, updated_at) VALUES (?, ?, ?)""",
-            (
-                user_id,
-                json.dumps(historical_payload, ensure_ascii=False),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
+    await execute_sql(
+        """INSERT INTO user_memory_settings (user_id, payload, updated_at)
+        VALUES (:user_id, CAST(:payload AS jsonb), :updated_at)
+        ON CONFLICT (user_id) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            updated_at = EXCLUDED.updated_at""",
+        {
+            "user_id": user_id,
+            "payload": json.dumps(historical_payload, ensure_ascii=False),
+            "updated_at": datetime.now(timezone.utc),
+        },
+    )
 
     profile_response = await client.get(f"/api/users/{user_id}/profile")
     export_response = await client.get(f"/api/users/{user_id}/memory/export")

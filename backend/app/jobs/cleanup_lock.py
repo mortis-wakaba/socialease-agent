@@ -8,7 +8,6 @@ import psycopg
 from psycopg import AsyncConnection
 
 from app.db.config import database_settings
-from app.db.providers import DatabaseProvider, resolve_database_provider
 
 
 POSTGRES_CLEANUP_ADVISORY_LOCK_ID = 916_202_607_190_001
@@ -21,18 +20,6 @@ class CleanupRunLock(Protocol):
 
     async def acquire(self) -> bool: ...
     async def release(self) -> None: ...
-
-
-class NoopCleanupRunLock:
-    """Single-process lock implementation for the local SQLite demo."""
-
-    backend_name = "single_process"
-
-    async def acquire(self) -> bool:
-        return True
-
-    async def release(self) -> None:
-        return None
 
 
 class PostgresAdvisoryCleanupRunLock:
@@ -86,11 +73,9 @@ class PostgresAdvisoryCleanupRunLock:
 
 
 def create_cleanup_run_lock(database_url: str | None = None) -> CleanupRunLock:
-    """Select a distributed lock only for the shared PostgreSQL runtime."""
+    """Return the required distributed PostgreSQL cleanup lock."""
     resolved_url = database_url or database_settings().database_url
-    if resolve_database_provider(resolved_url) == DatabaseProvider.POSTGRES:
-        return PostgresAdvisoryCleanupRunLock(resolved_url)
-    return NoopCleanupRunLock()
+    return PostgresAdvisoryCleanupRunLock(resolved_url)
 
 
 def _psycopg_dsn(database_url: str) -> str:

@@ -2,14 +2,14 @@
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
 from app.conversation.module_coordinator import ModuleCoordinator
 from app.conversation.module_policy import ConversationStateError
-from app.conversation.repository import SQLiteConversationRepository
-from app.db.engine import connect
+from app.db.postgres.conversation_repository import PostgresConversationRepository
 from app.models_conversation import (
     ExposureMessageEventPayload,
     ExposureParameters,
@@ -24,6 +24,7 @@ from app.models_conversation import (
     RoleplayMessageEventPayload,
     RoleplayParameters,
 )
+from tests.postgres_test_support import fetch_one
 from app.models_conversation_context import (
     ConversationContextDiagnostics,
     ConversationWorkingContext,
@@ -175,11 +176,9 @@ class FailOnceStartAdapter(RecordingAdapter):
 def repository(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-) -> SQLiteConversationRepository:
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "modules.db"))
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
+) -> PostgresConversationRepository:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return SQLiteConversationRepository()
+    return PostgresConversationRepository()
 
 
 @pytest.fixture
@@ -190,7 +189,7 @@ def anyio_backend() -> str:
 
 @pytest.mark.anyio
 async def test_roleplay_exposure_nested_push_pop_and_resume(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(
         user_id="owner",
@@ -268,7 +267,7 @@ async def test_roleplay_exposure_nested_push_pop_and_resume(
 
 @pytest.mark.anyio
 async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Policy")
     roleplay_adapter = RecordingAdapter(ModuleType.ROLEPLAY)
@@ -317,7 +316,7 @@ async def test_accept_is_idempotent_and_illegal_nesting_stays_pending(
 
 @pytest.mark.anyio
 async def test_failed_startup_keeps_atomic_frame_and_replays_outbox(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Replay")
     adapter = FailOnceStartAdapter(ModuleType.ROLEPLAY)
@@ -345,11 +344,13 @@ async def test_failed_startup_keeps_atomic_frame_and_replays_outbox(
         conversation_id=conversation.conversation_id,
         user_id="owner",
     )
-    with connect() as connection:
-        outbox = connection.execute(
-            """SELECT status, attempt_count, last_error_code
-            FROM conversation_module_start_outbox"""
-        ).fetchone()
+    outbox = await fetch_one(
+        """SELECT status, attempt_count, last_error_code
+        FROM conversation_module_start_outbox
+        WHERE conversation_id = :conversation_id""",
+        {"conversation_id": conversation.conversation_id},
+    )
+    assert outbox is not None
     assert stored is not None
     assert stored.status is ModuleProposalStatus.ACCEPTED
     assert len(stack) == 1
@@ -360,10 +361,13 @@ async def test_failed_startup_keeps_atomic_frame_and_replays_outbox(
     replay = await coordinator.accept(stored, context)
 
     assert len(replay.active_module_stack) == 1
-    with connect() as connection:
-        completed = connection.execute(
-            "SELECT status, attempt_count FROM conversation_module_start_outbox"
-        ).fetchone()
+    completed = await fetch_one(
+        """SELECT status, attempt_count
+        FROM conversation_module_start_outbox
+        WHERE conversation_id = :conversation_id""",
+        {"conversation_id": conversation.conversation_id},
+    )
+    assert completed is not None
     assert completed["status"] == "completed"
     assert completed["attempt_count"] == 2
     assert len(
@@ -373,7 +377,7 @@ async def test_failed_startup_keeps_atomic_frame_and_replays_outbox(
 
 @pytest.mark.anyio
 async def test_active_module_receives_messages_on_same_timeline(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Message")
     adapter = RecordingAdapter(ModuleType.ROLEPLAY)
@@ -423,7 +427,7 @@ async def test_active_module_receives_messages_on_same_timeline(
 
 @pytest.mark.anyio
 async def test_crisis_preemption_stops_nested_stack_even_if_runtime_fails(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     conversation = await repository.create(user_id="owner", title="Crisis nested")
     roleplay_adapter = RecordingAdapter(ModuleType.ROLEPLAY)
@@ -475,6 +479,7 @@ def _proposal(
     proposal_id: str,
     module_type: ModuleType,
 ) -> ModuleProposal:
+    unique_proposal_id = f"{proposal_id}-{uuid4().hex}"
     parameters = {
         ModuleType.ROLEPLAY: RoleplayParameters(
             scenario_description="小组讨论"
@@ -489,13 +494,13 @@ def _proposal(
     }[module_type]
     now = datetime.now(UTC)
     return ModuleProposal(
-        proposal_id=proposal_id,
+        proposal_id=unique_proposal_id,
         conversation_id=conversation_id,
         user_id="owner",
         proposed_module=module_type,
         reason_code=reason,
         bounded_parameters=parameters,
-        request_hash=(proposal_id + ("x" * 64))[:64],
+        request_hash=(unique_proposal_id + ("x" * 64))[:64],
         expires_at=now + timedelta(minutes=10),
         created_at=now,
     )

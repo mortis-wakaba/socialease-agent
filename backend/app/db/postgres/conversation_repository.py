@@ -638,13 +638,16 @@ class PostgresConversationRepository:
                         (conversation_id, user_id,
                          compacted_through_sequence, version, payload,
                          updated_at)
-                        SELECT :conversation_id, :user_id, :sequence, :version,
+                        SELECT CAST(:conversation_id AS VARCHAR(64)),
+                         CAST(:user_id AS VARCHAR(128)),
+                         CAST(:sequence AS INTEGER), CAST(:version AS INTEGER),
                          CAST(:payload AS jsonb), :updated_at
                         WHERE EXISTS (
                             SELECT 1 FROM conversations
-                            WHERE conversation_id = :conversation_id
-                              AND user_id = :user_id
-                              AND status != :deleted
+                            WHERE conversation_id =
+                                  CAST(:conversation_id AS VARCHAR(64))
+                              AND user_id = CAST(:user_id AS VARCHAR(128))
+                              AND status != CAST(:deleted AS VARCHAR(16))
                         )
                         ON CONFLICT (conversation_id) DO NOTHING"""
                     ),

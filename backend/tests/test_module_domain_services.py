@@ -1,6 +1,5 @@
 """Domain-service contracts used only through unified conversation adapters."""
 
-from pathlib import Path
 from datetime import UTC, datetime
 
 import pytest
@@ -34,10 +33,7 @@ def anyio_backend() -> str:
 @pytest.fixture(autouse=True)
 def isolated_database(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "modules.db"))
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
     monkeypatch.delenv("SOCIALEASE_REDIS_URL", raising=False)
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
 

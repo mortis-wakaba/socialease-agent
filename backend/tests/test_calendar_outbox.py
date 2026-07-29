@@ -1,9 +1,11 @@
 """Fault-injection tests for the transactional Calendar outbox."""
 
 from datetime import UTC, datetime
-from pathlib import Path
+import os
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 
 from app.calendar.mcp_client import CalendarMCPError, InProcessCalendarMCPClient
 from app.calendar.outbox import CalendarActionOutbox
@@ -11,13 +13,20 @@ from app.calendar.outbox_processor import CalendarOutboxProcessor
 from app.calendar.provider import InMemoryCalendarProvider
 from app.calendar.service import CalendarService
 from app.calendar.tools import CalendarToolService
-from app.db.engine import connect
+from app.db.postgres.protocol_repository import PostgresProtocolRepository
 from app.models_calendar import CalendarCreateRequest, CalendarEventProposal
 from app.models_protocols import ProtocolStatus
 from app.protocols.service import ProtocolService
-from app.protocols.store import ProtocolStore
 from app.safety.actions import HarnessAction
 from app.safety.direct_actions import direct_action_request_hash
+
+
+TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
+
+pytestmark = pytest.mark.skipif(
+    not TEST_DATABASE_URL,
+    reason="SOCIALEASE_TEST_DATABASE_URL is required.",
+)
 
 
 @pytest.fixture
@@ -27,23 +36,20 @@ def anyio_backend() -> str:
 
 @pytest.fixture
 def outbox(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> CalendarActionOutbox:
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "calendar-outbox.db"))
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
-    return CalendarActionOutbox()
+    return CalendarActionOutbox(database_url=TEST_DATABASE_URL)
 
 
 def _request() -> CalendarCreateRequest:
+    user_id = f"calendar_owner_{uuid4().hex}"
     return CalendarCreateRequest(
-        user_id="owner",
+        user_id=user_id,
         proposal=CalendarEventProposal(
             title="练习提醒",
             start_time=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
             duration_minutes=15,
         ),
-        idempotency_key="calendar-outbox-test",
+        idempotency_key=f"calendar-outbox-{uuid4().hex}",
     )
 
 
@@ -53,7 +59,9 @@ async def _enqueue_approved(outbox: CalendarActionOutbox):
         harness_action=HarnessAction.CREATE_CALENDAR_EVENT,
         payload=request,
     )
-    protocols = ProtocolService(store=ProtocolStore())
+    protocols = ProtocolService(
+        store=PostgresProtocolRepository(database_url=TEST_DATABASE_URL)
+    )
     protocol = await protocols.create_consent_request(
         user_id=request.user_id,
         harness_action=HarnessAction.CREATE_CALENDAR_EVENT,
@@ -118,11 +126,17 @@ async def test_expired_lease_is_reclaimed(
 ) -> None:
     job = await _enqueue_approved(outbox)
     assert await outbox.claim(worker_id="crashed-worker", job_id=job.job_id)
-    with connect() as connection:
-        connection.execute(
-            """UPDATE calendar_action_outbox
-            SET lease_expires_at = ? WHERE job_id = ?""",
-            (datetime(2020, 1, 1, tzinfo=UTC).isoformat(), job.job_id),
+    async with outbox.engine.begin() as connection:
+        await connection.execute(
+            text(
+                """UPDATE calendar_action_outbox
+                SET lease_expires_at = :lease_expires_at
+                WHERE job_id = :job_id"""
+            ),
+            {
+                "lease_expires_at": datetime(2020, 1, 1, tzinfo=UTC),
+                "job_id": job.job_id,
+            },
         )
 
     reclaimed = await outbox.claim(
@@ -164,14 +178,20 @@ async def test_external_success_then_completion_failure_reconciles_idempotently(
 
     with pytest.raises(Exception, match="completion lease"):
         await processor.process_job(job.job_id)
-    with connect() as connection:
-        connection.execute(
-            """UPDATE calendar_action_outbox
-            SET next_attempt_at = ? WHERE job_id = ?""",
-            (datetime(2020, 1, 1, tzinfo=UTC).isoformat(), job.job_id),
+    async with outbox.engine.begin() as connection:
+        await connection.execute(
+            text(
+                """UPDATE calendar_action_outbox
+                SET next_attempt_at = :next_attempt_at
+                WHERE job_id = :job_id"""
+            ),
+            {
+                "next_attempt_at": datetime(2020, 1, 1, tzinfo=UTC),
+                "job_id": job.job_id,
+            },
         )
     response = await processor.process_job(job.job_id)
-    events = await service.list_owned_events(user_id="owner")
+    events = await service.list_owned_events(user_id=job.user_id)
 
     assert response.verified is True
     assert response.event.idempotency_reused is True
@@ -195,10 +215,13 @@ async def test_max_attempt_moves_job_to_dead_letter(
         raise CalendarMCPError("unavailable")
 
     monkeypatch.setattr(service, "create_event", fail)
-    with connect() as connection:
-        connection.execute(
-            "UPDATE calendar_action_outbox SET max_attempts = 1 WHERE job_id = ?",
-            (job.job_id,),
+    async with outbox.engine.begin() as connection:
+        await connection.execute(
+            text(
+                """UPDATE calendar_action_outbox
+                SET max_attempts = 1 WHERE job_id = :job_id"""
+            ),
+            {"job_id": job.job_id},
         )
     processor = CalendarOutboxProcessor(
         outbox=outbox,
@@ -213,4 +236,4 @@ async def test_max_attempt_moves_job_to_dead_letter(
     assert stored is not None
     assert stored.status == "dead_letter"
     health = await outbox.health()
-    assert health.dead_letter == 1
+    assert health.dead_letter >= 1

@@ -1,13 +1,10 @@
 """Tests for database repository provider selection."""
 
-from pathlib import Path
-
 import pytest
 
 from app.db.factory import RepositoryFactory, repository_factory
-from app.db.account_repositories import PostgresAccountRepository
+from app.db.postgres.account_repository import PostgresAccountRepository
 from app.db.capabilities import (
-    DatabaseCapabilityError,
     database_capability_report,
     validate_runtime_database_support,
 )
@@ -28,27 +25,22 @@ from app.db.providers import (
     resolve_database_provider,
 )
 from app.protocols.service import ProtocolService
-from app.protocols.store import ProtocolStore
-
-
-def test_default_repository_factory_uses_sqlite(
+def test_default_repository_factory_uses_postgres(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "socialease.db"))
 
     factory = repository_factory()
 
-    assert factory.provider == DatabaseProvider.SQLITE
-    assert isinstance(factory.protocol_repository(), ProtocolStore)
+    assert factory.provider == DatabaseProvider.POSTGRES
 
 
-def test_explicit_sqlite_url_selects_sqlite(tmp_path: Path) -> None:
-    factory = RepositoryFactory(database_url=f"sqlite:///{tmp_path / 'demo.db'}")
-
-    assert factory.provider == DatabaseProvider.SQLITE
-    assert isinstance(factory.protocol_repository(), ProtocolStore)
+def test_explicit_sqlite_url_is_rejected() -> None:
+    with pytest.raises(
+        UnsupportedDatabaseProviderError,
+        match="PostgreSQL is the only supported provider",
+    ):
+        RepositoryFactory(database_url="sqlite:///demo.db")
 
 
 @pytest.mark.anyio
@@ -212,23 +204,9 @@ async def test_postgres_url_selects_postgres_account_repository() -> None:
     await repository.engine.dispose()
 
 
-def test_sqlite_runtime_database_capability_check_passes(tmp_path: Path) -> None:
-    report = validate_runtime_database_support(f"sqlite:///{tmp_path / 'runtime.db'}")
-
-    assert report.provider == DatabaseProvider.SQLITE
-    assert report.full_runtime_supported is True
-    assert report.missing_runtime_repositories == ()
-    assert "trace" in report.supported_repositories
-
-
-def test_production_rejects_sqlite_runtime(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "production")
-
-    with pytest.raises(DatabaseCapabilityError, match="requires PostgreSQL"):
-        validate_runtime_database_support(f"sqlite:///{tmp_path / 'runtime.db'}")
+def test_sqlite_runtime_is_rejected_in_every_auth_mode() -> None:
+    with pytest.raises(UnsupportedDatabaseProviderError):
+        validate_runtime_database_support("sqlite:///runtime.db")
 
 
 def test_postgres_runtime_database_capability_check_passes_when_all_repositories_exist() -> None:
@@ -246,13 +224,21 @@ def test_postgres_runtime_database_capability_check_passes_when_all_repositories
         "exposure",
         "user_profile",
         "memory_settings",
+        "long_term_memory",
+        "memory_proposal",
         "session_review",
         "protocol",
         "intervention_plan",
         "metrics",
         "account",
+        "calendar_outbox",
+        "conversation_deletion",
+        "account_deletion",
     )
     assert report.missing_runtime_repositories == ()
+    assert "row_level_locking" in report.capabilities
+    assert "multi_instance_runtime" in report.capabilities
+    assert report.unavailable_capabilities == ("vector_similarity_search",)
     assert validated.full_runtime_supported is True
 
 
@@ -261,16 +247,16 @@ def test_unsupported_provider_fails_loudly() -> None:
         RepositoryFactory(database_url="mysql://socialease:secret@localhost/socialease")
 
 
-def test_protocol_service_uses_repository_factory_by_default(
+@pytest.mark.anyio
+async def test_protocol_service_uses_repository_factory_by_default(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "service.db"))
 
     service = ProtocolService()
 
-    assert isinstance(service.store, ProtocolStore)
+    assert isinstance(service.store, PostgresProtocolRepository)
+    await service.store.engine.dispose()
 
 
 @pytest.mark.anyio
@@ -291,7 +277,6 @@ async def test_protocol_service_uses_postgres_when_configured(
 @pytest.mark.parametrize(
     ("database_url", "provider"),
     [
-        ("sqlite:////tmp/socialease.db", DatabaseProvider.SQLITE),
         ("postgres://user:pass@localhost/socialease", DatabaseProvider.POSTGRES),
         ("postgresql://user:pass@localhost/socialease", DatabaseProvider.POSTGRES),
         ("postgresql+psycopg://user:pass@localhost/socialease", DatabaseProvider.POSTGRES),

@@ -1,10 +1,10 @@
-"""SQLite persistence tests for unified conversations."""
+"""Database-independent contract tests for unified conversations."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-
+from uuid import uuid4
 import pytest
+from sqlalchemy import text
 
 from app.conversation.content_protector import (
     AESGCMConversationContentProtector,
@@ -15,9 +15,8 @@ from app.conversation.content_protector import (
 from app.conversation.repository import (
     ConversationConcurrencyError,
     ConversationIdempotencyError,
-    SQLiteConversationRepository,
+    ConversationRepository,
 )
-from app.db.engine import connect
 from app.models_conversation import (
     ConversationEventRole,
     ConversationEventType,
@@ -29,22 +28,11 @@ from app.models_conversation import (
 )
 
 
-@pytest.fixture
-def repository(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> SQLiteConversationRepository:
-    """Return an isolated local repository."""
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "conversations.db"))
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
-    monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return SQLiteConversationRepository()
-
-
 @pytest.mark.anyio
 async def test_create_list_get_and_owner_scope(
-    repository: SQLiteConversationRepository,
+    conversation_repository_contract: ConversationRepository,
 ) -> None:
+    repository = conversation_repository_contract
     first = await repository.create(user_id="owner", title="First")
     second = await repository.create(user_id="owner", title="Second")
     await repository.create(user_id="other", title="Other")
@@ -69,8 +57,9 @@ async def test_create_list_get_and_owner_scope(
 
 @pytest.mark.anyio
 async def test_append_is_ordered_paginated_and_idempotent(
-    repository: SQLiteConversationRepository,
+    conversation_repository_contract: ConversationRepository,
 ) -> None:
+    repository = conversation_repository_contract
     conversation = await repository.create(user_id="owner", title="Timeline")
     first = await repository.append_event(
         conversation_id=conversation.conversation_id,
@@ -127,8 +116,9 @@ async def test_append_is_ordered_paginated_and_idempotent(
 
 @pytest.mark.anyio
 async def test_concurrent_appends_allocate_unique_contiguous_sequences(
-    repository: SQLiteConversationRepository,
+    conversation_repository_contract: ConversationRepository,
 ) -> None:
+    repository = conversation_repository_contract
     conversation = await repository.create(user_id="owner", title="Concurrent")
 
     async def append(index: int) -> int:
@@ -157,8 +147,9 @@ async def test_concurrent_appends_allocate_unique_contiguous_sequences(
 
 @pytest.mark.anyio
 async def test_cross_user_append_and_list_are_denied(
-    repository: SQLiteConversationRepository,
+    conversation_repository_contract: ConversationRepository,
 ) -> None:
+    repository = conversation_repository_contract
     conversation = await repository.create(user_id="owner", title="Private")
 
     with pytest.raises(LookupError):
@@ -180,8 +171,9 @@ async def test_cross_user_append_and_list_are_denied(
 
 @pytest.mark.anyio
 async def test_metadata_updates_use_optimistic_versions(
-    repository: SQLiteConversationRepository,
+    conversation_repository_contract: ConversationRepository,
 ) -> None:
+    repository = conversation_repository_contract
     conversation = await repository.create(user_id="owner", title="Original")
     updated = await repository.update_metadata(
         conversation_id=conversation.conversation_id,
@@ -204,12 +196,13 @@ async def test_metadata_updates_use_optimistic_versions(
 
 @pytest.mark.anyio
 async def test_proposals_are_owner_scoped_deduplicated_and_consumed_once(
-    repository: SQLiteConversationRepository,
+    conversation_repository_contract: ConversationRepository,
 ) -> None:
+    repository = conversation_repository_contract
     conversation = await repository.create(user_id="owner", title="Proposal")
     now = datetime.now(UTC)
     proposal = ModuleProposal(
-        proposal_id="proposal-1",
+        proposal_id=f"proposal-{uuid4().hex}",
         conversation_id=conversation.conversation_id,
         user_id="owner",
         proposed_module=ModuleType.ROLEPLAY,
@@ -217,16 +210,16 @@ async def test_proposals_are_owner_scoped_deduplicated_and_consumed_once(
         bounded_parameters=RoleplayParameters(
             scenario_description="课堂发言练习"
         ),
-        request_hash="a" * 64,
+        request_hash=uuid4().hex * 2,
         expires_at=now + timedelta(minutes=10),
         created_at=now,
     )
 
     assert await repository.save_proposal(proposal) == proposal
     replay = await repository.save_proposal(
-        proposal.model_copy(update={"proposal_id": "proposal-2"})
+        proposal.model_copy(update={"proposal_id": f"proposal-{uuid4().hex}"})
     )
-    assert replay.proposal_id == "proposal-1"
+    assert replay.proposal_id == proposal.proposal_id
     accepted = await repository.transition_proposal(
         proposal_id=proposal.proposal_id,
         conversation_id=conversation.conversation_id,
@@ -298,8 +291,9 @@ async def test_production_content_protection_fails_closed_without_key(
 
 @pytest.mark.anyio
 async def test_delete_cascades_timeline_memory_source_and_is_idempotent(
-    repository: SQLiteConversationRepository,
+    conversation_repository_contract: ConversationRepository,
 ) -> None:
+    repository = conversation_repository_contract
     conversation = await repository.create(user_id="owner", title="Delete")
     event = await repository.append_event(
         conversation_id=conversation.conversation_id,
@@ -309,35 +303,41 @@ async def test_delete_cascades_timeline_memory_source_and_is_idempotent(
         content="delete this",
         idempotency_key="delete-message",
     )
-    now = datetime.now(UTC).isoformat()
-    with connect() as connection:
-        connection.execute(
-            """INSERT INTO memory_proposals
+    now = datetime.now(UTC)
+    async with repository.engine.begin() as connection:  # type: ignore[attr-defined]
+        await connection.execute(
+            text(
+                """INSERT INTO memory_proposals
             (proposal_id, user_id, memory_type, summary, scenario_type,
              source_type, source_id, evidence_type, confidence, occurred_at,
              status, policy_reason, content_hash, idempotency_key, version,
              created_at, updated_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "memory-proposal-1",
-                "owner",
-                "helpful_strategy",
-                "demo summary",
-                None,
-                "chat",
-                event.event_id,
-                "explicit_user_statement",
-                0.9,
-                now,
-                "pending_confirmation",
-                "test",
-                "hash",
-                "memory-delete-test",
-                1,
-                now,
-                now,
-                (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            VALUES (
+                :proposal_id, :user_id, :memory_type, :summary, NULL,
+                :source_type, :source_id, :evidence_type, :confidence, :occurred_at,
+                :status, :policy_reason, :content_hash, :idempotency_key, :version,
+                :created_at, :updated_at, :expires_at
+            )"""
             ),
+            {
+                "proposal_id": "memory-proposal-1",
+                "user_id": "owner",
+                "memory_type": "helpful_strategy",
+                "summary": "demo summary",
+                "source_type": "chat",
+                "source_id": event.event_id,
+                "evidence_type": "explicit_user_statement",
+                "confidence": 0.9,
+                "occurred_at": now,
+                "status": "pending_confirmation",
+                "policy_reason": "test",
+                "content_hash": "hash",
+                "idempotency_key": "memory-delete-test",
+                "version": 1,
+                "created_at": now,
+                "updated_at": now,
+                "expires_at": now + timedelta(days=1),
+            },
         )
 
     counts = await repository.delete_for_user(

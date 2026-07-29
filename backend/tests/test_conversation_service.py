@@ -8,9 +8,8 @@ import pytest
 
 from app.conversation.compactor import ConversationCompactor
 from app.conversation.context_manager import ConversationContextManager
-from app.conversation.repository import SQLiteConversationRepository
+from app.db.postgres.conversation_repository import PostgresConversationRepository
 from app.conversation.repository import ConversationIdempotencyError
-from app.db.engine import connect
 from app.models import (
     ChatResponse,
     Intent,
@@ -31,6 +30,7 @@ from app.services.conversation_service import (
     ConversationProposalError,
     ConversationService,
 )
+from tests.postgres_test_support import fetch_one
 
 
 class StubHarness:
@@ -132,11 +132,9 @@ class BlockingGeneralHarness(GeneralHarness):
 def repository(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-) -> SQLiteConversationRepository:
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "service.db"))
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
+) -> PostgresConversationRepository:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return SQLiteConversationRepository()
+    return PostgresConversationRepository()
 
 
 @pytest.fixture
@@ -146,7 +144,7 @@ def anyio_backend() -> str:
 
 
 def _service(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
     *,
     crisis: bool = False,
 ) -> ConversationService:
@@ -166,7 +164,7 @@ def _service(
 
 @pytest.mark.anyio
 async def test_current_history_notice_is_required(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     service = _service(repository)
 
@@ -181,7 +179,7 @@ async def test_current_history_notice_is_required(
 
 @pytest.mark.anyio
 async def test_module_intent_only_creates_an_option_until_user_confirms(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     service = _service(repository)
     conversation = await service.create_conversation(
@@ -227,22 +225,25 @@ async def test_module_intent_only_creates_an_option_until_user_confirms(
             )
         ).items
     ) == 2
-    with connect() as connection:
-        episodic_count = connection.execute(
-            "SELECT COUNT(*) AS total FROM episodic_memories WHERE user_id = ?",
-            ("owner",),
-        ).fetchone()["total"]
-        proposal_count = connection.execute(
-            "SELECT COUNT(*) AS total FROM memory_proposals WHERE user_id = ?",
-            ("owner",),
-        ).fetchone()["total"]
+    episodic_row = await fetch_one(
+        "SELECT COUNT(*) AS total FROM episodic_memories WHERE user_id = :user_id",
+        {"user_id": "owner"},
+    )
+    proposal_row = await fetch_one(
+        "SELECT COUNT(*) AS total FROM memory_proposals WHERE user_id = :user_id",
+        {"user_id": "owner"},
+    )
+    assert episodic_row is not None
+    assert proposal_row is not None
+    episodic_count = episodic_row["total"]
+    proposal_count = proposal_row["total"]
     assert episodic_count == 0
     assert proposal_count == 0
 
 
 @pytest.mark.anyio
 async def test_crisis_preempts_proposal_and_module_routing(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     service = _service(repository, crisis=True)
     conversation = await service.create_conversation(
@@ -269,7 +270,7 @@ async def test_crisis_preempts_proposal_and_module_routing(
 
 @pytest.mark.anyio
 async def test_proposal_reject_checks_hash_state_and_owner(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     service = _service(repository)
     conversation = await service.create_conversation(
@@ -319,7 +320,7 @@ async def test_proposal_reject_checks_hash_state_and_owner(
 
 @pytest.mark.anyio
 async def test_general_support_abstains_from_module_proposal(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     harness = GeneralHarness()
     service = ConversationService(
@@ -371,7 +372,7 @@ async def test_general_support_abstains_from_module_proposal(
 
 @pytest.mark.anyio
 async def test_message_command_prevents_concurrent_model_execution_and_replays(
-    repository: SQLiteConversationRepository,
+    repository: PostgresConversationRepository,
 ) -> None:
     harness = BlockingGeneralHarness()
     service = ConversationService(

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-import sqlite3
 import os
 from pathlib import Path
 
@@ -18,12 +15,6 @@ from app.db.migration_check import validate_revision_chain
 from app.db.providers import DatabaseProvider, resolve_database_provider
 from app.db.postgres.engine import shared_postgres_async_engine
 from app.workflow.default_hooks import metrics_hook
-
-_READINESS_EXECUTOR = ThreadPoolExecutor(
-    max_workers=1,
-    thread_name_prefix="readiness",
-)
-
 
 async def readiness_snapshot() -> tuple[int, dict[str, object]]:
     """Return HTTP status and a non-secret readiness snapshot."""
@@ -51,19 +42,6 @@ async def _database_check() -> dict[str, object]:
     settings = database_settings()
     provider = resolve_database_provider(settings.database_url)
     try:
-        if provider == DatabaseProvider.SQLITE:
-            future = _READINESS_EXECUTOR.submit(
-                _probe_sqlite,
-                settings.sqlite_path,
-            )
-            while not future.done():
-                await asyncio.sleep(0.01)
-            future.result()
-            return {
-                "ok": True,
-                "provider": provider.value,
-                "database": _safe_database_label(settings.database_url),
-            }
         if provider == DatabaseProvider.POSTGRES:
             engine = shared_postgres_async_engine(settings.database_url)
             async with engine.connect() as connection:
@@ -97,6 +75,8 @@ def _capability_check() -> dict[str, object]:
             "provider": report.provider.value,
             "supported_repositories": list(report.supported_repositories),
             "missing_runtime_repositories": list(report.missing_runtime_repositories),
+            "capabilities": list(report.capabilities),
+            "unavailable_capabilities": list(report.unavailable_capabilities),
             "notes": report.notes,
         }
     except Exception as exc:  # pragma: no cover - defensive for deployment diagnostics
@@ -174,38 +154,23 @@ async def _outbox_check() -> dict[str, object]:
 async def _module_outbox_health() -> dict[str, int]:
     """Return non-sensitive module-start outbox queue counts."""
     settings = database_settings()
-    provider = resolve_database_provider(settings.database_url)
-    if provider is DatabaseProvider.POSTGRES:
-        engine = shared_postgres_async_engine(settings.database_url)
-        async with engine.connect() as connection:
-            row = (
-                await connection.execute(
-                    text(
-                        """SELECT
-                        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
-                        COUNT(*) FILTER (WHERE status = 'processing') AS processing,
-                        COUNT(*) FILTER (WHERE status = 'dead_letter') AS dead_letter
-                        FROM conversation_module_start_outbox"""
-                    )
+    engine = shared_postgres_async_engine(settings.database_url)
+    async with engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text(
+                    """SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                    COUNT(*) FILTER (WHERE status = 'processing') AS processing,
+                    COUNT(*) FILTER (WHERE status = 'dead_letter') AS dead_letter
+                    FROM conversation_module_start_outbox"""
                 )
-            ).mappings().one()
-        return {
-            "pending": int(row["pending"]),
-            "processing": int(row["processing"]),
-            "dead_letter": int(row["dead_letter"]),
-        }
-    from app.db.engine import connect
-
-    with connect() as connection:
-        rows = connection.execute(
-            """SELECT status, COUNT(*) AS count
-            FROM conversation_module_start_outbox GROUP BY status"""
-        ).fetchall()
-    counts = {row["status"]: int(row["count"]) for row in rows}
+            )
+        ).mappings().one()
     return {
-        "pending": counts.get("pending", 0),
-        "processing": counts.get("processing", 0),
-        "dead_letter": counts.get("dead_letter", 0),
+        "pending": int(row["pending"]),
+        "processing": int(row["processing"]),
+        "dead_letter": int(row["dead_letter"]),
     }
 
 
@@ -250,19 +215,9 @@ def _calendar_config_check() -> dict[str, object]:
 def _safe_database_label(database_url: str) -> str:
     """Return a non-secret database label for readiness output."""
     provider = resolve_database_provider(database_url)
-    if provider == DatabaseProvider.SQLITE:
-        return "sqlite"
     if provider == DatabaseProvider.POSTGRES:
         return "postgres"
     return "unknown"
-
-
-def _probe_sqlite(path: Path) -> None:
-    """Probe SQLite without blocking the readiness event loop."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path, timeout=3) as connection:
-        connection.execute("SELECT 1").fetchone()
-
 
 def _int_env(name: str) -> int | None:
     """Return an integer env var or None when unset/invalid."""

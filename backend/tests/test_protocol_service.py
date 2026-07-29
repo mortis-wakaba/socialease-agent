@@ -6,11 +6,10 @@ from uuid import uuid4
 
 import pytest
 
-from app.db.engine import connect
-from app.db.session import initialize_database
 from app.protocols.service import ProtocolService
 from app.services.retention_service import retention_service
 from app.safety.actions import HarnessAction
+from tests.postgres_test_support import execute_sql, fetch_one
 
 
 @pytest.mark.anyio
@@ -105,7 +104,6 @@ async def test_retention_service_expires_pending_protocols() -> None:
 
 @pytest.mark.anyio
 async def test_retention_service_deletes_records_past_retention_window() -> None:
-    initialize_database()
     user_id = f"retention_delete_user_{uuid4().hex}"
     run_id = f"run_{uuid4().hex}"
     protocol_id = f"protocol_{uuid4().hex}"
@@ -113,39 +111,41 @@ async def test_retention_service_deletes_records_past_retention_window() -> None
     old = datetime.now(timezone.utc) - timedelta(days=45)
     now = datetime.now(timezone.utc)
 
-    with connect() as connection:
-        connection.execute(
-            "INSERT INTO runs (run_id, user_id, payload, created_at) VALUES (?, ?, ?, ?)",
-            (run_id, user_id, "{}", old.isoformat()),
-        )
-        connection.execute(
-            """INSERT INTO protocols
+    await execute_sql(
+        """INSERT INTO runs (run_id, user_id, payload, created_at)
+        VALUES (:run_id, :user_id, CAST(:payload AS jsonb), :created_at)""",
+        {"run_id": run_id, "user_id": user_id, "payload": "{}", "created_at": old},
+    )
+    await execute_sql(
+        """INSERT INTO protocols
             (protocol_id, user_id, protocol_type, status, payload, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                protocol_id,
-                user_id,
-                "consent_request",
-                "consumed",
-                "{}",
-                old.isoformat(),
-                old.isoformat(),
-            ),
-        )
-        connection.execute(
-            """INSERT INTO intervention_plans
+            VALUES (:protocol_id, :user_id, :protocol_type, :status,
+                    CAST(:payload AS jsonb), :created_at, :updated_at)""",
+        {
+            "protocol_id": protocol_id,
+            "user_id": user_id,
+            "protocol_type": "consent_request",
+            "status": "consumed",
+            "payload": "{}",
+            "created_at": old,
+            "updated_at": old,
+        },
+    )
+    await execute_sql(
+        """INSERT INTO intervention_plans
             (plan_id, user_id, session_id, status, payload, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                plan_id,
-                user_id,
-                "retention-session",
-                "completed",
-                "{}",
-                old.isoformat(),
-                old.isoformat(),
-            ),
-        )
+            VALUES (:plan_id, :user_id, :session_id, :status,
+                    CAST(:payload AS jsonb), :created_at, :updated_at)""",
+        {
+            "plan_id": plan_id,
+            "user_id": user_id,
+            "session_id": "retention-session",
+            "status": "completed",
+            "payload": "{}",
+            "created_at": old,
+            "updated_at": old,
+        },
+    )
 
     result = await retention_service.run_once(
         now=now,
@@ -154,19 +154,17 @@ async def test_retention_service_deletes_records_past_retention_window() -> None
         protocol_retention_days=30,
     )
 
-    with connect() as connection:
-        run_row = connection.execute(
-            "SELECT run_id FROM runs WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()
-        protocol_row = connection.execute(
-            "SELECT protocol_id FROM protocols WHERE protocol_id = ?",
-            (protocol_id,),
-        ).fetchone()
-        plan_row = connection.execute(
-            "SELECT plan_id FROM intervention_plans WHERE plan_id = ?",
-            (plan_id,),
-        ).fetchone()
+    run_row = await fetch_one(
+        "SELECT run_id FROM runs WHERE run_id = :run_id", {"run_id": run_id}
+    )
+    protocol_row = await fetch_one(
+        "SELECT protocol_id FROM protocols WHERE protocol_id = :protocol_id",
+        {"protocol_id": protocol_id},
+    )
+    plan_row = await fetch_one(
+        "SELECT plan_id FROM intervention_plans WHERE plan_id = :plan_id",
+        {"plan_id": plan_id},
+    )
 
     assert result.deleted_raw_traces >= 1
     assert result.deleted_protocol_records >= 1

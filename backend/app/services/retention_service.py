@@ -1,16 +1,14 @@
-"""Retention and cleanup jobs for local demo persistence."""
+"""Retention and cleanup jobs over repository contracts."""
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import text
-
-from app.db.config import database_settings
-from app.db.engine import connect
 from app.db.factory import repository_factory
-from app.db.providers import DatabaseProvider, resolve_database_provider
-from app.db.postgres.engine import shared_postgres_async_engine
+from app.db.postgres.retention_repository import PostgresRetentionRepository
+from app.jobs.retention_repository import RetentionRepository
 from app.protocols.service import ProtocolService
+from app.protocols.store import ProtocolRepository
+from app.memory.intervention_plan_store import InterventionPlanRepository
 
 
 @dataclass(frozen=True)
@@ -27,12 +25,26 @@ class RetentionResult:
 class RetentionService:
     """Run explicit cleanup tasks without process-local background assumptions."""
 
-    def __init__(self, database_url: str | None = None) -> None:
-        self.database_url = database_url or database_settings().database_url
-        self.provider = resolve_database_provider(self.database_url)
-        factory = repository_factory(self.database_url)
-        self.protocol_service = ProtocolService(store=factory.protocol_repository())
-        self.intervention_plan_repository = factory.intervention_plan_repository()
+    def __init__(
+        self,
+        database_url: str | None = None,
+        *,
+        retention_repository: RetentionRepository | None = None,
+        protocol_repository: ProtocolRepository | None = None,
+        intervention_plan_repository: InterventionPlanRepository | None = None,
+    ) -> None:
+        factory = repository_factory(database_url)
+        self.protocol_service = ProtocolService(
+            store=protocol_repository or factory.protocol_repository()
+        )
+        self.intervention_plan_repository = (
+            intervention_plan_repository
+            or factory.intervention_plan_repository()
+        )
+        self.retention_repository = (
+            retention_repository
+            or PostgresRetentionRepository(database_url=database_url)
+        )
 
     async def expire_pending_protocols(
         self,
@@ -59,57 +71,26 @@ class RetentionService:
 
     async def delete_trace_records_before(self, cutoff: datetime) -> int:
         """Delete trace records older than the retention cutoff."""
-        if self.provider == DatabaseProvider.POSTGRES:
-            return await self._delete_postgres_rows(
-                """DELETE FROM runs
-                WHERE created_at <= :cutoff""",
-                {"cutoff": cutoff},
-            )
-        with connect() as connection:
-            cursor = connection.execute(
-                "DELETE FROM runs WHERE created_at <= ?",
-                (cutoff.isoformat(),),
-            )
-            return cursor.rowcount
+        return await self.retention_repository.delete_trace_records_before(
+            cutoff
+        )
 
     async def delete_terminal_protocols_before(self, cutoff: datetime) -> int:
         """Delete terminal protocol records older than the retention cutoff."""
-        terminal_statuses = ("expired", "rejected", "consumed")
-        if self.provider == DatabaseProvider.POSTGRES:
-            return await self._delete_postgres_rows(
-                """DELETE FROM protocols
-                WHERE status IN ('expired', 'rejected', 'consumed')
-                  AND updated_at <= :cutoff""",
-                {"cutoff": cutoff},
-            )
-        with connect() as connection:
-            cursor = connection.execute(
-                """DELETE FROM protocols
-                WHERE status IN (?, ?, ?) AND updated_at <= ?""",
-                (*terminal_statuses, cutoff.isoformat()),
-            )
-            return cursor.rowcount
+        return await (
+            self.retention_repository.delete_terminal_protocols_before(cutoff)
+        )
 
     async def delete_terminal_intervention_plans_before(
         self,
         cutoff: datetime,
     ) -> int:
         """Delete terminal intervention plans older than the retention cutoff."""
-        terminal_statuses = ("completed", "cancelled", "blocked")
-        if self.provider == DatabaseProvider.POSTGRES:
-            return await self._delete_postgres_rows(
-                """DELETE FROM intervention_plans
-                WHERE status IN ('completed', 'cancelled', 'blocked')
-                  AND updated_at <= :cutoff""",
-                {"cutoff": cutoff},
+        return await (
+            self.retention_repository.delete_terminal_intervention_plans_before(
+                cutoff
             )
-        with connect() as connection:
-            cursor = connection.execute(
-                """DELETE FROM intervention_plans
-                WHERE status IN (?, ?, ?) AND updated_at <= ?""",
-                (*terminal_statuses, cutoff.isoformat()),
-            )
-            return cursor.rowcount
+        )
 
     async def run_once(
         self,
@@ -137,17 +118,5 @@ class RetentionService:
                 protocol_cutoff
             ),
         )
-
-    async def _delete_postgres_rows(
-        self,
-        statement: str,
-        params: dict[str, object],
-    ) -> int:
-        """Delete PostgreSQL rows and return affected count."""
-        engine = shared_postgres_async_engine(self.database_url)
-        async with engine.begin() as connection:
-            result = await connection.execute(text(statement), params)
-            return result.rowcount or 0
-
 
 retention_service = RetentionService()

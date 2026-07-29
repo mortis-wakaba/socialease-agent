@@ -1,22 +1,17 @@
 """Tests for the aggregate metrics backend."""
 
-from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
 
+from app.db.postgres.metrics_repository import PostgresMetricsRepository
 from app.models import Intent, IntentResult, RiskLevel, SafetyResult, TraceRecord
-from app.observability.metrics import SQLiteMetricsRepository
 
 
 @pytest.mark.anyio
-async def test_sqlite_metrics_repository_records_non_identifying_aggregates(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+async def test_postgres_metrics_repository_records_non_identifying_aggregates(
 ) -> None:
-    monkeypatch.delenv("SOCIALEASE_DATABASE_URL", raising=False)
-    monkeypatch.setenv("SOCIALEASE_DB_PATH", str(tmp_path / "metrics.db"))
-    repository = SQLiteMetricsRepository()
+    repository = PostgresMetricsRepository()
     await repository.reset()
 
     await repository.record_trace(

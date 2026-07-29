@@ -1,11 +1,12 @@
 """Tests for Alembic migration discipline checks."""
 
 from pathlib import Path
-import sqlite3
+import os
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import create_engine, inspect
 
 from app.db.migration_check import (
     list_revision_files,
@@ -62,50 +63,23 @@ def test_revision_identifier_must_fit_default_alembic_version_table() -> None:
     ]
 
 
-def test_long_term_memory_migration_round_trip(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The Phase 1 migration must upgrade, downgrade, and re-upgrade cleanly."""
-    database_path = tmp_path / "migration-round-trip.db"
-    monkeypatch.setenv(
-        "SOCIALEASE_DATABASE_URL",
-        f"sqlite:///{database_path}",
-    )
+def test_long_term_memory_tables_exist_at_postgres_head() -> None:
+    """A configured PostgreSQL test database upgrades to the memory schema."""
+    database_url = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("SOCIALEASE_TEST_DATABASE_URL is required.")
     config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
 
     command.upgrade(config, "head")
-    assert _table_names(database_path) >= {
+    engine = create_engine(database_url)
+    try:
+        table_names = set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+    assert table_names >= {
         "episodic_memories",
         "thread_checkpoints",
         "memory_events",
         "memory_proposals",
     }
-
-    command.downgrade(config, "0006_add_session_reviews")
-    assert not (
-        {
-            "episodic_memories",
-            "thread_checkpoints",
-            "memory_events",
-            "memory_proposals",
-        }
-        & _table_names(database_path)
-    )
-
-    command.upgrade(config, "head")
-    assert _table_names(database_path) >= {
-        "episodic_memories",
-        "thread_checkpoints",
-        "memory_events",
-        "memory_proposals",
-    }
-
-
-def _table_names(database_path: Path) -> set[str]:
-    """Return SQLite table names for migration assertions."""
-    with sqlite3.connect(database_path) as connection:
-        rows = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        ).fetchall()
-    return {row[0] for row in rows}

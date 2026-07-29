@@ -42,7 +42,7 @@ class ConversationContentProtector:
 
 
 class LocalPlaintextContentProtector(ConversationContentProtector):
-    """Keep local SQLite/demo content readable without claiming encryption."""
+    """Keep explicit non-production test content readable."""
 
     def protect(self, content: str, *, associated_data: bytes) -> ProtectedContent:
         return ProtectedContent(
