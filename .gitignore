@@ -233,6 +233,7 @@ frontend/node_modules/
 frontend/.next/
 out/
 frontend/out/
+frontend/next-env.d.ts
 *.tsbuildinfo
 
 # Frontend logs

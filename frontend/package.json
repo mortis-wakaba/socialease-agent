@@ -9,26 +9,25 @@
     "dev": "next dev",
     "build": "next build",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test --config playwright.smoke.config.ts",
     "test:e2e:production-auth": "playwright test --config playwright.production-auth.config.ts"
   },
   "dependencies": {
-    "next": "^15.5.21",
+    "next": "^16.2.12",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "sharp": "0.35.3"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3.3.6",
     "@playwright/test": "^1.62.0",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.5.4",
     "eslint": "^9.39.5",
-    "eslint-config-next": "^15.5.22",
+    "eslint-config-next": "^16.2.12",
     "postcss": "^8.5.24",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.4.0"
