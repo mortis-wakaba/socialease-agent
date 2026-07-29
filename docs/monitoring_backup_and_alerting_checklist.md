@@ -40,13 +40,6 @@ SOCIALEASE_BACKUP_DIR=/secure/socialease-backups \
 bash scripts/backup_database.sh
 ```
 
-SQLite 本地开发库：
-
-```bash
-SOCIALEASE_DB_PATH=backend/socialease.db \
-bash scripts/backup_database.sh
-```
-
 要求：
 
 - 备份目录不提交 Git；
@@ -55,14 +48,6 @@ bash scripts/backup_database.sh
 - 试点删除承诺要和备份保留周期一致。
 
 ## 恢复演练
-
-SQLite：
-
-```bash
-bash scripts/restore_drill.sh backups/socialease-sqlite-YYYYMMDDTHHMMSSZ.db
-```
-
-PostgreSQL：
 
 ```bash
 SOCIALEASE_RESTORE_TEST_DATABASE_URL=postgresql+psycopg://... \
@@ -80,7 +65,7 @@ bash scripts/restore_drill.sh backups/socialease-postgres-YYYYMMDDTHHMMSSZ.dump
 - [ ] `/ready` 通过；
 - [ ] `python scripts/monitor_alerts.py --dry-run` 可运行；
 - [ ] 备份脚本成功生成文件；
-- [ ] restore drill 在测试库或临时 SQLite 文件通过；
+- [ ] restore drill 在专用 PostgreSQL 测试库通过；
 - [ ] cleanup scheduler dry-run 可运行；
 - [ ] 告警接收人和值班流程已确认；
 - [ ] 所有监控和告警不包含用户原文。

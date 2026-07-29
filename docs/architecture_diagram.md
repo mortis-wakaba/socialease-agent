@@ -44,7 +44,7 @@ flowchart TD
     Overlay --> Parent[Parent Resume Projections]
     Parent --> Working
 
-    Timeline --> DB[(PostgreSQL / SQLite)]
+    Timeline --> DB[(PostgreSQL)]
     Summary --> DB
     Runs --> DB
     Provider <--> Redis[(Redis<br/>加密 Context Projection Cache)]

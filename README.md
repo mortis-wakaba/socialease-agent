@@ -22,7 +22,7 @@ flowchart LR
     C --> T[(Conversation Timeline)]
     A --> MEM[Consent-gated Memory]
     O --> TR[Trace + Eval]
-    CTX --> DB[(PostgreSQL / SQLite)]
+    CTX --> DB[(PostgreSQL)]
     T --> DB
     MEM --> DB
     CTX --> Redis[(Redis Encrypted Projection Cache)]
@@ -60,7 +60,7 @@ backend/app/
   memory/        Agent Memory、Redis Task State 与 Token Estimator
   knowledge/     BM25 RAG、Citation 与 Unknown 策略
   calendar/      Calendar Provider、MCP Server/Client 与 Tool Contract
-  db/            Repository 接口及 SQLite/PostgreSQL Adapter
+  db/            Repository Protocol 与 PostgreSQL Adapter
   tracing/       结构化 Run Trace
   evals/         Eval 数据、Runner、Metrics 与 Gate
   api/           FastAPI Routes
@@ -71,12 +71,12 @@ docs/            架构、部署、隐私、知识库与 ADR
 
 ## 快速启动
 
-### 方案 A：零配置 Demo
+### 方案 A：Docker Demo
 
-默认使用 SQLite，并由 Compose 启动 Redis、后端和前端：
+Compose 会启动 PostgreSQL、Redis、后端和前端：
 
 ```bash
-docker compose up -d --build redis backend frontend
+docker compose up -d --build
 ```
 
 访问：
@@ -85,7 +85,7 @@ docker compose up -d --build redis backend frontend
 - API 文档：<http://127.0.0.1:8000/docs>
 - Readiness：<http://127.0.0.1:8000/ready>
 
-### 方案 B：完整 PostgreSQL + Redis
+### 方案 B：分步启动 PostgreSQL + Redis
 
 容器内连接 PostgreSQL 时必须使用服务名 `postgres`，不能使用 `localhost`：
 
@@ -276,6 +276,9 @@ make eval-memory-vector
 revision；Vector/Hybrid 在应用用户、Consent、状态、类型、过期和安全硬过滤之后运行，
 不能替代权限过滤。具体场景不再是硬过滤枚举：开放场景通过 `scenario_id` /
 `practice_thread_id` 保持连续性，通过受控技能标签和语义相关性支持跨场景迁移。
+当前规模化基准包含 59 个中文查询和 2,135 条去重记忆文本；Vector/Hybrid 虽提高
+长历史召回，但 False Recall 与无记忆 abstention 未达到安全门槛，因此生产仍未启用
+pgvector。完整数据与决策见 `docs/benchmark_report.md`。
 
 Memory Center 位于前端 `/memory`，明确区分稳定设置、Active Thread、情节记忆、
 待确认候选和普通聊天历史。用户可以查看来源与保存原因，安全编辑摘要，使用乐观锁

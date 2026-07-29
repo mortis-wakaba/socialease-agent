@@ -39,7 +39,7 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 - protocol 支持 request hash、session binding、过期、同意/拒绝、一次性消费、replay resistance；
 - intervention plan 可视化为 timeline，记录当前步骤、进度、protocol 绑定、stop condition 和结果摘要；
 - auth 同时支持本地演示模式和 production bearer-token/cookie 模式；
-- PostgreSQL repository adapters 覆盖当前主要运行路径，SQLite 保留为本地开发路径。
+- PostgreSQL 是唯一持久化运行时，领域层通过 Repository Protocol 与 adapter 解耦。
 - 完整 Conversation History、提供给模型的 Working Context 和长期 Agent Memory
   是三个不同生命周期的数据面；
 - Conversation 正文在 production 使用 AES-256-GCM；缺少内容密钥时持久化层拒绝启动；
@@ -310,8 +310,7 @@ Projection。Redis 状态按用户、Conversation 和 Module Run 隔离，miss �
 
 ## 存储与运维
 
-- SQLite：本地开发和展示路径；
-- PostgreSQL：生产运行路径，已覆盖 unified conversation、trace、roleplay、worksheet、
+- PostgreSQL：开发、演示和生产的统一持久化路径，已覆盖 unified conversation、trace、roleplay、worksheet、
   exposure、user profile、memory settings、protocol、intervention plan、metrics、
   account、session；
 - Conversation History：默认无自动过期；单条或全部删除会事务化清理事件、模块状态、

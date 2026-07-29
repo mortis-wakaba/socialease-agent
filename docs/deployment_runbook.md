@@ -160,14 +160,6 @@ SOCIALEASE_DATABASE_URL=postgresql+psycopg://... python -m app.db.migration_chec
 
 ## 备份
 
-SQLite 本地开发库：
-
-```bash
-SOCIALEASE_DB_PATH=backend/socialease.db bash scripts/backup_database.sh
-```
-
-PostgreSQL：
-
 ```bash
 SOCIALEASE_DATABASE_URL=postgresql+psycopg://... \
 SOCIALEASE_BACKUP_DIR=/secure/backups \
@@ -186,15 +178,6 @@ crontab /tmp/socialease-backup.cron
 
 ## 恢复
 
-SQLite：
-
-```bash
-SOCIALEASE_DB_PATH=backend/socialease.db \
-bash scripts/restore_database.sh backups/socialease-sqlite-YYYYMMDDTHHMMSSZ.db
-```
-
-PostgreSQL：
-
 ```bash
 SOCIALEASE_DATABASE_URL=postgresql+psycopg://... \
 bash scripts/restore_database.sh backups/socialease-postgres-YYYYMMDDTHHMMSSZ.dump
@@ -205,9 +188,6 @@ bash scripts/restore_database.sh backups/socialease-postgres-YYYYMMDDTHHMMSSZ.du
 Restore drill：
 
 ```bash
-# SQLite local backup
-bash scripts/restore_drill.sh backups/socialease-sqlite-YYYYMMDDTHHMMSSZ.db
-
 # PostgreSQL backup 恢复到专用演练数据库，不要指向生产库
 SOCIALEASE_RESTORE_TEST_DATABASE_URL=postgresql+psycopg://... \
 bash scripts/restore_drill.sh backups/socialease-postgres-YYYYMMDDTHHMMSSZ.dump
