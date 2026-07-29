@@ -36,10 +36,12 @@ class FastEmbedBgeReranker:
                 relative_path
                 for relative_path in _REQUIRED_LOCAL_FILES
                 if not (model_dir / relative_path).is_file()
+                or (model_dir / relative_path).stat().st_size == 0
             ]
             if missing:
                 raise RuntimeError(
-                    "Local Cross-Encoder directory is incomplete; missing: "
+                    "Local Cross-Encoder directory is incomplete; "
+                    "missing or empty: "
                     + ", ".join(missing)
                 )
             specific_model_path = str(model_dir)

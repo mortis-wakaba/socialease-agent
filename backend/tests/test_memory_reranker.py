@@ -140,5 +140,6 @@ def test_invalid_cross_encoder_output_fails_closed() -> None:
 def test_local_cross_encoder_path_fails_before_model_load_when_incomplete(
     tmp_path: Path,
 ) -> None:
+    (tmp_path / "config.json").touch()
     with pytest.raises(RuntimeError, match="onnx/model.onnx"):
         FastEmbedBgeReranker(specific_model_path=str(tmp_path))
