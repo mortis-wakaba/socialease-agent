@@ -1,0 +1,27 @@
+.github/workflows/ci.yml
+  s_38b53f6c90704c::t_0bd4999b13d917 104,181
+.github/workflows/supply-chain.yml
+  s_38b53f6c90704c::t_0bd4999b13d917 33
+frontend/package.json
+  s_38b53f6c90704c::t_e66b542ff7b095 5-7,26
+Dockerfile.frontend
+  s_38b53f6c90704c::t_0bd4999b13d917 1,24
+frontend/package-lock.json
+  s_38b53f6c90704c::t_09304f07d15b90 10-12,22,1163-1165,1167,1169,5878-5882
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "54d252495b9148642bfb20839c7c651918941509",
+  "prompts": {},
+  "sessions": {
+    "s_38b53f6c90704c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa79e-39d9-7a53-ba29-9c0448275602",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
