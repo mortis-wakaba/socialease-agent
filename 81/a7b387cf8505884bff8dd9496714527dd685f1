@@ -1,0 +1,28 @@
+backend/app/memory/reranker.py
+  s_e6b965dea9786d::t_823d6c52cf919c 1-231
+backend/app/evals/cross_encoder.py
+  s_e6b965dea9786d::t_823d6c52cf919c 1-47
+backend/tests/test_memory_reranker.py
+  s_e6b965dea9786d::t_823d6c52cf919c 1-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "81a7b387cf8505884bff8dd9496714527dd685f1",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_e6b965dea9786d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fac99-450f-7543-be90-4349da3e087e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
