@@ -2,14 +2,11 @@
 
 from datetime import datetime, timezone
 import logging
-import re
 
+from app.memory.hard_filter import MemoryHardFilter, MemoryHardFilterReason
 from app.memory.long_term_repository import LongTermMemoryRepository
 from app.memory.settings_store import UserMemorySettingsRepository
-from app.memory.text_semantics import (
-    lexical_terms,
-    memories_conflict,
-)
+from app.memory.text_semantics import lexical_terms
 from app.memory.token_estimator import ConservativeTokenEstimator, TokenEstimator
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
@@ -21,16 +18,8 @@ from app.models_long_term_memory import (
     MemoryRetrievalScore,
     MemoryRetrievalStrategy,
 )
-from app.privacy.redaction import detect_sensitive_categories
-
-
 logger = logging.getLogger(__name__)
-_PROHIBITED_PATTERNS = (
-    re.compile(r"(?:诊断|确诊|患有).{0,12}(?:症|障碍|疾病)"),
-    re.compile(r"(?:自杀|自伤|不想活|结束生命|伤害自己|伤害他人)"),
-    re.compile(r"(?:system\s*prompt|developer\s*message|系统提示词|开发者消息)", re.I),
-    re.compile(r"(?:忽略|覆盖|绕过).{0,12}(?:系统|安全|记忆).{0,8}(?:指令|规则|策略)"),
-)
+_HARD_FILTER = MemoryHardFilter()
 
 
 class EpisodicMemoryRetriever:
@@ -228,14 +217,9 @@ def candidate_is_eligible(
     query_terms: set[str],
 ) -> bool:
     """Defense-in-depth eligibility independent of repository correctness."""
-    allowed_statuses = {MemoryRecordStatus.ACTIVE}
-    if request.include_archived:
-        allowed_statuses.add(MemoryRecordStatus.ARCHIVED)
     if (
-        record.user_id != request.user_id
-        or record.status not in allowed_statuses
-        or record.memory_type not in request.allowed_memory_types
-        or (record.expires_at is not None and record.expires_at <= now)
+        _HARD_FILTER.evaluate(record=record, request=request, now=now)
+        != MemoryHardFilterReason.ALLOWED
     ):
         return False
     if request.strategy == MemoryRetrievalStrategy.SQL_TEXT:
@@ -251,10 +235,6 @@ def candidate_is_eligible(
             and skill_overlap == 0.0
         ):
             return False
-    if not _retrieval_safe(record.summary):
-        return False
-    if memories_conflict(request.query, record.summary):
-        return False
     return True
 
 
@@ -346,12 +326,6 @@ def _skill_overlap_score(
         return 0.0
     overlap = requested.intersection(record.skill_codes)
     return len(overlap) / len(requested)
-
-
-def _retrieval_safe(summary: str) -> bool:
-    if detect_sensitive_categories(summary):
-        return False
-    return not any(pattern.search(summary) for pattern in _PROHIBITED_PATTERNS)
 
 
 def fit_memory_summary(
