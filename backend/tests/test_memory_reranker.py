@@ -3,12 +3,14 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 import hashlib
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from app.memory.recall import MemoryRecallChannel, RecalledMemory
 from app.memory.reranker import CrossEncoderMemoryReranker, MemoryRerankWeights
+from app.evals.cross_encoder import FastEmbedBgeReranker
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
     MemoryEvidenceType,
@@ -133,3 +135,10 @@ def test_invalid_cross_encoder_output_fails_closed() -> None:
             candidates=[_recalled(_record("target", "核心观点"))],
             now=NOW,
         )
+
+
+def test_local_cross_encoder_path_fails_before_model_load_when_incomplete(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(RuntimeError, match="onnx/model.onnx"):
+        FastEmbedBgeReranker(specific_model_path=str(tmp_path))

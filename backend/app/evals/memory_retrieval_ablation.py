@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import json
 import math
+import os
 from time import perf_counter
 from typing import Any
 
@@ -452,7 +453,12 @@ def main() -> None:
 
     report, outcomes = run_memory_retrieval_ablation(
         embedder=FastEmbedBgeSmallZh(),
-        reranker_provider=FastEmbedBgeReranker(),
+        reranker_provider=FastEmbedBgeReranker(
+            specific_model_path=(
+                os.getenv("SOCIALEASE_RERANKER_MODEL_PATH", "").strip()
+                or None
+            ),
+        ),
     )
     print(
         json.dumps(

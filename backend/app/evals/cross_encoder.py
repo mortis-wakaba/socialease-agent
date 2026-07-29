@@ -1,10 +1,18 @@
 """Optional local FastEmbed Cross-Encoder adapter for memory evaluations."""
 
 from collections.abc import Sequence
+from pathlib import Path
 
 
 BGE_RERANKER_MODEL = "BAAI/bge-reranker-base"
 BGE_RERANKER_REVISION = "fastembed-catalog-v0.8.0"
+_REQUIRED_LOCAL_FILES = (
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "onnx/model.onnx",
+)
 
 
 class FastEmbedBgeReranker:
@@ -20,7 +28,22 @@ class FastEmbedBgeReranker:
         cache_dir: str | None = None,
         threads: int | None = None,
         local_files_only: bool = False,
+        specific_model_path: str | None = None,
     ) -> None:
+        if specific_model_path is not None:
+            model_dir = Path(specific_model_path).expanduser().resolve()
+            missing = [
+                relative_path
+                for relative_path in _REQUIRED_LOCAL_FILES
+                if not (model_dir / relative_path).is_file()
+            ]
+            if missing:
+                raise RuntimeError(
+                    "Local Cross-Encoder directory is incomplete; missing: "
+                    + ", ".join(missing)
+                )
+            specific_model_path = str(model_dir)
+            local_files_only = True
         try:
             from fastembed.rerank.cross_encoder import TextCrossEncoder
         except ImportError as error:
@@ -32,6 +55,7 @@ class FastEmbedBgeReranker:
             cache_dir=cache_dir,
             threads=threads,
             local_files_only=local_files_only,
+            specific_model_path=specific_model_path,
         )
 
     def score(self, query: str, documents: Sequence[str]) -> list[float]:
