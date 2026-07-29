@@ -1,5 +1,6 @@
 """Fault-injection tests for the transactional Calendar outbox."""
 
+import asyncio
 from datetime import UTC, datetime
 import os
 from uuid import uuid4
@@ -14,7 +15,11 @@ from app.calendar.provider import InMemoryCalendarProvider
 from app.calendar.service import CalendarService
 from app.calendar.tools import CalendarToolService
 from app.db.postgres.protocol_repository import PostgresProtocolRepository
-from app.models_calendar import CalendarCreateRequest, CalendarEventProposal
+from app.models_calendar import (
+    CalendarCreateRequest,
+    CalendarEventProposal,
+    CalendarEventResponse,
+)
 from app.models_protocols import ProtocolStatus
 from app.protocols.service import ProtocolService
 from app.safety.actions import HarnessAction
@@ -197,6 +202,47 @@ async def test_external_success_then_completion_failure_reconciles_idempotently(
     assert response.event.idempotency_reused is True
     assert len(events) == 1
     assert (await outbox.get(job.job_id)).status == "completed"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
+async def test_concurrent_processing_waits_for_leased_job_result(
+    outbox: CalendarActionOutbox,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue_approved(outbox)
+    provider = InMemoryCalendarProvider()
+    service = CalendarService(
+        InProcessCalendarMCPClient(CalendarToolService(provider))
+    )
+    original_create = service.create_event
+    call_count = 0
+
+    async def slow_create(**kwargs: object) -> CalendarEventResponse:
+        nonlocal call_count
+        call_count += 1
+        await asyncio.sleep(1.2)
+        return await original_create(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service, "create_event", slow_create)
+    processors = [
+        CalendarOutboxProcessor(
+            outbox=outbox,
+            service=service,
+            worker_id=f"concurrent-worker-{index}",
+        )
+        for index in range(8)
+    ]
+
+    responses = await asyncio.gather(
+        *(processor.process_job(job.job_id) for processor in processors)
+    )
+
+    assert all(response.verified for response in responses)
+    assert len(
+        {response.event.calendar_action_id for response in responses}
+    ) == 1
+    assert call_count == 1
+    assert len(await service.list_owned_events(user_id=job.user_id)) == 1
 
 
 @pytest.mark.anyio

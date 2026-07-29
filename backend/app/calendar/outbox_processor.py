@@ -21,6 +21,10 @@ class CalendarOutboxUnavailable(RuntimeError):
 class CalendarOutboxProcessor:
     """Claim, execute, verify, and durably finish Calendar actions."""
 
+    _RESULT_WAIT_TIMEOUT_SECONDS = 15.0
+    _INITIAL_POLL_SECONDS = 0.02
+    _MAX_POLL_SECONDS = 0.25
+
     def __init__(
         self,
         *,
@@ -45,16 +49,7 @@ class CalendarOutboxProcessor:
             job_id=job_id,
         )
         if not jobs:
-            for _ in range(100):
-                await asyncio.sleep(0.01)
-                replay = await self.outbox.get(job_id)
-                if replay is None:
-                    raise LookupError("calendar outbox job not found")
-                if replay.status == "completed" and replay.result is not None:
-                    return CalendarEventResponse.model_validate(replay.result)
-                if replay.status != "processing":
-                    break
-            raise CalendarOutboxUnavailable("calendar action is queued")
+            return await self._wait_for_result(job_id)
         job = jobs[0]
         try:
             response = await self._execute(job)
@@ -81,6 +76,26 @@ class CalendarOutboxProcessor:
             raise
         await record_runtime_event("calendar_outbox_completed")
         return response
+
+    async def _wait_for_result(self, job_id: str) -> CalendarEventResponse:
+        """Wait efficiently for the worker that owns this job's lease."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._RESULT_WAIT_TIMEOUT_SECONDS
+        delay = self._INITIAL_POLL_SECONDS
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(delay, remaining))
+            replay = await self.outbox.get(job_id)
+            if replay is None:
+                raise LookupError("calendar outbox job not found")
+            if replay.status == "completed" and replay.result is not None:
+                return CalendarEventResponse.model_validate(replay.result)
+            if replay.status != "processing":
+                break
+            delay = min(delay * 2, self._MAX_POLL_SECONDS)
+        raise CalendarOutboxUnavailable("calendar action is queued")
 
     async def process_due(self, *, limit: int = 20) -> int:
         """Process a leased batch, isolating failures between jobs."""
