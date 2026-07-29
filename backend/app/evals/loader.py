@@ -10,6 +10,7 @@ from app.evals.models import (
     E2EWorkflowEvalCase,
     IntentEvalCase,
     MemoryRetrievalEvalCase,
+    MemoryRetrievalScaleSeed,
     OutputGuardrailEvalCase,
     ProductBoundaryEvalCase,
     RagEvalCase,
@@ -71,6 +72,14 @@ def load_memory_vector_challenge_cases() -> list[MemoryRetrievalEvalCase]:
     return load_jsonl(
         DATA_DIR / "memory_retrieval_vector.jsonl",
         MemoryRetrievalEvalCase,
+    )
+
+
+def load_memory_scale_seeds() -> list[MemoryRetrievalScaleSeed]:
+    """Load compact human-authored seeds for the large-corpus benchmark."""
+    return load_jsonl(
+        DATA_DIR / "memory_retrieval_scale_seeds.jsonl",
+        MemoryRetrievalScaleSeed,
     )
 
 

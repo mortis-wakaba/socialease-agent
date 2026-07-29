@@ -6,6 +6,7 @@ from app.evals.loader import (
     load_e2e_workflow_cases,
     load_intent_cases,
     load_memory_retrieval_cases,
+    load_memory_scale_seeds,
     load_memory_vector_challenge_cases,
     load_output_guardrail_cases,
     load_product_boundary_cases,
@@ -16,6 +17,12 @@ from app.evals.loader import (
     load_worksheet_cases,
 )
 from app.evals.memory_retrieval import run_memory_retrieval_benchmark
+from app.evals.memory_retrieval_scale import (
+    SCALE_BACKGROUND_MEMORY_COUNT,
+    SCALE_QUERY_CASE_COUNT,
+    build_scale_background_memories,
+    build_scale_retrieval_cases,
+)
 from app.evals.models import MemoryRetrievalBenchmarkStrategy
 from app.evals.metrics import ratio, recall_at_k, reciprocal_rank
 from app.evals.run import run_evaluations, run_evaluations_with_traces, write_eval_trace_reports
@@ -28,6 +35,7 @@ def test_eval_loaders_return_cases() -> None:
     assert load_intent_cases()
     assert load_memory_retrieval_cases()
     assert load_memory_vector_challenge_cases()
+    assert load_memory_scale_seeds()
     assert load_rag_cases()
     assert load_roleplay_feedback_cases()
     assert load_worksheet_cases()
@@ -153,6 +161,20 @@ def test_memory_retrieval_benchmark_compares_baselines_without_vector_claims() -
     assert benchmark.vector_gate_met is False
     assert outcomes
     assert all(outcome["passed"] for outcome in outcomes)
+
+
+def test_memory_scale_dataset_exceeds_runtime_candidate_window() -> None:
+    """Scale fixtures should add labeled paraphrases and a large memory pool."""
+    cases = build_scale_retrieval_cases()
+    background = build_scale_background_memories(user_id="scale_test_user")
+
+    assert len(cases) == SCALE_QUERY_CASE_COUNT
+    assert len({case.id for case in cases}) == SCALE_QUERY_CASE_COUNT
+    assert all(len(case.expected_memory_ids) == 1 for case in cases)
+    assert all(len(case.forbidden_memory_ids) >= 2 for case in cases)
+    assert len(background) == SCALE_BACKGROUND_MEMORY_COUNT
+    assert len({item.memory_id for item in background}) == len(background)
+    assert SCALE_BACKGROUND_MEMORY_COUNT > 100
 
 
 def test_phase6_product_boundary_coverage() -> None:

@@ -1,5 +1,8 @@
 """Optional real-model checks for the dense memory retrieval benchmark."""
 
+from collections.abc import Sequence
+import hashlib
+import math
 import os
 
 import pytest
@@ -15,6 +18,48 @@ from app.evals.vector_memory_retrieval import (
     passes_vector_gate,
     run_vector_memory_retrieval_benchmark,
 )
+
+
+class _DeterministicEmbedding:
+    """Small dependency-free embedder for scale benchmark contract tests."""
+
+    provider_name = "deterministic-test"
+    model_name = "sha256-projection"
+    model_revision = "v1"
+    dimensions = 8
+    model_size_mb = 0.0
+
+    def embed_queries(self, texts: Sequence[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
+
+    @staticmethod
+    def _embed(text: str) -> list[float]:
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        values = [float(digest[index]) - 127.5 for index in range(8)]
+        norm = math.sqrt(sum(value * value for value in values))
+        return [value / norm for value in values]
+
+
+def test_vector_benchmark_exercises_large_candidate_corpus() -> None:
+    """The always-on contract must not silently shrink back to toy scale."""
+    report, outcomes = run_vector_memory_retrieval_benchmark(
+        embedder=_DeterministicEmbedding(),
+    )
+
+    assert report.dataset_case_count == 59
+    assert report.indexed_memory_count is not None
+    assert report.indexed_memory_count >= 2000
+    assert report.max_candidates_per_query is not None
+    assert report.max_candidates_per_query > report.classical_candidate_window
+    assert report.classical_candidate_window == 100
+    assert report.scale_gate_met is True
+    assert all(
+        len(strategy_outcomes) == report.dataset_case_count
+        for strategy_outcomes in outcomes.values()
+    )
 
 
 @pytest.mark.vector_eval
@@ -37,7 +82,13 @@ def test_real_bge_vector_and_hybrid_memory_benchmark() -> None:
         == "46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59"
     )
     assert report.embedding_dimensions == 512
-    assert report.dataset_case_count == 15
+    assert report.dataset_case_count >= 50
+    assert report.indexed_memory_count is not None
+    assert report.indexed_memory_count >= 2000
+    assert report.max_candidates_per_query is not None
+    assert report.max_candidates_per_query >= 2000
+    assert report.classical_candidate_window == 100
+    assert report.scale_gate_met is True
     assert set(report.strategies) == {
         "recent",
         "metadata",
@@ -51,7 +102,7 @@ def test_real_bge_vector_and_hybrid_memory_benchmark() -> None:
         vector.relevant_recall_at_3.score
         > sql_text.relevant_recall_at_3.score
     )
-    assert vector.no_memory_abstention.score == 1.0
+    assert vector.no_memory_abstention.score < 1.0
     assert vector.false_recall_avoidance.score < 1.0
     assert report.vector_gate_met is False
     assert (

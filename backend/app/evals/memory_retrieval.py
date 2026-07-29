@@ -20,6 +20,7 @@ from app.memory.token_estimator import ConservativeTokenEstimator
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
     MemoryEvidenceType,
+    MemoryRecordStatus,
     MemoryRetrievalRequest,
     MemoryRetrievalStrategy,
     MemorySourceType,
@@ -59,6 +60,8 @@ def evaluate_classical_strategy(
     cases: list[MemoryRetrievalEvalCase],
     *,
     strategy: MemoryRetrievalStrategy,
+    records_by_case: dict[str, list[EpisodicMemoryRecord]] | None = None,
+    candidate_window_limit: int | None = None,
 ) -> tuple[MemoryRetrievalStrategyReport, list[dict[str, Any]]]:
     estimator = ConservativeTokenEstimator()
     expected_total = 0
@@ -84,7 +87,17 @@ def evaluate_classical_strategy(
             include_archived=case.include_archived,
             strategy=strategy,
         )
-        candidates = [record_from_fixture(item) for item in case.memories]
+        candidates = (
+            records_by_case[case.id]
+            if records_by_case is not None
+            else [record_from_fixture(item) for item in case.memories]
+        )
+        if candidate_window_limit is not None:
+            candidates = _repository_candidate_window(
+                candidates,
+                request=request,
+                limit=candidate_window_limit,
+            )
         started = perf_counter()
         hits, eligible_count = rank_memory_candidates(
             request=request,
@@ -153,6 +166,40 @@ def evaluate_classical_strategy(
         ),
         outcomes,
     )
+
+
+def _repository_candidate_window(
+    candidates: list[EpisodicMemoryRecord],
+    *,
+    request: MemoryRetrievalRequest,
+    limit: int,
+) -> list[EpisodicMemoryRecord]:
+    """Mirror the production SQL hard-filter and recent candidate window."""
+    allowed_statuses = {MemoryRecordStatus.ACTIVE}
+    if request.include_archived:
+        allowed_statuses.add(MemoryRecordStatus.ARCHIVED)
+    scoped = [
+        record
+        for record in candidates
+        if (
+            record.user_id == request.user_id
+            and record.status in allowed_statuses
+            and record.memory_type in request.allowed_memory_types
+            and (
+                record.expires_at is None
+                or record.expires_at > EVAL_NOW
+            )
+        )
+    ]
+    scoped.sort(
+        key=lambda record: (
+            record.occurred_at,
+            record.last_retrieved_at is None,
+            record.memory_id,
+        ),
+        reverse=True,
+    )
+    return scoped[: max(1, limit)]
 
 
 def record_from_fixture(

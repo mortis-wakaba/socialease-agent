@@ -91,6 +91,17 @@ class MemoryRetrievalEvalCase(BaseModel):
     demo: Literal[True]
 
 
+class MemoryRetrievalScaleSeed(BaseModel):
+    """Compact human-authored seed expanded into scale retrieval cases."""
+
+    id: str
+    scenario_type: str
+    queries: list[str] = Field(min_length=3, max_length=3)
+    target_summary: str
+    hard_negative_summaries: list[str] = Field(min_length=2, max_length=4)
+    demo: Literal[True]
+
+
 class MemoryRetrievalBenchmarkStrategy(str, Enum):
     """Offline retrieval variants compared before production adoption."""
 
@@ -130,10 +141,13 @@ class MemoryRetrievalBenchmarkReport(BaseModel):
     model_size_mb: float | None = Field(default=None, ge=0.0)
     cold_start_latency_ms: float | None = Field(default=None, ge=0.0)
     indexed_memory_count: int | None = Field(default=None, ge=0)
+    max_candidates_per_query: int | None = Field(default=None, ge=0)
+    classical_candidate_window: int | None = Field(default=None, ge=1)
     estimated_index_bytes: int | None = Field(default=None, ge=0)
     document_embedding_latency_ms: float | None = Field(default=None, ge=0.0)
     vector_evaluated: bool = False
     hybrid_evaluated: bool = False
+    scale_gate_met: bool = False
     vector_gate_met: bool = False
 
 

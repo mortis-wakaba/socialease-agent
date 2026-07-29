@@ -83,7 +83,7 @@ make check
 2026-07-27 本地与 CI 基线：
 
 ```text
-backend pytest: 507 passed, 45 skipped
+backend pytest: 531 passed, 6 skipped
 eval suite: all metrics passed
 eval gate: passed
 deterministic eval trace cases: 311 / 311 passed
@@ -222,8 +222,12 @@ make eval-memory-vector
 
 固定配置：
 
-- 数据：15 条中文 synthetic demo case，其中 5 条是同场景语义改写、语义冲突和
-  hard-negative；
+- 数据：59 条中文 synthetic demo query。新增部分来自 12 组人工编写语义种子，
+  每组扩展 3 个查询改写，共 36 条规模化查询；
+- 规模：每个查询加入 2,048 条确定性安全 demo 干扰记忆，单查询最多 2,053 个
+  候选；共 2,135 条去重索引文本；
+- Classical 策略按生产 Repository 行为使用 owner/status/type/expiry 硬过滤后的
+  100 条 recent candidate window；Vector/Hybrid 在相同硬过滤后评估完整候选集；
 - Embedder：FastEmbed `0.8.0`；
 - Model：`BAAI/bge-small-zh-v1.5`，512 维，revision
   `46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59`；
@@ -232,10 +236,10 @@ make eval-memory-vector
   `0.4791`；
 - Hybrid：先通过 semantic threshold，再按 `0.75 semantic + 0.25 lexical`
   融合，遵循 Mem0“先语义门槛、再融合”的方向；
-- 所有策略先执行用户、Consent、状态、类型、场景、过期、安全内容和当前冲突
-  过滤；Vector 不能先跨用户搜索再在应用层过滤。
+- 所有策略先执行用户、Consent、状态、类型、过期、安全内容和当前冲突过滤；
+  场景是排序信号而不是硬过滤，Vector 不能先跨用户搜索再在应用层过滤。
 
-2026-07-26 本地 CPU 结果：
+2026-07-26 的 15 条小样本结果保留为历史基线：
 
 | Strategy | Recall@3 | False Recall Avoidance | No-memory Abstention | Case Pass | Query P95 |
 |---|---:|---:|---:|---:|---:|
@@ -245,16 +249,29 @@ make eval-memory-vector
 | Vector | 0.6667 | 0.8000 | 1.0000 | 0.8000 | ~4ms |
 | Hybrid | 0.5556 | 0.8000 | 1.0000 | 0.7333 | ~6ms |
 
-36 条去重 demo memory 的原始 float32 向量约 73,728 bytes；文档批量编码约
-150ms，缓存模型冷启动约 0.4–0.6s。延迟是单机测量，只用于数量级判断，不作为
-跨机器的确定性断言。
+2026-07-29 规模扩展后的本地 CPU 结果：
+
+| Strategy | Recall@3 | False Recall Avoidance | No-memory Abstention | Case Pass | Query P95 |
+|---|---:|---:|---:|---:|---:|
+| Recent | 0.0392 | 0.2778 | 0.0000 | 0.0169 | ~4ms |
+| Metadata | 0.0392 | 0.2778 | 0.0000 | 0.0169 | ~3ms |
+| SQL Text | 0.0392 | 0.6296 | 0.6667 | 0.1017 | ~2ms |
+| Vector | 0.2745 | 0.8519 | 0.3333 | 0.2203 | ~85ms |
+| Hybrid | 0.3529 | 0.7778 | 0.3333 | 0.2373 | ~77ms |
+
+2,135 条 512 维 float32 向量的原始数据约 4.17 MiB；文档批量编码约 3.8 秒。
+查询延迟包含本地 query embedding 和 Python 精确向量扫描，只用于方案间和数量级
+比较，不等同于 pgvector ANN 的生产延迟。
 
 结论：
 
-- Vector 的语义召回确有提升，证明向量方案值得实测，而不是可以直接忽略。
-- 它仍错误召回“直接命令室友”和“无法拒绝时接受一部分任务”等与当前目标冲突的
-  历史，False Recall 没有达到安全门槛 `1.0`。
-- 当前 Hybrid 被场景词面 hard-negative 干扰，没有超过纯 Vector。
+- 规模扩大后，Vector/Hybrid 相比固定 100 条 SQL candidate window 的召回优势更加
+  明显，说明语义候选生成在长历史中有工程价值。
+- 但 Vector/Hybrid 的绝对 Recall、False Recall、No-memory Abstention 和 Case Pass
+  均未达到生产安全门槛；Hybrid 提高召回的同时进一步降低 False Recall Avoidance。
+- 当前 SQL Text 在超过 candidate window 的长历史中同样明显退化。继续使用它表示
+  保持现有低复杂度、安全优先的生产基线，不表示其规模化质量已经达标。
 - `vector_gate_met=false`，生产继续使用 SQL Text；阶段五 pgvector 暂缓。
-- 后续若重开阶段五，应先增加 polarity/conflict reranker 或经人工标注的更大中文
-  数据集，而不是单纯扩大向量模型或降低阈值。
+- 后续若重开阶段五，应先实现安全的 lexical/scenario candidate union、
+  polarity/conflict reranker，并补充独立人工标注集；不能通过降低语义阈值或只更换
+  更大 embedding 模型绕过门槛。
