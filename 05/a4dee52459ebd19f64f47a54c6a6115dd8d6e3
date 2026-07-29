@@ -1,0 +1,30 @@
+backend/app/memory/retriever.py
+  s_e6b965dea9786d::t_aab6c8354f090e 9
+  s_e6b965dea9786d::t_a6c02a7778b34f 6,22,221-222
+backend/app/memory/hard_filter.py
+  s_e6b965dea9786d::t_a6c02a7778b34f 1-111
+backend/tests/test_memory_hard_filter.py
+  s_e6b965dea9786d::t_a6c02a7778b34f 1-65,67-125
+  s_e6b965dea9786d::t_734bc2144c8bd8 66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "05a4dee52459ebd19f64f47a54c6a6115dd8d6e3",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_e6b965dea9786d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fac99-450f-7543-be90-4349da3e087e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
