@@ -6,9 +6,10 @@ from time import perf_counter
 from typing import Any
 
 from app.evals.loader import load_memory_retrieval_cases
-from app.evals.metrics import ratio
+from app.evals.memory_retrieval_metrics import (
+    build_memory_retrieval_strategy_report,
+)
 from app.evals.models import (
-    EvalMetric,
     MemoryRetrievalBenchmarkReport,
     MemoryRetrievalBenchmarkStrategy,
     MemoryRetrievalEvalCase,
@@ -64,15 +65,6 @@ def evaluate_classical_strategy(
     candidate_window_limit: int | None = None,
 ) -> tuple[MemoryRetrievalStrategyReport, list[dict[str, Any]]]:
     estimator = ConservativeTokenEstimator()
-    expected_total = 0
-    expected_found = 0
-    false_results: list[bool] = []
-    stale_results: list[bool] = []
-    conflict_results: list[bool] = []
-    cross_user_results: list[bool] = []
-    abstention_results: list[bool] = []
-    budget_results: list[bool] = []
-    latencies_ms: list[float] = []
     outcomes: list[dict[str, Any]] = []
 
     for case in cases:
@@ -106,29 +98,12 @@ def evaluate_classical_strategy(
             token_estimator=estimator,
             token_budget=EVAL_TOKEN_BUDGET,
         )
-        latencies_ms.append((perf_counter() - started) * 1000)
+        query_latency_ms = (perf_counter() - started) * 1000
         retrieved_ids = [hit.memory_id for hit in hits]
-        expected_total += len(case.expected_memory_ids)
-        expected_found += sum(
-            memory_id in retrieved_ids for memory_id in case.expected_memory_ids
-        )
         forbidden_clear = not set(retrieved_ids).intersection(
             case.forbidden_memory_ids
         )
-        if case.forbidden_memory_ids:
-            false_results.append(forbidden_clear)
-        if case.category == "stale":
-            stale_results.append(forbidden_clear)
-        if case.category == "conflict":
-            conflict_results.append(forbidden_clear and not retrieved_ids)
-        if case.category == "cross_user":
-            cross_user_results.append(forbidden_clear)
-        if case.category == "abstention":
-            abstention_results.append(not retrieved_ids)
         estimated_tokens = sum(hit.estimated_tokens for hit in hits)
-        budget_results.append(
-            estimated_tokens <= EVAL_TOKEN_BUDGET and len(hits) <= 3
-        )
         expected_ok = all(
             memory_id in retrieved_ids for memory_id in case.expected_memory_ids
         )
@@ -144,25 +119,16 @@ def evaluate_classical_strategy(
                 "expected_abstain": case.expected_abstain,
                 "eligible_count": eligible_count,
                 "estimated_tokens": estimated_tokens,
+                "query_latency_ms": round(query_latency_ms, 6),
                 "passed": passed,
             }
         )
 
     return (
-        MemoryRetrievalStrategyReport(
+        build_memory_retrieval_strategy_report(
             strategy=MemoryRetrievalBenchmarkStrategy(strategy.value),
-            relevant_recall_at_3=ratio(expected_found, expected_total),
-            false_recall_avoidance=_bool_metric(false_results),
-            stale_recall_avoidance=_bool_metric(stale_results),
-            conflict_resolution=_bool_metric(conflict_results),
-            cross_user_leakage_avoidance=_bool_metric(cross_user_results),
-            no_memory_abstention=_bool_metric(abstention_results),
-            context_token_budget=_bool_metric(budget_results),
-            case_pass_rate=_bool_metric(
-                [bool(outcome["passed"]) for outcome in outcomes]
-            ),
-            mean_query_latency_ms=_mean(latencies_ms),
-            p95_query_latency_ms=_percentile_95(latencies_ms),
+            cases=cases,
+            outcomes=outcomes,
         ),
         outcomes,
     )
@@ -240,19 +206,3 @@ def record_from_fixture(
         content_hash=content_hash,
         idempotency_key=idempotency_key,
     )
-
-
-def _bool_metric(values: list[bool]) -> EvalMetric:
-    return ratio(sum(values), len(values))
-
-
-def _mean(values: list[float]) -> float:
-    return round(sum(values) / len(values), 6) if values else 0.0
-
-
-def _percentile_95(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, int(len(ordered) * 0.95)))
-    return round(ordered[index], 6)

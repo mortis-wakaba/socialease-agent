@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import math
 from time import perf_counter
 from typing import Any
 
@@ -12,23 +11,18 @@ from app.evals.dense_embedding import (
     DenseEmbeddingProvider,
     FastEmbedBgeSmallZh,
 )
-from app.evals.loader import (
-    load_memory_retrieval_cases,
-    load_memory_vector_challenge_cases,
+from app.evals.memory_retrieval_dataset import (
+    build_default_memory_retrieval_dataset,
 )
 from app.evals.memory_retrieval import (
     EVAL_NOW,
     EVAL_TOKEN_BUDGET,
     evaluate_classical_strategy,
-    record_from_fixture,
 )
-from app.evals.memory_retrieval_scale import (
-    build_scale_background_memories,
-    build_scale_retrieval_cases,
+from app.evals.memory_retrieval_metrics import (
+    build_memory_retrieval_strategy_report,
 )
-from app.evals.metrics import ratio
 from app.evals.models import (
-    EvalMetric,
     MemoryRetrievalBenchmarkReport,
     MemoryRetrievalBenchmarkStrategy,
     MemoryRetrievalEvalCase,
@@ -73,29 +67,13 @@ def run_vector_memory_retrieval_benchmark(
     cold_start_latency_ms: float | None = None,
 ) -> tuple[MemoryRetrievalBenchmarkReport, dict[str, list[dict[str, Any]]]]:
     """Run A/B/C/D/E on fixed safety cases plus semantic hard negatives."""
-    cases = [
-        *load_memory_retrieval_cases(),
-        *load_memory_vector_challenge_cases(),
-        *build_scale_retrieval_cases(),
-    ]
+    dataset = build_default_memory_retrieval_dataset(include_held_out=False)
+    cases = dataset.cases
     provider = embedder or FastEmbedBgeSmallZh()
     strategies: dict[str, MemoryRetrievalStrategyReport] = {}
     outcomes_by_strategy: dict[str, list[dict[str, Any]]] = {}
 
-    background_by_user = {
-        user_id: [
-            record_from_fixture(item)
-            for item in build_scale_background_memories(user_id=user_id)
-        ]
-        for user_id in {case.user_id for case in cases}
-    }
-    records_by_case = {
-        case.id: [
-            *[record_from_fixture(item) for item in case.memories],
-            *background_by_user[case.user_id],
-        ]
-        for case in cases
-    }
+    records_by_case = dataset.records_by_case
 
     for strategy in (
         MemoryRetrievalStrategy.RECENT,
@@ -155,7 +133,7 @@ def run_vector_memory_retrieval_benchmark(
             -item.p95_query_latency_ms,
         ),
     )
-    indexed_memory_count = len(unique_summaries)
+    indexed_memory_count = len(dataset.unique_records)
     scale_gate_met = (
         len(cases) >= MIN_VECTOR_GATE_CASES
         and indexed_memory_count >= MIN_VECTOR_GATE_INDEXED_MEMORIES
@@ -180,7 +158,7 @@ def run_vector_memory_retrieval_benchmark(
         model_size_mb=provider.model_size_mb,
         cold_start_latency_ms=cold_start_latency_ms,
         indexed_memory_count=indexed_memory_count,
-        max_candidates_per_query=max(map(len, records_by_case.values())),
+        max_candidates_per_query=dataset.max_candidates_per_query,
         classical_candidate_window=CLASSICAL_CANDIDATE_WINDOW,
         estimated_index_bytes=indexed_memory_count * provider.dimensions * 4,
         document_embedding_latency_ms=round(
@@ -204,15 +182,6 @@ def _evaluate_semantic_strategy(
     strategy: MemoryRetrievalBenchmarkStrategy,
 ) -> tuple[MemoryRetrievalStrategyReport, list[dict[str, Any]]]:
     estimator = ConservativeTokenEstimator()
-    expected_total = 0
-    expected_found = 0
-    false_results: list[bool] = []
-    stale_results: list[bool] = []
-    conflict_results: list[bool] = []
-    cross_user_results: list[bool] = []
-    abstention_results: list[bool] = []
-    budget_results: list[bool] = []
-    latencies_ms: list[float] = []
     outcomes: list[dict[str, Any]] = []
 
     for case in cases:
@@ -223,6 +192,9 @@ def _evaluate_semantic_strategy(
             query=case.query,
             allowed_memory_types=case.allowed_memory_types,
             scenario_type=case.scenario_type,
+            scenario_id=case.scenario_id,
+            practice_thread_id=case.practice_thread_id,
+            skill_codes=case.skill_codes,
             include_archived=case.include_archived,
             strategy=MemoryRetrievalStrategy.METADATA,
         )
@@ -304,28 +276,9 @@ def _evaluate_semantic_strategy(
                     "final": round(item.final_score, 6),
                 }
             )
-        latencies_ms.append((perf_counter() - started) * 1000)
-
-        expected_total += len(case.expected_memory_ids)
-        expected_found += sum(
-            memory_id in retrieved_ids for memory_id in case.expected_memory_ids
-        )
+        query_latency_ms = (perf_counter() - started) * 1000
         forbidden_clear = not set(retrieved_ids).intersection(
             case.forbidden_memory_ids
-        )
-        if case.forbidden_memory_ids:
-            false_results.append(forbidden_clear)
-        if case.category == "stale":
-            stale_results.append(forbidden_clear)
-        if case.category == "conflict":
-            conflict_results.append(forbidden_clear and not retrieved_ids)
-        if case.category == "cross_user":
-            cross_user_results.append(forbidden_clear)
-        if case.category == "abstention":
-            abstention_results.append(not retrieved_ids)
-        budget_results.append(
-            estimated_tokens <= EVAL_TOKEN_BUDGET
-            and len(retrieved_ids) <= request.limit
         )
         expected_ok = all(
             memory_id in retrieved_ids for memory_id in case.expected_memory_ids
@@ -341,26 +294,17 @@ def _evaluate_semantic_strategy(
                 "expected_abstain": case.expected_abstain,
                 "eligible_count": len(ranked),
                 "estimated_tokens": estimated_tokens,
+                "query_latency_ms": round(query_latency_ms, 6),
                 "score_details": score_details,
                 "passed": expected_ok and forbidden_clear and abstain_ok,
             }
         )
 
     return (
-        MemoryRetrievalStrategyReport(
+        build_memory_retrieval_strategy_report(
             strategy=strategy,
-            relevant_recall_at_3=ratio(expected_found, expected_total),
-            false_recall_avoidance=_bool_metric(false_results),
-            stale_recall_avoidance=_bool_metric(stale_results),
-            conflict_resolution=_bool_metric(conflict_results),
-            cross_user_leakage_avoidance=_bool_metric(cross_user_results),
-            no_memory_abstention=_bool_metric(abstention_results),
-            context_token_budget=_bool_metric(budget_results),
-            case_pass_rate=_bool_metric(
-                [bool(outcome["passed"]) for outcome in outcomes]
-            ),
-            mean_query_latency_ms=_mean(latencies_ms),
-            p95_query_latency_ms=_percentile_95(latencies_ms),
+            cases=cases,
+            outcomes=outcomes,
         ),
         outcomes,
     )
@@ -395,23 +339,6 @@ def _cosine(left: list[float], right: list[float]) -> float:
     if len(left) != len(right):
         raise ValueError("Embedding dimensions do not match")
     return max(-1.0, min(1.0, sum(a * b for a, b in zip(left, right))))
-
-
-def _bool_metric(values: list[bool]) -> EvalMetric:
-    return ratio(sum(values), len(values))
-
-
-def _mean(values: list[float]) -> float:
-    return round(sum(values) / len(values), 6) if values else 0.0
-
-
-def _percentile_95(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, math.ceil(len(ordered) * 0.95) - 1)
-    return round(ordered[index], 6)
-
 
 def main() -> None:
     """Run the optional model-backed benchmark and print full evidence."""

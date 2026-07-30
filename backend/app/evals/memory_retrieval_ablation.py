@@ -2,34 +2,32 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import json
-import math
 import os
 from time import perf_counter
 from typing import Any
 
-from app.evals.loader import (
-    load_memory_retrieval_cases,
-    load_memory_retrieval_v2_heldout_cases,
-    load_memory_vector_challenge_cases,
+from app.evals.memory_retrieval_dataset import (
+    MemoryRetrievalDataset,
+    MemoryRetrievalEvalSplit,
+    build_custom_memory_retrieval_dataset,
+    build_default_memory_retrieval_dataset,
 )
 from app.evals.memory_retrieval import (
     EVAL_NOW,
     EVAL_TOKEN_BUDGET,
     evaluate_classical_strategy,
-    record_from_fixture,
 )
-from app.evals.memory_retrieval_scale import (
-    build_scale_background_memories,
-    build_scale_retrieval_cases,
+from app.evals.memory_retrieval_metrics import (
+    build_memory_retrieval_strategy_report,
+    filter_memory_retrieval_outcomes,
 )
-from app.evals.metrics import ratio
 from app.evals.models import (
-    EvalMetric,
     MemoryRetrievalAblationReport,
     MemoryRetrievalBenchmarkStrategy,
     MemoryRetrievalEvalCase,
+    MemoryRetrievalSplitReport,
     MemoryRetrievalStrategyReport,
 )
 from app.memory.abstention import MemoryAbstentionPolicy
@@ -99,8 +97,21 @@ class _CachingEmbedder:
             method=self.provider.embed_documents,
         )
 
+    def preload_documents(self, texts: Sequence[str]) -> None:
+        """Build the document index outside measured query latency."""
+        self.embed_documents(texts)
+
+    def clear_query_cache(self) -> None:
+        """Give every ablation variant the same uncached query workload."""
+        self._query_cache.clear()
+
     @staticmethod
-    def _embed_cached(texts, *, cache, method):
+    def _embed_cached(
+        texts: Sequence[str],
+        *,
+        cache: dict[str, list[float]],
+        method: Callable[[Sequence[str]], list[list[float]]],
+    ) -> list[list[float]]:
         missing = list(dict.fromkeys(text for text in texts if text not in cache))
         if missing:
             vectors = method(missing)
@@ -116,51 +127,39 @@ def run_memory_retrieval_ablation(
     reranker_provider: CrossEncoderProvider,
     cases: list[MemoryRetrievalEvalCase] | None = None,
     include_scale_background: bool = True,
-    held_out_case_count: int = 0,
 ) -> tuple[MemoryRetrievalAblationReport, dict[str, list[dict[str, Any]]]]:
     """Compare each added retrieval component against the SQL Text baseline."""
-    held_out_cases = load_memory_retrieval_v2_heldout_cases() if cases is None else []
-    eval_cases = cases or [
-        *load_memory_retrieval_cases(),
-        *load_memory_vector_challenge_cases(),
-        *build_scale_retrieval_cases(),
-        *held_out_cases,
-    ]
-    if cases is None:
-        held_out_case_count = len(held_out_cases)
-    background_by_user = (
-        {
-            user_id: [
-                record_from_fixture(item)
-                for item in build_scale_background_memories(user_id=user_id)
-            ]
-            for user_id in {case.user_id for case in eval_cases}
-        }
-        if include_scale_background
-        else {}
+    dataset = (
+        build_custom_memory_retrieval_dataset(cases)
+        if cases is not None
+        else build_default_memory_retrieval_dataset(
+            include_scale_background=include_scale_background,
+        )
     )
-    records_by_case = {
-        case.id: [
-            *[record_from_fixture(item) for item in case.memories],
-            *background_by_user.get(case.user_id, []),
-        ]
-        for case in eval_cases
-    }
+    eval_cases = dataset.cases
+    records_by_case = dataset.records_by_case
+    held_out_case_count = len(
+        dataset.splits[MemoryRetrievalEvalSplit.HELD_OUT]
+    )
     baseline, baseline_outcomes = evaluate_classical_strategy(
         eval_cases,
         strategy=MemoryRetrievalStrategy.SQL_TEXT,
         records_by_case=records_by_case,
         candidate_window_limit=100 if include_scale_background else None,
     )
-    baseline = baseline.model_copy(
-        update={"relevant_mrr": _mrr_metric(eval_cases, baseline_outcomes)}
-    )
     reports = {MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value: baseline}
     outcomes = {
         MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value: baseline_outcomes
     }
     cached_embedder = _CachingEmbedder(embedder)
+    document_started = perf_counter()
+    cached_embedder.preload_documents(sorted(dataset.unique_summaries))
+    document_embedding_latency_ms = (
+        perf_counter() - document_started
+    ) * 1000
+    _warm_reranker(reranker_provider)
     for variant, channels in _VARIANT_CHANNELS.items():
+        cached_embedder.clear_query_cache()
         report, variant_outcomes = _evaluate_variant(
             eval_cases,
             records_by_case=records_by_case,
@@ -172,26 +171,65 @@ def run_memory_retrieval_ablation(
         reports[variant.value] = report
         outcomes[variant.value] = variant_outcomes
 
-    full = reports[MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE.value]
-    gate_met = passes_ablation_gate(candidate=full, baseline=baseline)
+    split_reports = _build_split_reports(
+        dataset=dataset,
+        reports=reports,
+        outcomes=outcomes,
+    )
+    aggregate_full = reports[
+        MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE.value
+    ]
+    held_out_reports = split_reports[MemoryRetrievalEvalSplit.HELD_OUT.value]
+    scale_reports = split_reports[MemoryRetrievalEvalSplit.SCALE.value]
+    if held_out_reports.case_count and scale_reports.case_count:
+        gate_met = passes_ablation_gate(
+            candidate=held_out_reports.strategies[
+                MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE.value
+            ],
+            baseline=held_out_reports.strategies[
+                MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value
+            ],
+            recall_candidate=scale_reports.strategies[
+                MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE.value
+            ],
+            recall_baseline=scale_reports.strategies[
+                MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value
+            ],
+            latency_candidate=aggregate_full,
+        )
+    else:
+        gate_met = passes_ablation_gate(
+            candidate=aggregate_full,
+            baseline=baseline,
+        )
     selected = (
         MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE
         if gate_met
         else MemoryRetrievalBenchmarkStrategy.SQL_TEXT
     )
-    unique_memories = {
-        record.summary for records in records_by_case.values() for record in records
-    }
     return (
         MemoryRetrievalAblationReport(
             selected_strategy=selected,
             baseline_strategy=MemoryRetrievalBenchmarkStrategy.SQL_TEXT,
             strategies=reports,
             dataset_case_count=len(eval_cases),
+            development_case_count=len(
+                dataset.splits[MemoryRetrievalEvalSplit.DEVELOPMENT]
+            ),
+            scale_case_count=len(
+                dataset.splits[MemoryRetrievalEvalSplit.SCALE]
+            ),
             held_out_case_count=held_out_case_count,
-            indexed_memory_count=len(unique_memories),
+            indexed_memory_count=len(dataset.unique_records),
+            unique_summary_count=len(dataset.unique_summaries),
+            max_candidates_per_query=dataset.max_candidates_per_query,
+            document_embedding_latency_ms=round(
+                document_embedding_latency_ms,
+                6,
+            ),
             reranker_provider=reranker_provider.provider_name,
             reranker_model=reranker_provider.model_name,
+            splits=split_reports,
             adoption_gate_met=gate_met,
         ),
         outcomes,
@@ -215,15 +253,6 @@ def _evaluate_variant(
     reranker = CrossEncoderMemoryReranker(provider=reranker_provider)
     abstention = MemoryAbstentionPolicy()
     estimator = ConservativeTokenEstimator()
-    expected_total = expected_found = 0
-    false_results: list[bool] = []
-    stale_results: list[bool] = []
-    conflict_results: list[bool] = []
-    cross_user_results: list[bool] = []
-    budget_results: list[bool] = []
-    abstention_labels: list[bool] = []
-    abstention_predictions: list[bool] = []
-    latencies: list[float] = []
     outcomes: list[dict[str, Any]] = []
 
     for case in cases:
@@ -245,6 +274,9 @@ def _evaluate_variant(
             now=EVAL_NOW,
         )
         abstention_reason = None
+        abstention_top_score = None
+        abstention_score_margin = None
+        rerank_input_count = 0
         if variant in {
             MemoryRetrievalBenchmarkStrategy.CROSS_ENCODER,
             MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE,
@@ -254,6 +286,7 @@ def _evaluate_variant(
                 candidates=recalled.candidates,
                 now=EVAL_NOW,
             )
+            rerank_input_count = reranked.diagnostics.reranked_candidate_count
             if variant == MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE:
                 decision = abstention.decide(
                     request=request,
@@ -264,6 +297,8 @@ def _evaluate_variant(
                     item.recalled.record for item in decision.selected
                 ]
                 abstention_reason = decision.diagnostics.reason.value
+                abstention_top_score = decision.diagnostics.top_score
+                abstention_score_margin = decision.diagnostics.score_margin
             else:
                 selected_records = [
                     item.recalled.record for item in reranked.candidates[:3]
@@ -276,28 +311,11 @@ def _evaluate_variant(
             selected_records,
             estimator=estimator,
         )
-        latencies.append((perf_counter() - started) * 1000)
-        expected_total += len(case.expected_memory_ids)
-        expected_found += sum(
-            memory_id in retrieved_ids for memory_id in case.expected_memory_ids
-        )
+        query_latency_ms = (perf_counter() - started) * 1000
         forbidden_clear = not set(retrieved_ids).intersection(
             case.forbidden_memory_ids
         )
-        if case.forbidden_memory_ids:
-            false_results.append(forbidden_clear)
-        if case.category == "stale":
-            stale_results.append(forbidden_clear)
-        if case.category == "conflict":
-            conflict_results.append(forbidden_clear and not retrieved_ids)
-        if case.category == "cross_user":
-            cross_user_results.append(forbidden_clear)
         predicted_abstain = not retrieved_ids
-        abstention_labels.append(case.expected_abstain)
-        abstention_predictions.append(predicted_abstain)
-        budget_results.append(
-            estimated_tokens <= EVAL_TOKEN_BUDGET and len(retrieved_ids) <= 3
-        )
         passed = (
             all(item in retrieved_ids for item in case.expected_memory_ids)
             and forbidden_clear
@@ -312,49 +330,30 @@ def _evaluate_variant(
                 "forbidden_ids": case.forbidden_memory_ids,
                 "expected_abstain": case.expected_abstain,
                 "abstention_reason": abstention_reason,
+                "abstention_top_score": abstention_top_score,
+                "abstention_score_margin": abstention_score_margin,
+                "candidate_count": len(records_by_case[case.id]),
                 "eligible_count": recalled.diagnostics.filtered.allowed_count,
                 "union_count": recalled.diagnostics.union_count,
+                "rerank_input_count": rerank_input_count,
+                "expected_in_union": all(
+                    memory_id
+                    in {
+                        item.record.memory_id
+                        for item in recalled.candidates
+                    }
+                    for memory_id in case.expected_memory_ids
+                ),
                 "estimated_tokens": estimated_tokens,
+                "query_latency_ms": round(query_latency_ms, 6),
                 "passed": passed,
             }
         )
-    true_positive_abstentions = sum(
-        expected and predicted
-        for expected, predicted in zip(
-            abstention_labels,
-            abstention_predictions,
-            strict=True,
-        )
-    )
-    predicted_abstentions = sum(abstention_predictions)
-    expected_abstentions = sum(abstention_labels)
     return (
-        MemoryRetrievalStrategyReport(
+        build_memory_retrieval_strategy_report(
             strategy=variant,
-            relevant_recall_at_3=ratio(expected_found, expected_total),
-            relevant_mrr=_mrr_metric(cases, outcomes),
-            false_recall_avoidance=_bool_metric(false_results),
-            stale_recall_avoidance=_bool_metric(stale_results),
-            conflict_resolution=_bool_metric(conflict_results),
-            cross_user_leakage_avoidance=_bool_metric(cross_user_results),
-            no_memory_abstention=ratio(
-                true_positive_abstentions,
-                expected_abstentions,
-            ),
-            abstention_precision=ratio(
-                true_positive_abstentions,
-                predicted_abstentions,
-            ),
-            abstention_recall=ratio(
-                true_positive_abstentions,
-                expected_abstentions,
-            ),
-            context_token_budget=_bool_metric(budget_results),
-            case_pass_rate=_bool_metric(
-                [bool(outcome["passed"]) for outcome in outcomes]
-            ),
-            mean_query_latency_ms=_mean(latencies),
-            p95_query_latency_ms=_percentile_95(latencies),
+            cases=cases,
+            outcomes=outcomes,
         ),
         outcomes,
     )
@@ -364,8 +363,14 @@ def passes_ablation_gate(
     *,
     candidate: MemoryRetrievalStrategyReport,
     baseline: MemoryRetrievalStrategyReport,
+    recall_candidate: MemoryRetrievalStrategyReport | None = None,
+    recall_baseline: MemoryRetrievalStrategyReport | None = None,
+    latency_candidate: MemoryRetrievalStrategyReport | None = None,
 ) -> bool:
-    """Require material relevance gain without any safety regression."""
+    """Require scale relevance plus held-out safety without split mixing."""
+    quality = recall_candidate or candidate
+    quality_baseline = recall_baseline or baseline
+    latency = latency_candidate or candidate
     safety_metrics = (
         "false_recall_avoidance",
         "stale_recall_avoidance",
@@ -375,12 +380,57 @@ def passes_ablation_gate(
         "context_token_budget",
     )
     return (
-        candidate.relevant_recall_at_3.score
-        >= baseline.relevant_recall_at_3.score + ABLATION_RECALL_GAIN_GATE
+        quality.relevant_recall_at_3.score
+        >= quality_baseline.relevant_recall_at_3.score
+        + ABLATION_RECALL_GAIN_GATE
         and all(getattr(candidate, name).score >= 1.0 for name in safety_metrics)
         and candidate.case_pass_rate.score >= baseline.case_pass_rate.score
-        and candidate.p95_query_latency_ms <= ABLATION_P95_LATENCY_GATE_MS
+        and latency.p95_query_latency_ms <= ABLATION_P95_LATENCY_GATE_MS
     )
+
+
+def _build_split_reports(
+    *,
+    dataset: MemoryRetrievalDataset,
+    reports: dict[str, MemoryRetrievalStrategyReport],
+    outcomes: dict[str, list[dict[str, Any]]],
+) -> dict[str, MemoryRetrievalSplitReport]:
+    split_reports: dict[str, MemoryRetrievalSplitReport] = {}
+    for split in MemoryRetrievalEvalSplit:
+        split_cases = dataset.splits[split]
+        strategy_reports = {
+            strategy_name: build_memory_retrieval_strategy_report(
+                strategy=report.strategy,
+                cases=split_cases,
+                outcomes=filter_memory_retrieval_outcomes(
+                    cases=split_cases,
+                    outcomes=outcomes[strategy_name],
+                ),
+            )
+            for strategy_name, report in reports.items()
+        }
+        split_reports[split.value] = MemoryRetrievalSplitReport(
+            case_count=len(split_cases),
+            max_candidates_per_query=max(
+                (
+                    len(dataset.records_by_case[case.id])
+                    for case in split_cases
+                ),
+                default=0,
+            ),
+            strategies=strategy_reports,
+        )
+    return split_reports
+
+
+def _warm_reranker(provider: CrossEncoderProvider) -> None:
+    """Exclude one-time ONNX graph initialization from warm latency metrics."""
+    scores = provider.score(
+        "demo warmup query",
+        ["demo warmup memory summary"],
+    )
+    if len(scores) != 1:
+        raise RuntimeError("Cross-Encoder warmup returned an incomplete batch")
 
 
 def _fit_selected(
@@ -401,49 +451,6 @@ def _fit_selected(
             ids.append(record.memory_id)
             used += cost
     return ids, used
-
-
-def _mrr_metric(
-    cases: list[MemoryRetrievalEvalCase],
-    outcomes: list[dict[str, Any]],
-) -> EvalMetric:
-    reciprocal_rank_sum = 0.0
-    total = 0
-    for case, outcome in zip(cases, outcomes, strict=True):
-        expected = set(case.expected_memory_ids)
-        if not expected:
-            continue
-        total += 1
-        rank = next(
-            (
-                index
-                for index, memory_id in enumerate(
-                    outcome["retrieved_ids"],
-                    start=1,
-                )
-                if memory_id in expected
-            ),
-            None,
-        )
-        if rank is not None:
-            reciprocal_rank_sum += 1.0 / rank
-    return ratio(reciprocal_rank_sum, total)
-
-
-def _bool_metric(values: list[bool]) -> EvalMetric:
-    return ratio(sum(values), len(values))
-
-
-def _mean(values: list[float]) -> float:
-    return round(sum(values) / len(values), 6) if values else 0.0
-
-
-def _percentile_95(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, math.ceil(len(ordered) * 0.95) - 1)
-    return round(ordered[index], 6)
 
 
 def main() -> None:

@@ -39,6 +39,20 @@ class _Embedding:
         return [value / norm for value in values]
 
 
+class _CountingEmbedding(_Embedding):
+    def __init__(self) -> None:
+        self.query_texts: list[str] = []
+        self.document_batches = 0
+
+    def embed_queries(self, texts: Sequence[str]) -> list[list[float]]:
+        self.query_texts.extend(texts)
+        return super().embed_queries(texts)
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        self.document_batches += 1
+        return super().embed_documents(texts)
+
+
 class _Reranker:
     provider_name = "deterministic_test"
     model_name = "lexical_pair"
@@ -110,6 +124,9 @@ def test_ablation_runner_reports_every_increment_and_safe_diagnostics() -> None:
     }
     assert all(len(items) == 2 for items in outcomes.values())
     assert report.held_out_case_count == 0
+    assert report.development_case_count == 2
+    assert report.scale_case_count == 0
+    assert set(report.splits) == {"development", "scale", "held_out"}
     assert report.reranker_provider == "deterministic_test"
     assert report.strategies["full_pipeline"].relevant_mrr is not None
     assert (
@@ -118,6 +135,11 @@ def test_ablation_runner_reports_every_increment_and_safe_diagnostics() -> None:
     serialized = report.model_dump_json()
     assert "先说一句核心观点" not in serialized
     assert "发言时怎样表达观点" not in serialized
+    assert (
+        report.strategies["sql_text"].no_memory_abstention.total
+        == report.strategies["full_pipeline"].no_memory_abstention.total
+        == 1
+    )
 
 
 def test_ablation_gate_requires_recall_gain_and_perfect_safety() -> None:
@@ -131,6 +153,20 @@ def test_ablation_gate_requires_recall_gain_and_perfect_safety() -> None:
 
     assert passes_ablation_gate(candidate=candidate, baseline=baseline)
     assert not passes_ablation_gate(candidate=unsafe, baseline=baseline)
+
+
+def test_ablation_prebuilds_documents_but_resets_query_cache_per_variant() -> None:
+    embedder = _CountingEmbedding()
+
+    run_memory_retrieval_ablation(
+        embedder=embedder,
+        reranker_provider=_Reranker(),
+        cases=_cases(),
+        include_scale_background=False,
+    )
+
+    assert embedder.document_batches == 1
+    assert embedder.query_texts.count("发言时怎样表达观点？") == 5
 
 
 def _report(*, recall: float, safety: EvalMetric) -> MemoryRetrievalStrategyReport:
