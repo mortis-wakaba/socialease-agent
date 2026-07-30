@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models_knowledge import KnowledgeBaseType
 from app.models import Intent, RiskLevel
@@ -90,6 +90,25 @@ class MemoryRetrievalEvalCase(BaseModel):
     expected_abstain: bool = False
     demo: Literal[True]
 
+    @model_validator(mode="after")
+    def validate_retrieval_labels(self) -> "MemoryRetrievalEvalCase":
+        """Reject ambiguous labels before they can contaminate metrics."""
+        memory_ids = [memory.memory_id for memory in self.memories]
+        if len(memory_ids) != len(set(memory_ids)):
+            raise ValueError("memory fixture ids must be unique within a case")
+        expected = set(self.expected_memory_ids)
+        forbidden = set(self.forbidden_memory_ids)
+        available = set(memory_ids)
+        if expected.intersection(forbidden):
+            raise ValueError("expected and forbidden memory ids must be disjoint")
+        if not expected.issubset(available) or not forbidden.issubset(available):
+            raise ValueError("retrieval labels must reference case fixtures")
+        if self.expected_abstain and expected:
+            raise ValueError("abstention cases cannot contain expected memory ids")
+        if not self.expected_abstain and not expected:
+            raise ValueError("each case must expect memories or explicit abstention")
+        return self
+
 
 class MemoryRetrievalScaleSeed(BaseModel):
     """Compact human-authored seed expanded into scale retrieval cases."""
@@ -167,11 +186,25 @@ class MemoryRetrievalAblationReport(BaseModel):
     baseline_strategy: MemoryRetrievalBenchmarkStrategy
     strategies: dict[str, MemoryRetrievalStrategyReport]
     dataset_case_count: int = Field(ge=0)
+    development_case_count: int = Field(default=0, ge=0)
+    scale_case_count: int = Field(default=0, ge=0)
     held_out_case_count: int = Field(ge=0)
     indexed_memory_count: int = Field(ge=0)
+    unique_summary_count: int = Field(default=0, ge=0)
+    max_candidates_per_query: int = Field(default=0, ge=0)
+    document_embedding_latency_ms: float = Field(default=0.0, ge=0.0)
     reranker_provider: str
     reranker_model: str
+    splits: dict[str, "MemoryRetrievalSplitReport"] = Field(default_factory=dict)
     adoption_gate_met: bool
+
+
+class MemoryRetrievalSplitReport(BaseModel):
+    """Strategy metrics for one non-overlapping evaluation split."""
+
+    case_count: int = Field(ge=0)
+    max_candidates_per_query: int = Field(ge=0)
+    strategies: dict[str, MemoryRetrievalStrategyReport]
 
 
 class RoleplayFeedbackEvalCase(BaseModel):
