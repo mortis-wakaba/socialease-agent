@@ -1,0 +1,40 @@
+backend/tests/test_memory_retrieval_ablation.py
+  s_e6b965dea9786d::t_ac4b24bbafd5bc 131-135
+backend/app/evals/dense_embedding.py
+  s_e6b965dea9786d::t_1b22cc65f3ed45 5,15-20,38,41-56,71
+  s_e6b965dea9786d::t_531d70607d6061 77
+  s_e6b965dea9786d::t_9022f5c880632e 4,40,57-59,76,115-122
+backend/app/evals/memory_retrieval_ablation.py
+  s_e6b965dea9786d::t_0d352ecb038726 54-60,155-157,239-242,245-264,284-294
+  s_e6b965dea9786d::t_1b22cc65f3ed45 503-508
+backend/tests/test_memory_vector_retrieval.py
+  s_e6b965dea9786d::t_1b22cc65f3ed45 7,22,148-154
+  s_e6b965dea9786d::t_f3b17f8e6f06d1 155-156
+docs/memory_retrieval_eval_audit.md
+  s_e6b965dea9786d::t_d69837f5e1e2f1 97-116
+backend/app/evals/models.py
+  s_e6b965dea9786d::t_9022f5c880632e 200-203,206-207
+backend/app/evals/cross_encoder.py
+  s_e6b965dea9786d::t_9022f5c880632e 4,50-52,78-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "57cde1faf794d80158ddc0678c98d42b484764c3",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_e6b965dea9786d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fac99-450f-7543-be90-4349da3e087e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
