@@ -197,6 +197,8 @@ class MemoryRetrievalAblationReport(BaseModel):
     unique_summary_count: int = Field(default=0, ge=0)
     max_candidates_per_query: int = Field(default=0, ge=0)
     document_embedding_latency_ms: float = Field(default=0.0, ge=0.0)
+    evaluation_duration_ms: float = Field(default=0.0, ge=0.0)
+    stage_duration_ms: dict[str, float] = Field(default_factory=dict)
     embedding_provider: str = ""
     embedding_model: str = ""
     embedding_model_revision: str = ""

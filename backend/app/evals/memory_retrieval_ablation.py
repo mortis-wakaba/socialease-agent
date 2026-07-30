@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import json
 import os
+import sys
 from time import perf_counter
 from typing import Any
 
@@ -134,8 +135,13 @@ def run_memory_retrieval_ablation(
     reranker_provider: CrossEncoderProvider,
     cases: list[MemoryRetrievalEvalCase] | None = None,
     include_scale_background: bool = True,
+    progress: Callable[[str], None] | None = None,
 ) -> tuple[MemoryRetrievalAblationReport, dict[str, list[dict[str, Any]]]]:
     """Compare each added retrieval component against the SQL Text baseline."""
+    evaluation_started = perf_counter()
+    stage_duration_ms: dict[str, float] = {}
+
+    dataset_started = perf_counter()
     dataset = (
         build_custom_memory_retrieval_dataset(cases)
         if cases is not None
@@ -143,11 +149,23 @@ def run_memory_retrieval_ablation(
             include_scale_background=include_scale_background,
         )
     )
+    stage_duration_ms["dataset_build"] = _elapsed_ms(dataset_started)
     eval_cases = dataset.cases
     records_by_case = dataset.records_by_case
     held_out_case_count = len(
         dataset.splits[MemoryRetrievalEvalSplit.HELD_OUT]
     )
+    _emit_progress(
+        progress,
+        (
+            f"dataset ready: {len(eval_cases)} cases, "
+            f"{len(dataset.unique_records)} records, "
+            f"{len(dataset.unique_summaries)} unique summaries"
+        ),
+    )
+
+    baseline_started = perf_counter()
+    _emit_progress(progress, "running SQL Text baseline")
     baseline, baseline_outcomes = evaluate_classical_strategy(
         eval_cases,
         strategy=MemoryRetrievalStrategy.SQL_TEXT,
@@ -156,18 +174,56 @@ def run_memory_retrieval_ablation(
             SQL_CANDIDATE_WINDOW if include_scale_background else None
         ),
     )
+    stage_duration_ms["sql_text"] = _elapsed_ms(baseline_started)
+    _emit_progress(
+        progress,
+        f"SQL Text baseline complete in {_seconds(stage_duration_ms['sql_text'])}",
+    )
     reports = {MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value: baseline}
     outcomes = {
         MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value: baseline_outcomes
     }
     cached_embedder = _CachingEmbedder(embedder)
+    _emit_progress(
+        progress,
+        f"embedding {len(dataset.unique_summaries)} unique summaries",
+    )
     document_started = perf_counter()
     cached_embedder.preload_documents(sorted(dataset.unique_summaries))
-    document_embedding_latency_ms = (
-        perf_counter() - document_started
-    ) * 1000
+    document_embedding_latency_ms = _elapsed_ms(document_started)
+    stage_duration_ms["document_embedding"] = document_embedding_latency_ms
+    _emit_progress(
+        progress,
+        (
+            "document embedding complete in "
+            f"{_seconds(document_embedding_latency_ms)}"
+        ),
+    )
+
+    reranker_warmup_started = perf_counter()
+    _emit_progress(progress, "warming Cross-Encoder")
     _warm_reranker(reranker_provider)
-    for variant, channels in _VARIANT_CHANNELS.items():
+    stage_duration_ms["reranker_warmup"] = _elapsed_ms(
+        reranker_warmup_started
+    )
+    _emit_progress(
+        progress,
+        (
+            "Cross-Encoder warmup complete in "
+            f"{_seconds(stage_duration_ms['reranker_warmup'])}"
+        ),
+    )
+
+    variant_count = len(_VARIANT_CHANNELS)
+    for variant_index, (variant, channels) in enumerate(
+        _VARIANT_CHANNELS.items(),
+        start=1,
+    ):
+        _emit_progress(
+            progress,
+            f"running variant {variant_index}/{variant_count}: {variant.value}",
+        )
+        variant_started = perf_counter()
         cached_embedder.clear_query_cache()
         report, variant_outcomes = _evaluate_variant(
             eval_cases,
@@ -179,7 +235,16 @@ def run_memory_retrieval_ablation(
         )
         reports[variant.value] = report
         outcomes[variant.value] = variant_outcomes
+        stage_duration_ms[variant.value] = _elapsed_ms(variant_started)
+        _emit_progress(
+            progress,
+            (
+                f"variant {variant.value} complete in "
+                f"{_seconds(stage_duration_ms[variant.value])}"
+            ),
+        )
 
+    reporting_started = perf_counter()
     split_reports = _build_split_reports(
         dataset=dataset,
         reports=reports,
@@ -216,57 +281,88 @@ def run_memory_retrieval_ablation(
         if gate_met
         else MemoryRetrievalBenchmarkStrategy.SQL_TEXT
     )
-    return (
-        MemoryRetrievalAblationReport(
-            selected_strategy=selected,
-            baseline_strategy=MemoryRetrievalBenchmarkStrategy.SQL_TEXT,
-            strategies=reports,
-            dataset_case_count=len(eval_cases),
-            development_case_count=len(
-                dataset.splits[MemoryRetrievalEvalSplit.DEVELOPMENT]
-            ),
-            scale_case_count=len(
-                dataset.splits[MemoryRetrievalEvalSplit.SCALE]
-            ),
-            held_out_case_count=held_out_case_count,
-            indexed_memory_count=len(dataset.unique_records),
-            unique_summary_count=len(dataset.unique_summaries),
-            max_candidates_per_query=dataset.max_candidates_per_query,
-            document_embedding_latency_ms=round(
-                document_embedding_latency_ms,
-                6,
-            ),
-            embedding_provider=embedder.provider_name,
-            embedding_model=embedder.model_name,
-            embedding_model_revision=embedder.model_revision,
-            embedding_dimensions=embedder.dimensions,
-            reranker_provider=reranker_provider.provider_name,
-            reranker_model=reranker_provider.model_name,
-            reranker_model_revision=reranker_provider.model_revision,
-            experiment_config={
-                "sql_candidate_window": SQL_CANDIDATE_WINDOW,
-                "recall_per_channel_limit": RECALL_PER_CHANNEL_LIMIT,
-                "dense_min_score": DENSE_MIN_SCORE,
-                "rrf_k": RRF_K,
-                "query_variant_limit": 4,
-                "rerank_candidate_limit": RERANK_CANDIDATE_LIMIT,
-                "cross_encoder_weight": 0.60,
-                "rrf_weight": 0.20,
-                "dense_weight": 0.08,
-                "bm25_weight": 0.06,
-                "metadata_weight": 0.06,
-                "abstention_minimum_score": ABSTENTION_MINIMUM_SCORE,
-                "abstention_minimum_conflict_margin": (
-                    ABSTENTION_MINIMUM_CONFLICT_MARGIN
-                ),
-                "context_token_budget": EVAL_TOKEN_BUDGET,
-                "output_limit": 3,
-            },
-            splits=split_reports,
-            adoption_gate_met=gate_met,
+    stage_duration_ms["reporting"] = _elapsed_ms(reporting_started)
+    evaluation_duration_ms = _elapsed_ms(evaluation_started)
+    report = MemoryRetrievalAblationReport(
+        selected_strategy=selected,
+        baseline_strategy=MemoryRetrievalBenchmarkStrategy.SQL_TEXT,
+        strategies=reports,
+        dataset_case_count=len(eval_cases),
+        development_case_count=len(
+            dataset.splits[MemoryRetrievalEvalSplit.DEVELOPMENT]
         ),
-        outcomes,
+        scale_case_count=len(dataset.splits[MemoryRetrievalEvalSplit.SCALE]),
+        held_out_case_count=held_out_case_count,
+        indexed_memory_count=len(dataset.unique_records),
+        unique_summary_count=len(dataset.unique_summaries),
+        max_candidates_per_query=dataset.max_candidates_per_query,
+        document_embedding_latency_ms=round(
+            document_embedding_latency_ms,
+            6,
+        ),
+        evaluation_duration_ms=round(evaluation_duration_ms, 6),
+        stage_duration_ms={
+            name: round(duration_ms, 6)
+            for name, duration_ms in stage_duration_ms.items()
+        },
+        embedding_provider=embedder.provider_name,
+        embedding_model=embedder.model_name,
+        embedding_model_revision=embedder.model_revision,
+        embedding_dimensions=embedder.dimensions,
+        reranker_provider=reranker_provider.provider_name,
+        reranker_model=reranker_provider.model_name,
+        reranker_model_revision=reranker_provider.model_revision,
+        experiment_config={
+            "sql_candidate_window": SQL_CANDIDATE_WINDOW,
+            "recall_per_channel_limit": RECALL_PER_CHANNEL_LIMIT,
+            "dense_min_score": DENSE_MIN_SCORE,
+            "rrf_k": RRF_K,
+            "query_variant_limit": 4,
+            "rerank_candidate_limit": RERANK_CANDIDATE_LIMIT,
+            "cross_encoder_weight": 0.60,
+            "rrf_weight": 0.20,
+            "dense_weight": 0.08,
+            "bm25_weight": 0.06,
+            "metadata_weight": 0.06,
+            "abstention_minimum_score": ABSTENTION_MINIMUM_SCORE,
+            "abstention_minimum_conflict_margin": (
+                ABSTENTION_MINIMUM_CONFLICT_MARGIN
+            ),
+            "context_token_budget": EVAL_TOKEN_BUDGET,
+            "output_limit": 3,
+        },
+        splits=split_reports,
+        adoption_gate_met=gate_met,
     )
+    _emit_progress(
+        progress,
+        f"evaluation complete in {_seconds(evaluation_duration_ms)}",
+    )
+    return report, outcomes
+
+
+def _elapsed_ms(started: float) -> float:
+    """Return elapsed monotonic time in milliseconds."""
+    return (perf_counter() - started) * 1000
+
+
+def _seconds(duration_ms: float) -> str:
+    """Format milliseconds as a compact wall-clock duration."""
+    return f"{duration_ms / 1000:.2f}s"
+
+
+def _emit_progress(
+    progress: Callable[[str], None] | None,
+    message: str,
+) -> None:
+    """Emit progress only when a caller supplies a reporter."""
+    if progress is not None:
+        progress(message)
+
+
+def _stderr_progress(message: str) -> None:
+    """Write progress separately from the JSON result stream."""
+    print(f"[memory-ablation] {message}", file=sys.stderr, flush=True)
 
 
 def _evaluate_variant(
@@ -499,25 +595,59 @@ def main() -> None:
     from app.evals.cross_encoder import FastEmbedBgeReranker
     from app.evals.dense_embedding import FastEmbedBgeSmallZh
 
-    report, outcomes = run_memory_retrieval_ablation(
-        embedder=FastEmbedBgeSmallZh(
-            specific_model_path=(
-                os.getenv("SOCIALEASE_EMBEDDING_MODEL_PATH", "").strip()
-                or None
-            ),
-        ),
-        reranker_provider=FastEmbedBgeReranker(
-            specific_model_path=(
-                os.getenv("SOCIALEASE_RERANKER_MODEL_PATH", "").strip()
-                or None
-            ),
+    command_started = perf_counter()
+    _stderr_progress("loading Dense embedding model")
+    embedding_load_started = perf_counter()
+    embedder = FastEmbedBgeSmallZh(
+        specific_model_path=(
+            os.getenv("SOCIALEASE_EMBEDDING_MODEL_PATH", "").strip()
+            or None
         ),
     )
+    embedding_model_load_ms = _elapsed_ms(embedding_load_started)
+    _stderr_progress(
+        f"Dense embedding model loaded in {_seconds(embedding_model_load_ms)}"
+    )
+
+    _stderr_progress("loading Cross-Encoder reranker")
+    reranker_load_started = perf_counter()
+    reranker = FastEmbedBgeReranker(
+        specific_model_path=(
+            os.getenv("SOCIALEASE_RERANKER_MODEL_PATH", "").strip()
+            or None
+        ),
+    )
+    reranker_model_load_ms = _elapsed_ms(reranker_load_started)
+    _stderr_progress(
+        f"Cross-Encoder reranker loaded in {_seconds(reranker_model_load_ms)}"
+    )
+
+    report, outcomes = run_memory_retrieval_ablation(
+        embedder=embedder,
+        reranker_provider=reranker,
+        progress=_stderr_progress,
+    )
+    total_duration_ms = _elapsed_ms(command_started)
+    _stderr_progress(f"command complete in {_seconds(total_duration_ms)}")
     print(
         json.dumps(
             {
                 "report": report.model_dump(mode="json"),
                 "outcomes": outcomes,
+                "runtime": {
+                    "embedding_model_load_ms": round(
+                        embedding_model_load_ms,
+                        6,
+                    ),
+                    "reranker_model_load_ms": round(
+                        reranker_model_load_ms,
+                        6,
+                    ),
+                    "evaluation_duration_ms": (
+                        report.evaluation_duration_ms
+                    ),
+                    "total_duration_ms": round(total_duration_ms, 6),
+                },
             },
             ensure_ascii=False,
             indent=2,

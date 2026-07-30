@@ -4,7 +4,10 @@ from collections.abc import Sequence
 import hashlib
 import math
 
+import pytest
+
 from app.evals.memory_retrieval_ablation import (
+    _stderr_progress,
     passes_ablation_gate,
     run_memory_retrieval_ablation,
 )
@@ -106,11 +109,13 @@ def _cases() -> list[MemoryRetrievalEvalCase]:
 
 
 def test_ablation_runner_reports_every_increment_and_safe_diagnostics() -> None:
+    progress_messages: list[str] = []
     report, outcomes = run_memory_retrieval_ablation(
         embedder=_Embedding(),
         reranker_provider=_Reranker(),
         cases=_cases(),
         include_scale_background=False,
+        progress=progress_messages.append,
     )
 
     assert set(report.strategies) == {
@@ -131,6 +136,22 @@ def test_ablation_runner_reports_every_increment_and_safe_diagnostics() -> None:
     assert report.embedding_model == "hash"
     assert report.embedding_model_revision == "1"
     assert report.reranker_model_revision == "1"
+    assert report.evaluation_duration_ms > 0
+    assert set(report.stage_duration_ms) == {
+        "dataset_build",
+        "sql_text",
+        "document_embedding",
+        "reranker_warmup",
+        "dense_only",
+        "bm25_only",
+        "dense_bm25_metadata",
+        "multi_query",
+        "cross_encoder",
+        "full_pipeline",
+        "reporting",
+    }
+    assert progress_messages[0].startswith("dataset ready:")
+    assert progress_messages[-1].startswith("evaluation complete in ")
     assert report.experiment_config["rrf_k"] == 60
     assert report.experiment_config["abstention_minimum_score"] == 0.45
     assert report.strategies["full_pipeline"].relevant_mrr is not None
@@ -172,6 +193,18 @@ def test_ablation_prebuilds_documents_but_resets_query_cache_per_variant() -> No
 
     assert embedder.document_batches == 1
     assert embedder.query_texts.count("发言时怎样表达观点？") == 5
+
+
+def test_stderr_progress_does_not_pollute_stdout(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _stderr_progress("running variant 1/6: dense_only")
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "[memory-ablation] running variant 1/6: dense_only\n"
+    )
 
 
 def _report(*, recall: float, safety: EvalMetric) -> MemoryRetrievalStrategyReport:
