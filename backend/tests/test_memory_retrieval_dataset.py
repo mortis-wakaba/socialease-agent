@@ -59,6 +59,36 @@ def test_default_splits_are_exactly_disjoint_and_counts_are_unambiguous() -> Non
     assert len(dataset.unique_records) > len(dataset.unique_summaries)
 
 
+def test_isolated_boundary_cases_keep_adversaries_without_scale_noise() -> None:
+    dataset = build_default_memory_retrieval_dataset()
+    boundary_cases = [
+        case
+        for case in dataset.cases
+        if case.category in {"cross_user", "stale", "privacy", "injection", "safety"}
+    ]
+    cross_user_cases = [
+        case for case in boundary_cases if case.category == "cross_user"
+    ]
+
+    assert len(cross_user_cases) == 3
+    assert all(
+        any(
+            record.user_id != case.user_id
+            for record in dataset.records_by_case[case.id]
+        )
+        for case in cross_user_cases
+    )
+    assert all(
+        len(dataset.records_by_case[case.id]) == len(case.memories)
+        for case in boundary_cases
+    )
+    assert all(
+        not record.memory_id.startswith("scale_background_")
+        for case in boundary_cases
+        for record in dataset.records_by_case[case.id]
+    )
+
+
 def test_split_validator_rejects_query_leakage() -> None:
     dataset = build_default_memory_retrieval_dataset()
     leaked = dataset.splits[MemoryRetrievalEvalSplit.DEVELOPMENT][0].model_copy(
