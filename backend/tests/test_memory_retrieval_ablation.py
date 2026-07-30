@@ -128,6 +128,11 @@ def test_ablation_runner_reports_every_increment_and_safe_diagnostics() -> None:
     assert report.scale_case_count == 0
     assert set(report.splits) == {"development", "scale", "held_out"}
     assert report.reranker_provider == "deterministic_test"
+    assert report.embedding_model == "hash"
+    assert report.embedding_model_revision == "1"
+    assert report.reranker_model_revision == "1"
+    assert report.experiment_config["rrf_k"] == 60
+    assert report.experiment_config["abstention_minimum_score"] == 0.45
     assert report.strategies["full_pipeline"].relevant_mrr is not None
     assert (
         report.strategies["full_pipeline"].abstention_precision is not None

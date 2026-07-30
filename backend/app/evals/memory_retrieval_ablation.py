@@ -51,6 +51,13 @@ from app.models_long_term_memory import (
 
 ABLATION_RECALL_GAIN_GATE = 0.10
 ABLATION_P95_LATENCY_GATE_MS = 250.0
+SQL_CANDIDATE_WINDOW = 100
+RECALL_PER_CHANNEL_LIMIT = 20
+DENSE_MIN_SCORE = 0.0
+RRF_K = 60
+RERANK_CANDIDATE_LIMIT = 20
+ABSTENTION_MINIMUM_SCORE = 0.45
+ABSTENTION_MINIMUM_CONFLICT_MARGIN = 0.03
 
 _VARIANT_CHANNELS = {
     MemoryRetrievalBenchmarkStrategy.DENSE_ONLY: {
@@ -145,7 +152,9 @@ def run_memory_retrieval_ablation(
         eval_cases,
         strategy=MemoryRetrievalStrategy.SQL_TEXT,
         records_by_case=records_by_case,
-        candidate_window_limit=100 if include_scale_background else None,
+        candidate_window_limit=(
+            SQL_CANDIDATE_WINDOW if include_scale_background else None
+        ),
     )
     reports = {MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value: baseline}
     outcomes = {
@@ -227,8 +236,32 @@ def run_memory_retrieval_ablation(
                 document_embedding_latency_ms,
                 6,
             ),
+            embedding_provider=embedder.provider_name,
+            embedding_model=embedder.model_name,
+            embedding_model_revision=embedder.model_revision,
+            embedding_dimensions=embedder.dimensions,
             reranker_provider=reranker_provider.provider_name,
             reranker_model=reranker_provider.model_name,
+            reranker_model_revision=reranker_provider.model_revision,
+            experiment_config={
+                "sql_candidate_window": SQL_CANDIDATE_WINDOW,
+                "recall_per_channel_limit": RECALL_PER_CHANNEL_LIMIT,
+                "dense_min_score": DENSE_MIN_SCORE,
+                "rrf_k": RRF_K,
+                "query_variant_limit": 4,
+                "rerank_candidate_limit": RERANK_CANDIDATE_LIMIT,
+                "cross_encoder_weight": 0.60,
+                "rrf_weight": 0.20,
+                "dense_weight": 0.08,
+                "bm25_weight": 0.06,
+                "metadata_weight": 0.06,
+                "abstention_minimum_score": ABSTENTION_MINIMUM_SCORE,
+                "abstention_minimum_conflict_margin": (
+                    ABSTENTION_MINIMUM_CONFLICT_MARGIN
+                ),
+                "context_token_budget": EVAL_TOKEN_BUDGET,
+                "output_limit": 3,
+            },
             splits=split_reports,
             adoption_gate_met=gate_met,
         ),
@@ -248,10 +281,18 @@ def _evaluate_variant(
     recall = MultiRouteMemoryRecall(
         embedder=embedder,
         enabled_channels=channels,
-        dense_min_score=0.0,
+        per_channel_limit=RECALL_PER_CHANNEL_LIMIT,
+        dense_min_score=DENSE_MIN_SCORE,
+        rrf_k=RRF_K,
     )
-    reranker = CrossEncoderMemoryReranker(provider=reranker_provider)
-    abstention = MemoryAbstentionPolicy()
+    reranker = CrossEncoderMemoryReranker(
+        provider=reranker_provider,
+        candidate_limit=RERANK_CANDIDATE_LIMIT,
+    )
+    abstention = MemoryAbstentionPolicy(
+        minimum_score=ABSTENTION_MINIMUM_SCORE,
+        minimum_conflict_margin=ABSTENTION_MINIMUM_CONFLICT_MARGIN,
+    )
     estimator = ConservativeTokenEstimator()
     outcomes: list[dict[str, Any]] = []
 
@@ -459,7 +500,12 @@ def main() -> None:
     from app.evals.dense_embedding import FastEmbedBgeSmallZh
 
     report, outcomes = run_memory_retrieval_ablation(
-        embedder=FastEmbedBgeSmallZh(),
+        embedder=FastEmbedBgeSmallZh(
+            specific_model_path=(
+                os.getenv("SOCIALEASE_EMBEDDING_MODEL_PATH", "").strip()
+                or None
+            ),
+        ),
         reranker_provider=FastEmbedBgeReranker(
             specific_model_path=(
                 os.getenv("SOCIALEASE_RERANKER_MODEL_PATH", "").strip()

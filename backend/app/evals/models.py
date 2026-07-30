@@ -197,8 +197,14 @@ class MemoryRetrievalAblationReport(BaseModel):
     unique_summary_count: int = Field(default=0, ge=0)
     max_candidates_per_query: int = Field(default=0, ge=0)
     document_embedding_latency_ms: float = Field(default=0.0, ge=0.0)
+    embedding_provider: str = ""
+    embedding_model: str = ""
+    embedding_model_revision: str = ""
+    embedding_dimensions: int = Field(default=0, ge=0)
     reranker_provider: str
     reranker_model: str
+    reranker_model_revision: str = ""
+    experiment_config: dict[str, int | float | str] = Field(default_factory=dict)
     splits: dict[str, "MemoryRetrievalSplitReport"] = Field(default_factory=dict)
     adoption_gate_met: bool
 

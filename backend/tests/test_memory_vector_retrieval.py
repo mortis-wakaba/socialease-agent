@@ -4,6 +4,7 @@ from collections.abc import Sequence
 import hashlib
 import math
 import os
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +19,7 @@ from app.evals.vector_memory_retrieval import (
     passes_vector_gate,
     run_vector_memory_retrieval_benchmark,
 )
+from app.evals.dense_embedding import FastEmbedBgeSmallZh
 
 
 class _DeterministicEmbedding:
@@ -141,6 +143,15 @@ def test_vector_gate_requires_recall_gain_and_perfect_safety_metrics() -> None:
         candidate=safe_vector,
         baseline=baseline,
     )
+
+
+def test_local_embedding_path_fails_before_model_load_when_incomplete(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config.json").touch()
+
+    with pytest.raises(RuntimeError, match="model_optimized.onnx"):
+        FastEmbedBgeSmallZh(specific_model_path=str(tmp_path))
 
 
 def _strategy_report(

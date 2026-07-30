@@ -94,6 +94,26 @@ Gate 使用 scale split 判断 Recall@3 增益，使用 held-out split 判断安
 - `unique_summary_count`：需要独立 embedding 的文本数，共 2,160；
 - `max_candidates_per_query`：2,156。
 
+### 9. 本地模型无法被完整复现
+
+旧报告只记录 reranker 名称，Dense adapter 只能依赖 FastEmbed 隐式缓存；缓存清理后
+会重新联网，且本地 ONNX 文件没有进入报告指纹。
+
+修复后：
+
+- embedding 和 reranker 都支持显式 `specific_model_path`；
+- 本地目录在模型加载前检查必需文件和空文件；
+- 报告保存两个 provider、模型名、ONNX SHA-256 和 embedding dimensions；
+- 报告保存 candidate window、RRF、通道上限、融合权重、Abstention 阈值和预算。
+
+离线复测使用：
+
+```bash
+SOCIALEASE_EMBEDDING_MODEL_PATH=/path/to/bge-small-zh-v1.5 \
+SOCIALEASE_RERANKER_MODEL_PATH=/path/to/bge-reranker-base \
+make eval-memory-ablation
+```
+
 ## 新增防污染契约
 
 - case 内 memory id 唯一；

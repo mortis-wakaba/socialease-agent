@@ -1,6 +1,7 @@
 """Optional local FastEmbed Cross-Encoder adapter for memory evaluations."""
 
 from collections.abc import Sequence
+import hashlib
 from pathlib import Path
 
 
@@ -46,6 +47,9 @@ class FastEmbedBgeReranker:
                 )
             specific_model_path = str(model_dir)
             local_files_only = True
+            self.model_revision = "sha256:" + _sha256(
+                model_dir / "onnx/model.onnx"
+            )
         try:
             from fastembed.rerank.cross_encoder import TextCrossEncoder
         except ImportError as error:
@@ -71,3 +75,11 @@ class FastEmbedBgeReranker:
         if len(scores) != len(documents):
             raise RuntimeError("FastEmbed reranker returned an incomplete batch")
         return scores
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
