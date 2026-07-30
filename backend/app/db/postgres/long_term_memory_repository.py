@@ -188,6 +188,66 @@ class PostgresLongTermMemoryRepository:
             )).mappings().all()
         return [_memory_from_mapping(row) for row in rows]
 
+    async def search_memory_fts_candidates(
+        self,
+        *,
+        user_id: str,
+        statuses: tuple[MemoryRecordStatus, ...],
+        memory_types: tuple[MemoryType, ...],
+        query_terms: tuple[str, ...],
+        now: datetime,
+        limit: int = 50,
+    ) -> list[EpisodicMemoryRecord]:
+        """Use PostgreSQL FTS for ranked, tenant-scoped lexical recall."""
+        safe_terms = _safe_query_terms(query_terms)
+        if not statuses or not memory_types or not safe_terms:
+            return []
+        timestamp = _aware_now(now)
+        bounded_limit = min(max(limit, 1), 100)
+        parameters: dict[str, object] = {
+            "user_id": user_id,
+            "now": timestamp,
+            "limit": bounded_limit,
+        }
+        status_names: list[str] = []
+        for index, status in enumerate(statuses):
+            name = f"status_{index}"
+            status_names.append(f":{name}")
+            parameters[name] = status.value
+        type_names: list[str] = []
+        for index, memory_type in enumerate(memory_types):
+            name = f"memory_type_{index}"
+            type_names.append(f":{name}")
+            parameters[name] = memory_type.value
+        term_queries: list[str] = []
+        for index, term in enumerate(safe_terms):
+            name = f"fts_term_{index}"
+            term_queries.append(f"plainto_tsquery('simple', :{name})")
+            parameters[name] = term
+        tsquery = " || ".join(term_queries)
+        search_vector = (
+            "to_tsvector("
+            "'simple', socialease_memory_fts_text(summary)"
+            ")"
+        )
+        statement = text(
+            f"""SELECT * FROM episodic_memories
+            WHERE user_id = :user_id
+            AND status IN ({', '.join(status_names)})
+            AND memory_type IN ({', '.join(type_names)})
+            AND (expires_at IS NULL OR expires_at > :now)
+            AND {search_vector} @@ ({tsquery})
+            ORDER BY ts_rank_cd({search_vector}, ({tsquery})) DESC,
+                occurred_at DESC, memory_id ASC
+            LIMIT :limit"""
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
+                statement,
+                parameters,
+            )).mappings().all()
+        return [_memory_from_mapping(row) for row in rows]
+
     async def search_memory_candidates(
         self,
         *,

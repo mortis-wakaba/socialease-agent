@@ -81,6 +81,17 @@ class LongTermMemoryRepository(Protocol):
         limit: int = 50,
     ) -> list[EpisodicMemoryRecord]: ...
 
+    async def search_memory_fts_candidates(
+        self,
+        *,
+        user_id: str,
+        statuses: tuple[MemoryRecordStatus, ...],
+        memory_types: tuple[MemoryType, ...],
+        query_terms: tuple[str, ...],
+        now: datetime,
+        limit: int = 50,
+    ) -> list[EpisodicMemoryRecord]: ...
+
     async def record_retrieval(
         self,
         *,

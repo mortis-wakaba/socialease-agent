@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 import hashlib
 import math
+import os
 
 import pytest
 
@@ -129,13 +130,20 @@ def test_ablation_runner_reports_every_increment_and_safe_diagnostics() -> None:
     }
     assert all(len(items) == 2 for items in outcomes.values())
     assert report.held_out_case_count == 0
+    assert report.validation_case_count == 0
     assert report.development_case_count == 2
     assert report.scale_case_count == 0
-    assert set(report.splits) == {"development", "scale", "held_out"}
+    assert set(report.splits) == {
+        "development",
+        "scale",
+        "validation",
+        "sealed_held_out",
+    }
     assert report.reranker_provider == "deterministic_test"
     assert report.embedding_model == "hash"
     assert report.embedding_model_revision == "1"
     assert report.reranker_model_revision == "1"
+    assert len(report.dataset_manifest_sha256) == 64
     assert report.evaluation_duration_ms > 0
     assert set(report.stage_duration_ms) == {
         "dataset_build",
@@ -193,6 +201,52 @@ def test_ablation_prebuilds_documents_but_resets_query_cache_per_variant() -> No
 
     assert embedder.document_batches == 1
     assert embedder.query_texts.count("发言时怎样表达观点？") == 5
+
+
+def test_default_ablation_requires_an_explicit_sealed_heldout() -> None:
+    report, outcomes = run_memory_retrieval_ablation(
+        embedder=_Embedding(),
+        reranker_provider=_Reranker(),
+    )
+
+    assert report.validation_case_count == 16
+    assert report.held_out_case_count == 0
+    assert report.adoption_gate_met is False
+    assert report.postgres_fts_evaluated is False
+    assert report.selected_strategy == (
+        MemoryRetrievalBenchmarkStrategy.SQL_RECENT_WINDOW_100
+    )
+    assert "sql_recent_window_100" in outcomes
+
+
+@pytest.mark.skipif(
+    not os.getenv("SOCIALEASE_TEST_DATABASE_URL"),
+    reason="isolated PostgreSQL eval URL is required",
+)
+def test_ablation_can_run_real_postgres_fts_in_an_isolated_database() -> None:
+    database_url = os.environ["SOCIALEASE_TEST_DATABASE_URL"]
+    report, outcomes = run_memory_retrieval_ablation(
+        embedder=_Embedding(),
+        reranker_provider=_Reranker(),
+        cases=_cases(),
+        include_scale_background=False,
+        postgres_fts_database_url=database_url,
+    )
+
+    assert report.postgres_fts_evaluated is True
+    assert report.postgres_fts_load_latency_ms > 0
+    assert report.postgres_fts_warmup_latency_ms > 0
+    assert report.baseline_strategy == (
+        MemoryRetrievalBenchmarkStrategy.POSTGRES_FTS
+    )
+    assert report.adoption_gate_met is False
+    assert outcomes["postgres_fts"][0]["retrieved_ids"] == ["target"]
+    assert outcomes["postgres_fts"][1]["retrieved_ids"] == []
+    assert set(outcomes["postgres_fts"][0]["stage_latency_ms"]) == {
+        "postgres_fts_fetch",
+        "hard_filter",
+        "token_fit",
+    }
 
 
 def test_stderr_progress_does_not_pollute_stdout(

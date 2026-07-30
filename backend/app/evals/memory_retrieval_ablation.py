@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Sequence
+import hashlib
 import json
 import os
+from pathlib import Path
 import sys
 from time import perf_counter
 from typing import Any
@@ -15,6 +18,7 @@ from app.evals.memory_retrieval_dataset import (
     build_custom_memory_retrieval_dataset,
     build_default_memory_retrieval_dataset,
 )
+from app.evals.loader import load_memory_retrieval_sealed_cases
 from app.evals.memory_retrieval import (
     EVAL_NOW,
     EVAL_TOKEN_BUDGET,
@@ -135,6 +139,8 @@ def run_memory_retrieval_ablation(
     reranker_provider: CrossEncoderProvider,
     cases: list[MemoryRetrievalEvalCase] | None = None,
     include_scale_background: bool = True,
+    sealed_held_out_cases: list[MemoryRetrievalEvalCase] | None = None,
+    postgres_fts_database_url: str | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> tuple[MemoryRetrievalAblationReport, dict[str, list[dict[str, Any]]]]:
     """Compare each added retrieval component against the SQL Text baseline."""
@@ -147,13 +153,17 @@ def run_memory_retrieval_ablation(
         if cases is not None
         else build_default_memory_retrieval_dataset(
             include_scale_background=include_scale_background,
+            sealed_held_out_cases=sealed_held_out_cases,
         )
     )
     stage_duration_ms["dataset_build"] = _elapsed_ms(dataset_started)
     eval_cases = dataset.cases
     records_by_case = dataset.records_by_case
+    validation_case_count = len(
+        dataset.splits[MemoryRetrievalEvalSplit.VALIDATION]
+    )
     held_out_case_count = len(
-        dataset.splits[MemoryRetrievalEvalSplit.HELD_OUT]
+        dataset.splits[MemoryRetrievalEvalSplit.SEALED_HELD_OUT]
     )
     _emit_progress(
         progress,
@@ -173,16 +183,49 @@ def run_memory_retrieval_ablation(
         candidate_window_limit=(
             SQL_CANDIDATE_WINDOW if include_scale_background else None
         ),
+        report_strategy=(
+            MemoryRetrievalBenchmarkStrategy.SQL_RECENT_WINDOW_100
+            if include_scale_background
+            else MemoryRetrievalBenchmarkStrategy.SQL_TEXT
+        ),
     )
-    stage_duration_ms["sql_text"] = _elapsed_ms(baseline_started)
+    baseline_name = baseline.strategy.value
+    stage_duration_ms[baseline_name] = _elapsed_ms(baseline_started)
     _emit_progress(
         progress,
-        f"SQL Text baseline complete in {_seconds(stage_duration_ms['sql_text'])}",
+        (
+            f"{baseline_name} baseline complete in "
+            f"{_seconds(stage_duration_ms[baseline_name])}"
+        ),
     )
-    reports = {MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value: baseline}
-    outcomes = {
-        MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value: baseline_outcomes
-    }
+    reports = {baseline_name: baseline}
+    outcomes = {baseline_name: baseline_outcomes}
+    postgres_fts_load_latency_ms = 0.0
+    postgres_fts_warmup_latency_ms = 0.0
+    if postgres_fts_database_url:
+        fts_started = perf_counter()
+        _emit_progress(progress, "running real PostgreSQL FTS baseline")
+        (
+            postgres_fts_report,
+            postgres_fts_outcomes,
+            postgres_fts_load_latency_ms,
+            postgres_fts_warmup_latency_ms,
+        ) = asyncio.run(
+            _run_postgres_fts_baseline(
+                database_url=postgres_fts_database_url,
+                dataset=dataset,
+            )
+        )
+        reports[postgres_fts_report.strategy.value] = postgres_fts_report
+        outcomes[postgres_fts_report.strategy.value] = postgres_fts_outcomes
+        stage_duration_ms["postgres_fts"] = _elapsed_ms(fts_started)
+        _emit_progress(
+            progress,
+            (
+                "PostgreSQL FTS baseline complete in "
+                f"{_seconds(stage_duration_ms['postgres_fts'])}"
+            ),
+        )
     cached_embedder = _CachingEmbedder(embedder)
     _emit_progress(
         progress,
@@ -253,51 +296,71 @@ def run_memory_retrieval_ablation(
     aggregate_full = reports[
         MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE.value
     ]
-    held_out_reports = split_reports[MemoryRetrievalEvalSplit.HELD_OUT.value]
+    held_out_reports = split_reports[
+        MemoryRetrievalEvalSplit.SEALED_HELD_OUT.value
+    ]
     scale_reports = split_reports[MemoryRetrievalEvalSplit.SCALE.value]
-    if held_out_reports.case_count and scale_reports.case_count:
+    fts_name = MemoryRetrievalBenchmarkStrategy.POSTGRES_FTS.value
+    postgres_fts_evaluated = fts_name in reports
+    if (
+        postgres_fts_evaluated
+        and held_out_reports.case_count
+        and scale_reports.case_count
+    ):
         gate_met = passes_ablation_gate(
             candidate=held_out_reports.strategies[
                 MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE.value
             ],
             baseline=held_out_reports.strategies[
-                MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value
+                fts_name
             ],
             recall_candidate=scale_reports.strategies[
                 MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE.value
             ],
             recall_baseline=scale_reports.strategies[
-                MemoryRetrievalBenchmarkStrategy.SQL_TEXT.value
+                fts_name
             ],
             latency_candidate=aggregate_full,
         )
     else:
-        gate_met = passes_ablation_gate(
-            candidate=aggregate_full,
-            baseline=baseline,
-        )
+        gate_met = False
     selected = (
         MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE
         if gate_met
-        else MemoryRetrievalBenchmarkStrategy.SQL_TEXT
+        else baseline.strategy
     )
     stage_duration_ms["reporting"] = _elapsed_ms(reporting_started)
     evaluation_duration_ms = _elapsed_ms(evaluation_started)
     report = MemoryRetrievalAblationReport(
         selected_strategy=selected,
-        baseline_strategy=MemoryRetrievalBenchmarkStrategy.SQL_TEXT,
+        baseline_strategy=(
+            MemoryRetrievalBenchmarkStrategy.POSTGRES_FTS
+            if postgres_fts_evaluated
+            else baseline.strategy
+        ),
         strategies=reports,
         dataset_case_count=len(eval_cases),
         development_case_count=len(
             dataset.splits[MemoryRetrievalEvalSplit.DEVELOPMENT]
         ),
         scale_case_count=len(dataset.splits[MemoryRetrievalEvalSplit.SCALE]),
+        validation_case_count=validation_case_count,
         held_out_case_count=held_out_case_count,
         indexed_memory_count=len(dataset.unique_records),
         unique_summary_count=len(dataset.unique_summaries),
+        dataset_manifest_sha256=_dataset_manifest_sha256(dataset),
         max_candidates_per_query=dataset.max_candidates_per_query,
         document_embedding_latency_ms=round(
             document_embedding_latency_ms,
+            6,
+        ),
+        postgres_fts_evaluated=postgres_fts_evaluated,
+        postgres_fts_load_latency_ms=round(
+            postgres_fts_load_latency_ms,
+            6,
+        ),
+        postgres_fts_warmup_latency_ms=round(
+            postgres_fts_warmup_latency_ms,
             6,
         ),
         evaluation_duration_ms=round(evaluation_duration_ms, 6),
@@ -314,6 +377,8 @@ def run_memory_retrieval_ablation(
         reranker_model_revision=reranker_provider.model_revision,
         experiment_config={
             "sql_candidate_window": SQL_CANDIDATE_WINDOW,
+            "postgres_fts_candidate_limit": 100,
+            "postgres_fts_analyzer": "simple_cjk_bigram_v1",
             "recall_per_channel_limit": RECALL_PER_CHANNEL_LIMIT,
             "dense_min_score": DENSE_MIN_SCORE,
             "rrf_k": RRF_K,
@@ -328,6 +393,7 @@ def run_memory_retrieval_ablation(
             "abstention_minimum_conflict_margin": (
                 ABSTENTION_MINIMUM_CONFLICT_MARGIN
             ),
+            "candidate_maximum_score_drop": 0.20,
             "context_token_budget": EVAL_TOKEN_BUDGET,
             "output_limit": 3,
         },
@@ -344,6 +410,76 @@ def run_memory_retrieval_ablation(
 def _elapsed_ms(started: float) -> float:
     """Return elapsed monotonic time in milliseconds."""
     return (perf_counter() - started) * 1000
+
+
+async def _run_postgres_fts_baseline(
+    *,
+    database_url: str,
+    dataset: MemoryRetrievalDataset,
+) -> tuple[
+    MemoryRetrievalStrategyReport,
+    list[dict[str, Any]],
+    float,
+    float,
+]:
+    """Own one engine and event loop for the disposable PostgreSQL baseline."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.db.postgres.long_term_memory_repository import (
+        PostgresLongTermMemoryRepository,
+    )
+    from app.db.postgres.memory_retrieval_eval import (
+        PostgresMemoryRetrievalEvalAdapter,
+    )
+    from app.evals.postgres_memory_fts import evaluate_postgres_fts
+
+    engine = create_async_engine(database_url, pool_pre_ping=True)
+    try:
+        return await evaluate_postgres_fts(
+            dataset=dataset,
+            repository=PostgresLongTermMemoryRepository(engine=engine),
+            fixture_adapter=PostgresMemoryRetrievalEvalAdapter(engine=engine),
+        )
+    finally:
+        await engine.dispose()
+
+
+def _dataset_manifest_sha256(dataset: MemoryRetrievalDataset) -> str:
+    """Fingerprint labels and candidate identities without exposing their text."""
+    payload = {
+        "splits": {
+            split.value: [
+                {
+                    "id": case.id,
+                    "expected": case.expected_memory_ids,
+                    "forbidden": case.forbidden_memory_ids,
+                    "expected_abstain": case.expected_abstain,
+                }
+                for case in dataset.splits[split]
+            ]
+            for split in MemoryRetrievalEvalSplit
+        },
+        "records": sorted(
+            {
+                (
+                    record.user_id,
+                    record.memory_id,
+                    record.content_hash,
+                    record.status.value,
+                    record.version,
+                )
+                for records in dataset.records_by_case.values()
+                for record in records
+            }
+        ),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _seconds(duration_ms: float) -> str:
@@ -405,11 +541,15 @@ def _evaluate_variant(
             strategy=MemoryRetrievalStrategy.SQL_TEXT,
         )
         started = perf_counter()
+        recall_started = perf_counter()
         recalled = recall.recall(
             request=request,
             records=records_by_case[case.id],
             now=EVAL_NOW,
         )
+        recall_latency_ms = _elapsed_ms(recall_started)
+        rerank_latency_ms = 0.0
+        selection_latency_ms = 0.0
         abstention_reason = None
         abstention_top_score = None
         abstention_score_margin = None
@@ -418,18 +558,22 @@ def _evaluate_variant(
             MemoryRetrievalBenchmarkStrategy.CROSS_ENCODER,
             MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE,
         }:
+            rerank_started = perf_counter()
             reranked = reranker.rerank(
                 request=request,
                 candidates=recalled.candidates,
                 now=EVAL_NOW,
             )
+            rerank_latency_ms = _elapsed_ms(rerank_started)
             rerank_input_count = reranked.diagnostics.reranked_candidate_count
             if variant == MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE:
+                selection_started = perf_counter()
                 decision = abstention.decide(
                     request=request,
                     candidates=reranked.candidates,
                     now=EVAL_NOW,
                 )
+                selection_latency_ms = _elapsed_ms(selection_started)
                 selected_records = [
                     item.recalled.record for item in decision.selected
                 ]
@@ -444,10 +588,12 @@ def _evaluate_variant(
             selected_records = [
                 item.record for item in recalled.candidates[:3]
             ]
+        token_fit_started = perf_counter()
         retrieved_ids, estimated_tokens = _fit_selected(
             selected_records,
             estimator=estimator,
         )
+        token_fit_latency_ms = _elapsed_ms(token_fit_started)
         query_latency_ms = (perf_counter() - started) * 1000
         forbidden_clear = not set(retrieved_ids).intersection(
             case.forbidden_memory_ids
@@ -481,8 +627,33 @@ def _evaluate_variant(
                     }
                     for memory_id in case.expected_memory_ids
                 ),
+                "expected_union_ranks": _expected_ranks(
+                    case.expected_memory_ids,
+                    [item.record.memory_id for item in recalled.candidates],
+                ),
+                "expected_rerank_ranks": (
+                    _expected_ranks(
+                        case.expected_memory_ids,
+                        [
+                            item.recalled.record.memory_id
+                            for item in reranked.candidates
+                        ],
+                    )
+                    if variant
+                    in {
+                        MemoryRetrievalBenchmarkStrategy.CROSS_ENCODER,
+                        MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE,
+                    }
+                    else {}
+                ),
                 "estimated_tokens": estimated_tokens,
                 "query_latency_ms": round(query_latency_ms, 6),
+                "stage_latency_ms": {
+                    "recall": round(recall_latency_ms, 6),
+                    "rerank": round(rerank_latency_ms, 6),
+                    "candidate_selection": round(selection_latency_ms, 6),
+                    "token_fit": round(token_fit_latency_ms, 6),
+                },
                 "passed": passed,
             }
         )
@@ -590,6 +761,18 @@ def _fit_selected(
     return ids, used
 
 
+def _expected_ranks(
+    expected_ids: list[str],
+    ranked_ids: list[str],
+) -> dict[str, int | None]:
+    """Return content-free expected-id ranks for stage failure attribution."""
+    positions = {
+        memory_id: index
+        for index, memory_id in enumerate(ranked_ids, start=1)
+    }
+    return {memory_id: positions.get(memory_id) for memory_id in expected_ids}
+
+
 def main() -> None:
     """Run the full local-model ablation and print content-free evidence."""
     from app.evals.cross_encoder import FastEmbedBgeReranker
@@ -622,9 +805,29 @@ def main() -> None:
         f"Cross-Encoder reranker loaded in {_seconds(reranker_model_load_ms)}"
     )
 
+    sealed_path = os.getenv(
+        "SOCIALEASE_MEMORY_SEALED_HELD_OUT_PATH",
+        "",
+    ).strip()
+    sealed_cases = (
+        load_memory_retrieval_sealed_cases(Path(sealed_path).resolve())
+        if sealed_path
+        else None
+    )
+    postgres_fts_database_url = os.getenv(
+        "SOCIALEASE_TEST_DATABASE_URL",
+        "",
+    ).strip()
+    if not postgres_fts_database_url:
+        raise RuntimeError(
+            "SOCIALEASE_TEST_DATABASE_URL is required for the isolated "
+            "PostgreSQL FTS baseline"
+        )
     report, outcomes = run_memory_retrieval_ablation(
         embedder=embedder,
         reranker_provider=reranker,
+        sealed_held_out_cases=sealed_cases,
+        postgres_fts_database_url=postgres_fts_database_url,
         progress=_stderr_progress,
     )
     total_duration_ms = _elapsed_ms(command_started)

@@ -238,6 +238,7 @@ def test_postgres_runtime_database_capability_check_passes_when_all_repositories
     assert report.missing_runtime_repositories == ()
     assert "row_level_locking" in report.capabilities
     assert "multi_instance_runtime" in report.capabilities
+    assert "full_text_search" in report.capabilities
     assert report.unavailable_capabilities == ("vector_similarity_search",)
     assert validated.full_runtime_supported is True
 

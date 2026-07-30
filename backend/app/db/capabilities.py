@@ -33,6 +33,7 @@ POSTGRES_CAPABILITIES = (
     "multi_instance_runtime",
     "transactional_outbox",
     "owner_scoped_deletion",
+    "full_text_search",
 )
 POSTGRES_UNAVAILABLE_CAPABILITIES = (
     "vector_similarity_search",

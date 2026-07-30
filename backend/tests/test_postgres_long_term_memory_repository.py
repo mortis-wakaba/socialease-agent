@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import text
 
 from app.db.postgres.long_term_memory_repository import (
     PostgresLongTermMemoryRepository,
@@ -77,6 +78,26 @@ def repository() -> PostgresLongTermMemoryRepository:
     """Return a PostgreSQL durable memory adapter."""
     assert TEST_DATABASE_URL is not None
     return PostgresLongTermMemoryRepository(database_url=TEST_DATABASE_URL)
+
+
+@pytest.mark.anyio
+async def test_memory_fts_index_covers_the_custom_search_vector(
+    repository: PostgresLongTermMemoryRepository,
+) -> None:
+    """The PostgreSQL schema should expose a GIN custom-vector index."""
+    async with repository.engine.connect() as connection:
+        definition = (await connection.execute(
+            text(
+                """SELECT pg_get_indexdef(indexrelid)
+                FROM pg_index
+                WHERE indexrelid =
+                    'idx_episodic_memories_search_vector'::regclass"""
+            )
+        )).scalar_one()
+
+    normalized = " ".join(definition.casefold().split())
+    assert "using gin" in normalized
+    assert "socialease_memory_fts_text(summary)" in normalized
 
 
 @pytest.mark.anyio
@@ -352,6 +373,16 @@ async def test_postgres_retrieval_is_user_scoped_and_audited(
     )
     await repository.create_memory(relevant, reason_code="test_retrieval")
     await repository.create_memory(other_user, reason_code="test_retrieval")
+    fts_candidates = await repository.search_memory_fts_candidates(
+        user_id=user_id,
+        statuses=(MemoryRecordStatus.ACTIVE,),
+        memory_types=(MemoryType.HELPFUL_STRATEGY,),
+        query_terms=("课堂", "发言", "开场"),
+        now=NOW + timedelta(days=1),
+        limit=10,
+    )
+    assert [item.memory_id for item in fts_candidates] == [relevant.memory_id]
+
     retriever = EpisodicMemoryRetriever(
         repository=repository,
         settings_repository=settings,
