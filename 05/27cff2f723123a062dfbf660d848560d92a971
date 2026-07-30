@@ -1,0 +1,41 @@
+backend/app/evals/memory_retrieval_ablation.py
+  s_e6b965dea9786d::t_83774ad85ca90c 277-279,289,300-301,314,333-335,338-346,348,353,355-356
+  s_e6b965dea9786d::t_3ba29b8f1786e6 132-142,155-160,162,174-204,216-221,223-229,232
+  s_e6b965dea9786d::t_dcc83a41acfb68 366-368,370-373,383-385,388-430,432-433
+  s_e6b965dea9786d::t_c93212c16537f6 5,11-15,22-24,30,100-107,109-114
+backend/app/evals/memory_retrieval.py
+  s_e6b965dea9786d::t_de3185913ca43c 9-11,101,122,128,130-131
+backend/app/evals/memory_retrieval_metrics.py
+  s_e6b965dea9786d::t_1f654338d3aaa6 1-149
+backend/app/evals/vector_memory_retrieval.py
+  s_e6b965dea9786d::t_f0e2b17522c418 14-15,22-23,70-71,76,136,161,195-197,279,297,304,306-307
+backend/tests/test_memory_retrieval_ablation.py
+  s_e6b965dea9786d::t_bf6c46d43a226a 42-55,158-169
+  s_e6b965dea9786d::t_d94d8186646cb5 127-129,138-142
+  s_e6b965dea9786d::t_9844a56bb4b3f5 170-171
+backend/app/evals/metrics.py
+  s_e6b965dea9786d::t_1f654338d3aaa6 6
+backend/tests/test_memory_retrieval_metrics.py
+  s_e6b965dea9786d::t_d94d8186646cb5 1-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "0527cff2f723123a062dfbf660d848560d92a971",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_e6b965dea9786d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fac99-450f-7543-be90-4349da3e087e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
