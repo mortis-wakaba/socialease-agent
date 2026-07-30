@@ -7,7 +7,6 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.memory.text_semantics import memories_conflict
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
     MemoryRecordStatus,
@@ -34,7 +33,6 @@ class MemoryHardFilterReason(str, Enum):
     EXPIRED = "expired"
     SENSITIVE_CONTENT = "sensitive_content"
     PROHIBITED_CONTENT = "prohibited_content"
-    CURRENT_QUERY_CONFLICT = "current_query_conflict"
 
 
 class MemoryHardFilterReport(BaseModel):
@@ -77,8 +75,6 @@ class MemoryHardFilter:
             return MemoryHardFilterReason.SENSITIVE_CONTENT
         if any(pattern.search(record.summary) for pattern in _PROHIBITED_PATTERNS):
             return MemoryHardFilterReason.PROHIBITED_CONTENT
-        if memories_conflict(request.query, record.summary):
-            return MemoryHardFilterReason.CURRENT_QUERY_CONFLICT
         return MemoryHardFilterReason.ALLOWED
 
     def filter(

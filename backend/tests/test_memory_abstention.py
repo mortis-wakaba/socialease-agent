@@ -101,6 +101,33 @@ def test_selects_high_confidence_non_conflicting_candidates() -> None:
     assert decision.diagnostics.reason == MemoryAbstentionReason.NONE
 
 
+def test_candidate_selection_applies_relative_relevance_and_conflict_checks() -> None:
+    decision = MemoryAbstentionPolicy(maximum_score_drop=0.15).decide(
+        request=_request("我在决定发言前是否逐字背完整稿子。"),
+        candidates=[
+            _candidate("top", "发言前写下三个关键词。", 0.82),
+            _candidate("conflict", "发言前不再写下三个关键词。", 0.76),
+            _candidate("weak", "发言前确认教室开放时间。", 0.60),
+        ],
+        now=NOW,
+    )
+
+    assert [item.recalled.record.memory_id for item in decision.selected] == ["top"]
+
+
+def test_candidate_selection_deduplicates_equivalent_memory_content() -> None:
+    decision = MemoryAbstentionPolicy().decide(
+        request=_request(),
+        candidates=[
+            _candidate("first", "课堂发言先说一句核心观点。", 0.82),
+            _candidate("duplicate", "课堂发言先说一句核心观点。", 0.80),
+        ],
+        now=NOW,
+    )
+
+    assert [item.recalled.record.memory_id for item in decision.selected] == ["first"]
+
+
 def test_reranker_failure_has_explicit_reason_and_no_fallback_hits() -> None:
     decision = MemoryAbstentionPolicy().reranker_unavailable(candidate_count=12)
 

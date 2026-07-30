@@ -21,7 +21,7 @@ class MemoryAbstentionReason(str, Enum):
     LOW_TOP_SCORE = "low_top_score"
     AMBIGUOUS_CONFLICT = "ambiguous_conflict"
     REQUIRED_CONTEXT_MISSING = "required_context_missing"
-    CURRENT_QUERY_CONFLICT = "current_query_conflict"
+    HARD_FILTER_REJECTED = "hard_filter_rejected"
     RERANKER_UNAVAILABLE = "reranker_unavailable"
 
 
@@ -37,6 +37,7 @@ class MemoryAbstentionDiagnostics(BaseModel):
     score_margin: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_score: float = Field(ge=0.0, le=1.0)
     minimum_conflict_margin: float = Field(ge=0.0, le=1.0)
+    maximum_score_drop: float = Field(ge=0.0, le=1.0)
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ class MemoryAbstentionPolicy:
         *,
         minimum_score: float = 0.45,
         minimum_conflict_margin: float = 0.03,
+        maximum_score_drop: float = 0.20,
         hard_filter: MemoryHardFilter | None = None,
     ) -> None:
         self.minimum_score = min(max(minimum_score, 0.0), 1.0)
@@ -62,6 +64,7 @@ class MemoryAbstentionPolicy:
             max(minimum_conflict_margin, 0.0),
             1.0,
         )
+        self.maximum_score_drop = min(max(maximum_score_drop, 0.0), 1.0)
         self.hard_filter = hard_filter or MemoryHardFilter()
 
     def decide(
@@ -100,7 +103,7 @@ class MemoryAbstentionPolicy:
             != MemoryHardFilterReason.ALLOWED
         ):
             return self._abstain(
-                reason=MemoryAbstentionReason.CURRENT_QUERY_CONFLICT,
+                reason=MemoryAbstentionReason.HARD_FILTER_REJECTED,
                 candidate_count=len(candidates),
                 top_score=top.final_score,
                 score_margin=margin,
@@ -127,17 +130,39 @@ class MemoryAbstentionPolicy:
                 top_score=top.final_score,
                 score_margin=margin,
             )
-        selected = [
-            candidate
-            for candidate in candidates
-            if candidate.final_score >= self.minimum_score
-            and self.hard_filter.evaluate(
-                record=candidate.recalled.record,
-                request=request,
-                now=now,
-            )
-            == MemoryHardFilterReason.ALLOWED
-        ][: request.limit]
+        selected: list[RerankedMemory] = []
+        seen_content_hashes: set[str] = set()
+        for candidate in candidates:
+            record = candidate.recalled.record
+            if candidate.final_score < self.minimum_score:
+                continue
+            if top.final_score - candidate.final_score > self.maximum_score_drop:
+                continue
+            if (
+                self.hard_filter.evaluate(
+                    record=record,
+                    request=request,
+                    now=now,
+                )
+                != MemoryHardFilterReason.ALLOWED
+            ):
+                continue
+            if not _required_context_is_covered(request, candidate):
+                continue
+            if record.content_hash in seen_content_hashes:
+                continue
+            if any(
+                memories_conflict(
+                    selected_item.recalled.record.summary,
+                    record.summary,
+                )
+                for selected_item in selected
+            ):
+                continue
+            selected.append(candidate)
+            seen_content_hashes.add(record.content_hash)
+            if len(selected) >= request.limit:
+                break
         return MemoryAbstentionDecision(
             selected=selected,
             diagnostics=MemoryAbstentionDiagnostics(
@@ -148,6 +173,7 @@ class MemoryAbstentionPolicy:
                 score_margin=margin,
                 minimum_score=self.minimum_score,
                 minimum_conflict_margin=self.minimum_conflict_margin,
+                maximum_score_drop=self.maximum_score_drop,
             ),
         )
 
@@ -180,6 +206,7 @@ class MemoryAbstentionPolicy:
                 score_margin=score_margin,
                 minimum_score=self.minimum_score,
                 minimum_conflict_margin=self.minimum_conflict_margin,
+                maximum_score_drop=self.maximum_score_drop,
             ),
         )
 

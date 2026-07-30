@@ -80,7 +80,7 @@ def _record(
         ),
         (
             _record(summary="提前背完整稿子一直对我有帮助。"),
-            MemoryHardFilterReason.CURRENT_QUERY_CONFLICT,
+            MemoryHardFilterReason.ALLOWED,
         ),
     ],
 )

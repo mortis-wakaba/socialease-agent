@@ -254,13 +254,14 @@ async def test_retrieval_requires_consent_and_audits_only_returned_hits() -> Non
 
 
 @pytest.mark.anyio
-async def test_retrieval_rejects_injection_identifiers_and_current_conflicts() -> None:
+async def test_retrieval_rejects_injection_identifiers_and_superseded_preferences() -> None:
     repository = repository_factory().long_term_memory_repository()
     user_id = f"retrieval_safety_{uuid4().hex}"
     records = [
         _record(
             user_id=user_id,
             summary="课堂发言前先准备一句开场对我有帮助。",
+            status=MemoryRecordStatus.SUPERSEDED,
         ),
         _record(
             user_id=user_id,
