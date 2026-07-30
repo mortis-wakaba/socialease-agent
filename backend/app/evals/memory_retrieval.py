@@ -63,11 +63,13 @@ def evaluate_classical_strategy(
     strategy: MemoryRetrievalStrategy,
     records_by_case: dict[str, list[EpisodicMemoryRecord]] | None = None,
     candidate_window_limit: int | None = None,
+    report_strategy: MemoryRetrievalBenchmarkStrategy | None = None,
 ) -> tuple[MemoryRetrievalStrategyReport, list[dict[str, Any]]]:
     estimator = ConservativeTokenEstimator()
     outcomes: list[dict[str, Any]] = []
 
     for case in cases:
+        started = perf_counter()
         request = MemoryRetrievalRequest(
             user_id=case.user_id,
             query=case.query,
@@ -90,7 +92,7 @@ def evaluate_classical_strategy(
                 request=request,
                 limit=candidate_window_limit,
             )
-        started = perf_counter()
+        ranking_started = perf_counter()
         hits, eligible_count = rank_memory_candidates(
             request=request,
             candidates=candidates,
@@ -98,6 +100,7 @@ def evaluate_classical_strategy(
             token_estimator=estimator,
             token_budget=EVAL_TOKEN_BUDGET,
         )
+        ranking_latency_ms = (perf_counter() - ranking_started) * 1000
         query_latency_ms = (perf_counter() - started) * 1000
         retrieved_ids = [hit.memory_id for hit in hits]
         forbidden_clear = not set(retrieved_ids).intersection(
@@ -120,13 +123,23 @@ def evaluate_classical_strategy(
                 "eligible_count": eligible_count,
                 "estimated_tokens": estimated_tokens,
                 "query_latency_ms": round(query_latency_ms, 6),
+                "stage_latency_ms": {
+                    "candidate_assembly": round(
+                        max(query_latency_ms - ranking_latency_ms, 0.0),
+                        6,
+                    ),
+                    "ranking_and_token_fit": round(ranking_latency_ms, 6),
+                },
                 "passed": passed,
             }
         )
 
     return (
         build_memory_retrieval_strategy_report(
-            strategy=MemoryRetrievalBenchmarkStrategy(strategy.value),
+            strategy=(
+                report_strategy
+                or MemoryRetrievalBenchmarkStrategy(strategy.value)
+            ),
             cases=cases,
             outcomes=outcomes,
         ),

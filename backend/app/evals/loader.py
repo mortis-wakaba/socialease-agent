@@ -76,11 +76,18 @@ def load_memory_vector_challenge_cases() -> list[MemoryRetrievalEvalCase]:
 
 
 def load_memory_retrieval_v2_heldout_cases() -> list[MemoryRetrievalEvalCase]:
-    """Load held-out safety and relevance cases not used for threshold tuning."""
+    """Load the observed v2 cases, now treated as validation data."""
     return load_jsonl(
         DATA_DIR / "memory_retrieval_v2_heldout.jsonl",
         MemoryRetrievalEvalCase,
     )
+
+
+def load_memory_retrieval_sealed_cases(
+    path: Path,
+) -> list[MemoryRetrievalEvalCase]:
+    """Load an explicitly supplied, independently managed sealed test file."""
+    return load_jsonl(path, MemoryRetrievalEvalCase)
 
 
 def load_memory_scale_seeds() -> list[MemoryRetrievalScaleSeed]:

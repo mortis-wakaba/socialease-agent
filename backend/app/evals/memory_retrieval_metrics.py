@@ -12,6 +12,7 @@ from app.evals.models import (
     MemoryRetrievalEvalCase,
     MemoryRetrievalStrategyReport,
 )
+from app.models_long_term_memory import MemoryRecordStatus
 
 
 def build_memory_retrieval_strategy_report(
@@ -30,7 +31,12 @@ def build_memory_retrieval_strategy_report(
     if set(case_by_id) != set(outcome_by_id):
         raise ValueError("memory retrieval outcomes do not match cases")
 
-    expected_total = expected_found = 0
+    query_recalls: list[float] = []
+    query_hits: list[bool] = []
+    all_relevant_results: list[bool] = []
+    judged_returned_total = 0
+    forbidden_label_total = 0
+    forbidden_returned_total = 0
     reciprocal_rank_sum = 0.0
     reciprocal_rank_total = 0
     false_results: list[bool] = []
@@ -63,8 +69,19 @@ def build_memory_retrieval_strategy_report(
                 f"stored pass result disagrees with labels for case {case.id}"
             )
 
-        expected_total += len(expected)
-        expected_found += sum(memory_id in retrieved_ids for memory_id in expected)
+        if expected:
+            found_count = sum(memory_id in retrieved_ids for memory_id in expected)
+            query_recalls.append(found_count / len(expected))
+            query_hits.append(found_count > 0)
+            all_relevant_results.append(found_count == len(expected))
+        judged_returned = set(retrieved_ids).intersection(
+            expected.union(case.forbidden_memory_ids)
+        )
+        judged_returned_total += len(judged_returned)
+        forbidden_label_total += len(case.forbidden_memory_ids)
+        forbidden_returned_total += len(
+            judged_returned.intersection(case.forbidden_memory_ids)
+        )
         if expected:
             reciprocal_rank_total += 1
             rank = next(
@@ -79,12 +96,41 @@ def build_memory_retrieval_strategy_report(
                 reciprocal_rank_sum += 1.0 / rank
         if case.forbidden_memory_ids:
             false_results.append(forbidden_clear)
-        if case.category == "stale":
-            stale_results.append(forbidden_clear)
-        if case.category == "conflict":
+        fixture_by_id = {
+            fixture.memory_id: fixture
+            for fixture in case.memories
+        }
+        lifecycle_forbidden = [
+            memory_id
+            for memory_id in case.forbidden_memory_ids
+            if (
+                fixture_by_id[memory_id].status
+                != MemoryRecordStatus.ACTIVE
+                or (
+                    fixture_by_id[memory_id].expires_days_from_now is not None
+                    and fixture_by_id[memory_id].expires_days_from_now <= 0
+                )
+            )
+        ]
+        if lifecycle_forbidden:
+            stale_results.append(
+                not set(lifecycle_forbidden).intersection(retrieved_ids)
+            )
+        foreign_forbidden = [
+            memory_id
+            for memory_id in case.forbidden_memory_ids
+            if fixture_by_id[memory_id].user_id != case.user_id
+        ]
+        if foreign_forbidden:
+            cross_user_results.append(
+                not set(foreign_forbidden).intersection(retrieved_ids)
+            )
+        is_conflict_case = case.category in {
+            "conflict",
+            "conflict_or_supersession",
+        }
+        if is_conflict_case:
             conflict_results.append(passed)
-        if case.category == "cross_user":
-            cross_user_results.append(forbidden_clear)
         abstention_labels.append(case.expected_abstain)
         abstention_predictions.append(predicted_abstain)
         budget_results.append(
@@ -106,8 +152,18 @@ def build_memory_retrieval_strategy_report(
     predicted_abstentions = sum(abstention_predictions)
     return MemoryRetrievalStrategyReport(
         strategy=strategy,
-        relevant_recall_at_3=ratio(expected_found, expected_total),
+        relevant_recall_at_3=ratio(sum(query_recalls), len(query_recalls)),
         relevant_mrr=ratio(reciprocal_rank_sum, reciprocal_rank_total),
+        relevant_hit_at_3=_bool_metric(query_hits),
+        all_relevant_recall_at_3=_bool_metric(all_relevant_results),
+        forbidden_item_avoidance=ratio(
+            forbidden_label_total - forbidden_returned_total,
+            forbidden_label_total,
+        ),
+        judged_item_precision_at_3=ratio(
+            judged_returned_total - forbidden_returned_total,
+            judged_returned_total,
+        ),
         false_recall_avoidance=_bool_metric(false_results),
         stale_recall_avoidance=_bool_metric(stale_results),
         conflict_resolution=_bool_metric(conflict_results),

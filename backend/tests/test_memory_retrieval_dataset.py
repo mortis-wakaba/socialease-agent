@@ -14,7 +14,8 @@ def test_background_is_restricted_to_one_shared_scale_corpus() -> None:
     scale_cases = dataset.splits[MemoryRetrievalEvalSplit.SCALE]
     non_scale_cases = [
         *dataset.splits[MemoryRetrievalEvalSplit.DEVELOPMENT],
-        *dataset.splits[MemoryRetrievalEvalSplit.HELD_OUT],
+        *dataset.splits[MemoryRetrievalEvalSplit.VALIDATION],
+        *dataset.splits[MemoryRetrievalEvalSplit.SEALED_HELD_OUT],
     ]
 
     assert scale_cases
@@ -22,11 +23,11 @@ def test_background_is_restricted_to_one_shared_scale_corpus() -> None:
         record.memory_id
         for record in dataset.records_by_case[scale_cases[0].id]
     }
-    assert len(scale_corpus_ids) == 2048 + 108
+    assert len(scale_corpus_ids) == 2048 * 4 + 36
     assert sum(
         memory_id.startswith("scale_background_")
         for memory_id in scale_corpus_ids
-    ) == 2048
+    ) == 2048 * 4
     assert all(
         {
             record.memory_id
@@ -54,9 +55,62 @@ def test_default_splits_are_exactly_disjoint_and_counts_are_unambiguous() -> Non
     assert len(dataset.cases) == 75
     assert len(dataset.splits[MemoryRetrievalEvalSplit.DEVELOPMENT]) == 23
     assert len(dataset.splits[MemoryRetrievalEvalSplit.SCALE]) == 36
-    assert len(dataset.splits[MemoryRetrievalEvalSplit.HELD_OUT]) == 16
-    assert dataset.max_candidates_per_query == 2156
-    assert len(dataset.unique_records) > len(dataset.unique_summaries)
+    assert len(dataset.splits[MemoryRetrievalEvalSplit.VALIDATION]) == 16
+    assert not dataset.splits[MemoryRetrievalEvalSplit.SEALED_HELD_OUT]
+    assert dataset.max_candidates_per_query == 8228
+    assert len(dataset.unique_records) == 8304
+    assert len(dataset.unique_summaries) == 2160
+
+
+def test_scale_paraphrases_share_persistent_records_without_equivalent_duplicates() -> None:
+    dataset = build_default_memory_retrieval_dataset()
+    scale_cases = dataset.splits[MemoryRetrievalEvalSplit.SCALE]
+    corpus = dataset.records_by_case[scale_cases[0].id]
+    semantic_keys = [
+        (
+            record.user_id,
+            record.memory_type,
+            record.summary,
+            record.scenario_type,
+            record.scenario_id,
+            record.practice_thread_id,
+            tuple(record.skill_codes),
+            tuple(record.context_tags),
+            record.status,
+            record.occurred_at,
+            record.expires_at,
+        )
+        for record in corpus
+    ]
+
+    assert len(semantic_keys) == len(set(semantic_keys))
+    for offset in range(0, len(scale_cases), 3):
+        paraphrases = scale_cases[offset : offset + 3]
+        assert len({tuple(case.expected_memory_ids) for case in paraphrases}) == 1
+        assert len({tuple(case.forbidden_memory_ids) for case in paraphrases}) == 1
+
+
+def test_scale_corpus_exercises_large_multi_user_ownership_boundary() -> None:
+    dataset = build_default_memory_retrieval_dataset()
+    case = dataset.splits[MemoryRetrievalEvalSplit.SCALE][0]
+    corpus = dataset.records_by_case[case.id]
+    owners = {record.user_id for record in corpus}
+    owner_threads = {
+        (record.user_id, record.practice_thread_id)
+        for record in corpus
+        if record.practice_thread_id is not None
+    }
+
+    assert len(owners) == 4
+    assert all(
+        any(
+            owner != case.user_id and thread_id == record.practice_thread_id
+            for owner, thread_id in owner_threads
+        )
+        for record in corpus
+        if record.user_id == case.user_id
+        and record.practice_thread_id is not None
+    )
 
 
 def test_isolated_boundary_cases_keep_adversaries_without_scale_noise() -> None:
@@ -97,7 +151,7 @@ def test_split_validator_rejects_query_leakage() -> None:
     contaminated = {
         split: list(cases) for split, cases in dataset.splits.items()
     }
-    contaminated[MemoryRetrievalEvalSplit.HELD_OUT].append(leaked)
+    contaminated[MemoryRetrievalEvalSplit.VALIDATION].append(leaked)
 
     with pytest.raises(ValueError, match="queries overlap"):
         validate_memory_retrieval_splits(contaminated)

@@ -11,6 +11,11 @@ from app.models_memory_types import MemoryType
 
 
 SCALE_USER_ID = "eval_scale_user"
+SCALE_FOREIGN_USER_IDS = (
+    "eval_scale_foreign_1",
+    "eval_scale_foreign_2",
+    "eval_scale_foreign_3",
+)
 SCALE_BACKGROUND_MEMORY_COUNT = 2048
 SCALE_QUERY_CASE_COUNT = 36
 
@@ -63,40 +68,38 @@ _FOLLOW_UPS = (
 
 
 def build_scale_retrieval_cases() -> list[MemoryRetrievalEvalCase]:
-    """Expand reviewed semantic seeds into three paraphrase cases each."""
+    """Expand each seed into paraphrases over one persistent memory set."""
     cases: list[MemoryRetrievalEvalCase] = []
     for seed in load_memory_scale_seeds():
-        for query_index, query in enumerate(seed.queries, start=1):
-            target_id = f"scale_{seed.id}_target_{query_index}"
-            memories = [
+        target_id = f"scale_{seed.id}_target"
+        memories = [
+            MemoryRetrievalFixture(
+                memory_id=target_id,
+                user_id=SCALE_USER_ID,
+                memory_type=MemoryType.HELPFUL_STRATEGY,
+                summary=seed.target_summary,
+                scenario_type=seed.scenario_type,
+                occurred_days_ago=300,
+            )
+        ]
+        forbidden_ids: list[str] = []
+        for negative_index, summary in enumerate(
+            seed.hard_negative_summaries,
+            start=1,
+        ):
+            memory_id = f"scale_{seed.id}_negative_{negative_index}"
+            forbidden_ids.append(memory_id)
+            memories.append(
                 MemoryRetrievalFixture(
-                    memory_id=target_id,
+                    memory_id=memory_id,
                     user_id=SCALE_USER_ID,
                     memory_type=MemoryType.HELPFUL_STRATEGY,
-                    summary=seed.target_summary,
+                    summary=summary,
                     scenario_type=seed.scenario_type,
-                    occurred_days_ago=300,
+                    occurred_days_ago=negative_index,
                 )
-            ]
-            forbidden_ids: list[str] = []
-            for negative_index, summary in enumerate(
-                seed.hard_negative_summaries,
-                start=1,
-            ):
-                memory_id = (
-                    f"scale_{seed.id}_negative_{query_index}_{negative_index}"
-                )
-                forbidden_ids.append(memory_id)
-                memories.append(
-                    MemoryRetrievalFixture(
-                        memory_id=memory_id,
-                        user_id=SCALE_USER_ID,
-                        memory_type=MemoryType.HELPFUL_STRATEGY,
-                        summary=summary,
-                        scenario_type=seed.scenario_type,
-                        occurred_days_ago=negative_index,
-                    )
-                )
+            )
+        for query_index, query in enumerate(seed.queries, start=1):
             cases.append(
                 MemoryRetrievalEvalCase(
                     id=f"scale_{seed.id}_q{query_index}",
@@ -105,9 +108,9 @@ def build_scale_retrieval_cases() -> list[MemoryRetrievalEvalCase]:
                     query=query,
                     scenario_type=seed.scenario_type,
                     allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
-                    memories=memories,
+                    memories=list(memories),
                     expected_memory_ids=[target_id],
-                    forbidden_memory_ids=forbidden_ids,
+                    forbidden_memory_ids=list(forbidden_ids),
                     demo=True,
                 )
             )
@@ -137,6 +140,8 @@ def build_scale_background_memories(
                 memory_type=MemoryType.HELPFUL_STRATEGY,
                 summary=f"在{context}时，先{opening}，再{follow_up}。",
                 scenario_type=scenario_type,
+                scenario_id=f"scale_scenario_{index % 64:02d}",
+                practice_thread_id=f"scale_thread_{index % 128:03d}",
                 occurred_days_ago=(index % 180) + 1,
             )
         )

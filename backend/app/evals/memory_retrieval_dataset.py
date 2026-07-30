@@ -12,6 +12,7 @@ from app.evals.loader import (
 )
 from app.evals.memory_retrieval import record_from_fixture
 from app.evals.memory_retrieval_scale import (
+    SCALE_FOREIGN_USER_IDS,
     build_scale_background_memories,
     build_scale_retrieval_cases,
 )
@@ -24,7 +25,8 @@ class MemoryRetrievalEvalSplit(str, Enum):
 
     DEVELOPMENT = "development"
     SCALE = "scale"
-    HELD_OUT = "held_out"
+    VALIDATION = "validation"
+    SEALED_HELD_OUT = "sealed_held_out"
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,7 @@ def build_default_memory_retrieval_dataset(
     *,
     include_scale_background: bool = True,
     include_held_out: bool = True,
+    sealed_held_out_cases: list[MemoryRetrievalEvalCase] | None = None,
 ) -> MemoryRetrievalDataset:
     """Build isolated functional cases plus one shared long-history corpus."""
     splits = {
@@ -79,10 +82,13 @@ def build_default_memory_retrieval_dataset(
             *load_memory_vector_challenge_cases(),
         ],
         MemoryRetrievalEvalSplit.SCALE: build_scale_retrieval_cases(),
-        MemoryRetrievalEvalSplit.HELD_OUT: (
+        MemoryRetrievalEvalSplit.VALIDATION: (
             load_memory_retrieval_v2_heldout_cases()
             if include_held_out
             else []
+        ),
+        MemoryRetrievalEvalSplit.SEALED_HELD_OUT: list(
+            sealed_held_out_cases or []
         ),
     }
     validate_memory_retrieval_splits(splits)
@@ -102,7 +108,8 @@ def build_custom_memory_retrieval_dataset(
     splits = {
         MemoryRetrievalEvalSplit.DEVELOPMENT: list(cases),
         MemoryRetrievalEvalSplit.SCALE: [],
-        MemoryRetrievalEvalSplit.HELD_OUT: [],
+        MemoryRetrievalEvalSplit.VALIDATION: [],
+        MemoryRetrievalEvalSplit.SEALED_HELD_OUT: [],
     }
     validate_memory_retrieval_splits(splits)
     return MemoryRetrievalDataset(
@@ -147,10 +154,19 @@ def build_memory_retrieval_case_corpora(
                         f"scale background id collides with fixture: {record.memory_id}"
                     )
                 user_records[record.memory_id] = record
+        for foreign_user_id in SCALE_FOREIGN_USER_IDS:
+            foreign_records: dict[str, EpisodicMemoryRecord] = {}
+            for item in build_scale_background_memories(user_id=foreign_user_id):
+                record = record_from_fixture(item)
+                foreign_records[record.memory_id] = record
+            scale_records_by_user[foreign_user_id] = foreign_records
+    shared_scale_records = [
+        record
+        for user_records in scale_records_by_user.values()
+        for record in user_records.values()
+    ]
     for case in scale_cases:
-        records_by_case[case.id] = list(
-            scale_records_by_user.get(case.user_id, {}).values()
-        )
+        records_by_case[case.id] = list(shared_scale_records)
     return records_by_case
 
 

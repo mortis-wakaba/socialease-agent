@@ -131,6 +131,8 @@ class MemoryRetrievalBenchmarkStrategy(str, Enum):
     RECENT = "recent"
     METADATA = "metadata"
     SQL_TEXT = "sql_text"
+    SQL_RECENT_WINDOW_100 = "sql_recent_window_100"
+    POSTGRES_FTS = "postgres_fts"
     VECTOR = "vector"
     HYBRID = "hybrid"
     DENSE_ONLY = "dense_only"
@@ -154,6 +156,10 @@ class MemoryRetrievalStrategyReport(BaseModel):
     context_token_budget: "EvalMetric"
     case_pass_rate: "EvalMetric"
     relevant_mrr: "EvalMetric | None" = None
+    relevant_hit_at_3: "EvalMetric | None" = None
+    all_relevant_recall_at_3: "EvalMetric | None" = None
+    forbidden_item_avoidance: "EvalMetric | None" = None
+    judged_item_precision_at_3: "EvalMetric | None" = None
     abstention_precision: "EvalMetric | None" = None
     abstention_recall: "EvalMetric | None" = None
     mean_query_latency_ms: float = Field(default=0.0, ge=0.0)
@@ -192,11 +198,19 @@ class MemoryRetrievalAblationReport(BaseModel):
     dataset_case_count: int = Field(ge=0)
     development_case_count: int = Field(default=0, ge=0)
     scale_case_count: int = Field(default=0, ge=0)
+    validation_case_count: int = Field(default=0, ge=0)
     held_out_case_count: int = Field(ge=0)
     indexed_memory_count: int = Field(ge=0)
     unique_summary_count: int = Field(default=0, ge=0)
+    dataset_manifest_sha256: str = Field(
+        default="",
+        pattern=r"^(?:|[0-9a-f]{64})$",
+    )
     max_candidates_per_query: int = Field(default=0, ge=0)
     document_embedding_latency_ms: float = Field(default=0.0, ge=0.0)
+    postgres_fts_evaluated: bool = False
+    postgres_fts_load_latency_ms: float = Field(default=0.0, ge=0.0)
+    postgres_fts_warmup_latency_ms: float = Field(default=0.0, ge=0.0)
     evaluation_duration_ms: float = Field(default=0.0, ge=0.0)
     stage_duration_ms: dict[str, float] = Field(default_factory=dict)
     embedding_provider: str = ""

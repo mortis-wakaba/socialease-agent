@@ -8,7 +8,7 @@ from app.evals.models import (
     MemoryRetrievalEvalCase,
     MemoryRetrievalFixture,
 )
-from app.models_long_term_memory import MemoryType
+from app.models_long_term_memory import MemoryRecordStatus, MemoryType
 
 
 def test_conflict_metric_accepts_current_target_and_rejects_old_memory() -> None:
@@ -54,3 +54,155 @@ def test_conflict_metric_accepts_current_target_and_rejects_old_memory() -> None
     assert report.conflict_resolution.total == 1
     assert report.conflict_resolution.score == 1.0
     assert report.case_pass_rate.score == 1.0
+
+
+def test_recall_is_query_averaged_and_item_false_recall_is_separate() -> None:
+    cases = [
+        MemoryRetrievalEvalCase(
+            id="two_expected",
+            category="multiple_relevant",
+            user_id="eval_user",
+            query="有哪些旧方法？",
+            allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+            memories=[
+                MemoryRetrievalFixture(
+                    memory_id=memory_id,
+                    user_id="eval_user",
+                    memory_type=MemoryType.HELPFUL_STRATEGY,
+                    summary=f"demo {memory_id}",
+                    occurred_days_ago=1,
+                )
+                for memory_id in ("a", "b", "bad")
+            ],
+            expected_memory_ids=["a", "b"],
+            forbidden_memory_ids=["bad"],
+            demo=True,
+        ),
+        MemoryRetrievalEvalCase(
+            id="one_expected",
+            category="semantic_relevance",
+            user_id="eval_user",
+            query="另一个旧方法？",
+            allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+            memories=[
+                MemoryRetrievalFixture(
+                    memory_id="c",
+                    user_id="eval_user",
+                    memory_type=MemoryType.HELPFUL_STRATEGY,
+                    summary="demo c",
+                    occurred_days_ago=1,
+                )
+            ],
+            expected_memory_ids=["c"],
+            demo=True,
+        ),
+    ]
+    report = build_memory_retrieval_strategy_report(
+        strategy=MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE,
+        cases=cases,
+        outcomes=[
+            {
+                "case_id": "two_expected",
+                "retrieved_ids": ["a", "bad"],
+                "estimated_tokens": 10,
+            },
+            {
+                "case_id": "one_expected",
+                "retrieved_ids": [],
+                "estimated_tokens": 0,
+            },
+        ],
+    )
+
+    assert report.relevant_recall_at_3.score == 0.25
+    assert report.relevant_hit_at_3.score == 0.5
+    assert report.all_relevant_recall_at_3.score == 0.0
+    assert report.forbidden_item_avoidance.score == 0.0
+    assert report.judged_item_precision_at_3.score == 0.5
+
+
+def test_sealed_category_aliases_and_fixture_scope_drive_safety_metrics() -> None:
+    conflict = MemoryRetrievalEvalCase(
+        id="sealed_conflict",
+        category="conflict_or_supersession",
+        user_id="eval_user",
+        query="demo current preference",
+        allowed_memory_types=[MemoryType.RECURRING_PATTERN],
+        memories=[
+            MemoryRetrievalFixture(
+                memory_id="current",
+                user_id="eval_user",
+                memory_type=MemoryType.RECURRING_PATTERN,
+                summary="demo current",
+                occurred_days_ago=1,
+            ),
+            MemoryRetrievalFixture(
+                memory_id="superseded",
+                user_id="eval_user",
+                memory_type=MemoryType.RECURRING_PATTERN,
+                summary="demo superseded",
+                status=MemoryRecordStatus.SUPERSEDED,
+                occurred_days_ago=30,
+            ),
+        ],
+        expected_memory_ids=["current"],
+        forbidden_memory_ids=["superseded"],
+        demo=True,
+    )
+    ownership = MemoryRetrievalEvalCase(
+        id="sealed_ownership",
+        category="ownership_or_lifecycle",
+        user_id="eval_user",
+        query="demo owned memory",
+        allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+        memories=[
+            MemoryRetrievalFixture(
+                memory_id="owned",
+                user_id="eval_user",
+                memory_type=MemoryType.HELPFUL_STRATEGY,
+                summary="demo owned",
+                occurred_days_ago=1,
+            ),
+            MemoryRetrievalFixture(
+                memory_id="foreign",
+                user_id="other_user",
+                memory_type=MemoryType.HELPFUL_STRATEGY,
+                summary="demo foreign",
+                occurred_days_ago=1,
+            ),
+            MemoryRetrievalFixture(
+                memory_id="expired",
+                user_id="eval_user",
+                memory_type=MemoryType.HELPFUL_STRATEGY,
+                summary="demo expired",
+                occurred_days_ago=30,
+                expires_days_from_now=-1,
+            ),
+        ],
+        expected_memory_ids=["owned"],
+        forbidden_memory_ids=["foreign", "expired"],
+        demo=True,
+    )
+    report = build_memory_retrieval_strategy_report(
+        strategy=MemoryRetrievalBenchmarkStrategy.FULL_PIPELINE,
+        cases=[conflict, ownership],
+        outcomes=[
+            {
+                "case_id": conflict.id,
+                "retrieved_ids": ["current"],
+                "estimated_tokens": 5,
+            },
+            {
+                "case_id": ownership.id,
+                "retrieved_ids": ["owned"],
+                "estimated_tokens": 5,
+            },
+        ],
+    )
+
+    assert report.conflict_resolution.total == 1
+    assert report.conflict_resolution.score == 1.0
+    assert report.cross_user_leakage_avoidance.total == 1
+    assert report.cross_user_leakage_avoidance.score == 1.0
+    assert report.stale_recall_avoidance.total == 2
+    assert report.stale_recall_avoidance.score == 1.0
