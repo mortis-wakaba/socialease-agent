@@ -1,0 +1,25 @@
+docs/memory_retrieval_eval_audit.md
+  s_8158b00cda1b8c::t_2c0c897fcfc0db 127-161,169-172
+  s_8158b00cda1b8c::t_2c08134f0997a8 175-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "8799f01af12dff4cd7504b3f70796c25601a7d07",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_8158b00cda1b8c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb205-17ac-7881-8afd-898eee3c702e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
