@@ -46,6 +46,10 @@ def build_memory_retrieval_strategy_report(
     for case in cases:
         outcome = outcome_by_id[case.id]
         retrieved_ids = [str(value) for value in outcome["retrieved_ids"]]
+        if len(retrieved_ids) != len(set(retrieved_ids)):
+            raise ValueError(
+                f"retrieved memory ids must be unique for case {case.id}"
+            )
         expected = set(case.expected_memory_ids)
         forbidden_clear = not set(retrieved_ids).intersection(
             case.forbidden_memory_ids
@@ -54,6 +58,10 @@ def build_memory_retrieval_strategy_report(
         predicted_abstain = not retrieved_ids
         abstain_ok = not case.expected_abstain or predicted_abstain
         passed = expected_ok and forbidden_clear and abstain_ok
+        if "passed" in outcome and bool(outcome["passed"]) != passed:
+            raise ValueError(
+                f"stored pass result disagrees with labels for case {case.id}"
+            )
 
         expected_total += len(expected)
         expected_found += sum(memory_id in retrieved_ids for memory_id in expected)

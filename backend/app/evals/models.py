@@ -96,6 +96,10 @@ class MemoryRetrievalEvalCase(BaseModel):
         memory_ids = [memory.memory_id for memory in self.memories]
         if len(memory_ids) != len(set(memory_ids)):
             raise ValueError("memory fixture ids must be unique within a case")
+        if len(self.expected_memory_ids) != len(set(self.expected_memory_ids)):
+            raise ValueError("expected memory ids must be unique")
+        if len(self.forbidden_memory_ids) != len(set(self.forbidden_memory_ids)):
+            raise ValueError("forbidden memory ids must be unique")
         expected = set(self.expected_memory_ids)
         forbidden = set(self.forbidden_memory_ids)
         available = set(memory_ids)

@@ -158,6 +158,13 @@ def validate_memory_retrieval_splits(
     splits: dict[MemoryRetrievalEvalSplit, list[MemoryRetrievalEvalCase]],
 ) -> None:
     """Reject exact case, query or fixture-text leakage across dataset splits."""
+    for split, cases in splits.items():
+        case_ids = [case.id for case in cases]
+        queries = [case.query for case in cases]
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError(f"case ids must be unique within {split.value}")
+        if len(queries) != len(set(queries)):
+            raise ValueError(f"queries must be unique within {split.value}")
     for left_index, left_split in enumerate(MemoryRetrievalEvalSplit):
         left_cases = splits.get(left_split, [])
         for right_split in list(MemoryRetrievalEvalSplit)[left_index + 1 :]:
