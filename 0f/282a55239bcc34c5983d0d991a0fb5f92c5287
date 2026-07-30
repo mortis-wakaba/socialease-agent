@@ -1,0 +1,39 @@
+backend/app/evals/data/memory_retrieval.jsonl
+  s_8158b00cda1b8c::t_932f5381d29ab9 1
+backend/app/memory/abstention.py
+  s_8158b00cda1b8c::t_2c3a5bc8d7d8a9 40,67,133-165,176,209
+  s_8158b00cda1b8c::t_de7483fa11d30d 59
+  s_8158b00cda1b8c::t_0d070d294619e1 24,106
+backend/app/evals/data/memory_retrieval_open_scenarios.jsonl
+  s_8158b00cda1b8c::t_932f5381d29ab9 8
+backend/tests/test_memory_retriever.py
+  s_8158b00cda1b8c::t_c50161c1cb9ad7 257,264
+backend/tests/test_memory_hard_filter.py
+  s_8158b00cda1b8c::t_2c3a5bc8d7d8a9 83
+backend/tests/test_memory_abstention.py
+  s_8158b00cda1b8c::t_2c3a5bc8d7d8a9 104-108,110-130
+  s_8158b00cda1b8c::t_4aa1729da85ea9 109
+backend/app/evals/data/memory_retrieval_v2_heldout.jsonl
+  s_8158b00cda1b8c::t_932f5381d29ab9 3-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "0f282a55239bcc34c5983d0d991a0fb5f92c5287",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_8158b00cda1b8c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb205-17ac-7881-8afd-898eee3c702e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
