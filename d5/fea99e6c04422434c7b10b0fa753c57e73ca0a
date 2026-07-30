@@ -1,0 +1,74 @@
+backend/tests/test_memory_retrieval_ablation.py
+  s_8158b00cda1b8c::t_3c0f5b2a4a05ea 238
+  s_8158b00cda1b8c::t_a245f709632148 133,136-141
+  s_8158b00cda1b8c::t_43f67ef26665dc 6,220-237,239-249
+  s_8158b00cda1b8c::t_48ffcaf5634ab7 215
+  s_8158b00cda1b8c::t_a4f52d601fcad4 206-214,216-219
+  s_8158b00cda1b8c::t_72225f8860ee04 146
+  s_8158b00cda1b8c::t_80d5f0405eb5e5 250-251
+backend/app/db/postgres/memory_retrieval_eval.py
+  s_8158b00cda1b8c::t_48ffcaf5634ab7 1-61
+backend/tests/test_postgres_long_term_memory_repository.py
+  s_8158b00cda1b8c::t_9f343cc1bdc204 380
+  s_8158b00cda1b8c::t_aa96e6333f46a7 84,87
+  s_8158b00cda1b8c::t_d87d155d432b66 10,85-86,88-100
+  s_8158b00cda1b8c::t_65a1d1dbf5c03a 376-379,381-385
+  s_8158b00cda1b8c::t_d59fc77d7de9b2 83
+  s_8158b00cda1b8c::t_f8569a21739486 101-102
+backend/app/memory/long_term_repository.py
+  s_8158b00cda1b8c::t_989283351ba146 84-94
+backend/tests/test_repository_factory.py
+  s_8158b00cda1b8c::t_65a1d1dbf5c03a 241
+backend/migrations/versions/0020_add_memory_fts_index.py
+  s_8158b00cda1b8c::t_9f343cc1bdc204 19-28,32-39,43-46,48,53,57-60,64-70
+  s_8158b00cda1b8c::t_33ecf9060db180 1-18,61-63,71-75,77-80
+  s_8158b00cda1b8c::t_e95b38e1781653 76
+  s_8158b00cda1b8c::t_0b0b8044663214 81
+  s_8158b00cda1b8c::t_d0915538c19f90 29-31,40-42,47,49-52,54-56
+backend/app/evals/memory_retrieval_ablation.py
+  s_8158b00cda1b8c::t_3869856f4b7790 10,463-464,470-473
+  s_8158b00cda1b8c::t_0f96da9fa2692b 162-164,166,299-300,347
+  s_8158b00cda1b8c::t_4d3c46303a192d 330
+  s_8158b00cda1b8c::t_9cef5dc747ee45 5,143,203,205-211,213-228,303-309,315,321,326,336-340,357-359,380-381,415-418,425-444,817-825,830
+  s_8158b00cda1b8c::t_dd2863eece5444 396
+  s_8158b00cda1b8c::t_17a36009d95844 465-469
+  s_8158b00cda1b8c::t_b2643f261b0386 544,550-552,561,567,570,576,591,596,630-648,651-656,764-773
+  s_8158b00cda1b8c::t_3c0f5b2a4a05ea 204,212,360,362-365,419-424
+  s_8158b00cda1b8c::t_d50303e8f2326c 186-190,192-193,196-199,201-202
+  s_8158b00cda1b8c::t_34f710b5ff6b85 7,21,142,156,351,361,447-462,474-483,808-816,829
+  s_8158b00cda1b8c::t_0b80f323007841 301
+  s_8158b00cda1b8c::t_9fb936c05fb624 445-446
+  s_8158b00cda1b8c::t_5bfb1e28f13384 484
+  s_8158b00cda1b8c::t_6072e504c05e9e 774-775
+backend/app/db/capabilities.py
+  s_8158b00cda1b8c::t_33ecf9060db180 36
+backend/app/evals/postgres_memory_fts.py
+  s_8158b00cda1b8c::t_48ffcaf5634ab7 1-5,7-23,28-33,35-43,45-49,55-77,79-145,147-149,151-153,157-220
+  s_8158b00cda1b8c::t_3c0f5b2a4a05ea 44,50-54,146,221-246
+  s_8158b00cda1b8c::t_9cef5dc747ee45 6,24-27,78,150,154-155
+  s_8158b00cda1b8c::t_91ca118b2826db 34,156
+backend/app/db/postgres/long_term_memory_repository.py
+  s_8158b00cda1b8c::t_989283351ba146 191-227,233-250
+  s_8158b00cda1b8c::t_9f343cc1bdc204 228-232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "d5fea99e6c04422434c7b10b0fa753c57e73ca0a",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_8158b00cda1b8c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb205-17ac-7881-8afd-898eee3c702e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
