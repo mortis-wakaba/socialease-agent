@@ -11,7 +11,11 @@ from app.memory.identity import (
     memory_idempotency_key,
 )
 from app.memory.long_term_repository import MemoryConflictError
-from app.memory.text_semantics import conflict_overlap, memories_conflict
+from app.memory.text_semantics import (
+    conflict_overlap,
+    lexical_terms,
+    memories_conflict,
+)
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
     MemoryEvidenceType,
@@ -90,6 +94,10 @@ def test_shared_conflict_semantics_exposes_overlap_and_decision() -> None:
     assert conflict_overlap(helpful, rejected) >= 2
     assert memories_conflict(helpful, rejected)
     assert not memories_conflict(helpful, "课堂发言前先深呼吸")
+
+
+def test_demo_governance_marker_is_not_a_retrieval_feature() -> None:
+    assert "demo" not in lexical_terms("demo：课堂发言前先写三个关键词")
 
 
 @pytest.mark.anyio

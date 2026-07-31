@@ -4,6 +4,7 @@ import re
 
 
 _STOP_TERMS = {
+    "demo",
     "一个",
     "一下",
     "可以",
