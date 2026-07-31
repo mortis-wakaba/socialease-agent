@@ -1,0 +1,27 @@
+backend/tests/test_memory_core_contracts.py
+  s_8158b00cda1b8c::t_13280627390a06 14-18,99-100
+  s_8158b00cda1b8c::t_930feb7873e896 101-102
+backend/app/memory/text_semantics.py
+  s_8158b00cda1b8c::t_43c24a77024c4c 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "818822115e2801b9248790ded864862e087cfbea",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_8158b00cda1b8c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb205-17ac-7881-8afd-898eee3c702e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
