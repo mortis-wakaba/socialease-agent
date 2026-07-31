@@ -1,0 +1,65 @@
+backend/app/models_conversation_context.py
+  s_58d143ee8d1538::t_e52ebbd67d7bdf 148
+backend/app/llm/prompts.py
+  s_58d143ee8d1538::t_02c9d3cef1e226 348-353,401,410-412,439,448-450
+  s_58d143ee8d1538::t_d24d7ec9ab68e3 310,323-327
+backend/tests/test_memory_context_orchestrator.py
+  s_58d143ee8d1538::t_a09dbffcc55f9e 13,37-42
+  s_58d143ee8d1538::t_c0e434f82b7cc1 1-12,14-36,43-130
+backend/app/workflow/engine.py
+  s_58d143ee8d1538::t_e95a7ead87cecb 24,28,94,111-122,267-268,337-341
+backend/app/guardrails/output.py
+  s_58d143ee8d1538::t_02c9d3cef1e226 193,223-226,240,320,350,372,394
+backend/app/services/conversation_service.py
+  s_58d143ee8d1538::t_66b30e66ee5ed7 23-25,79-84,110,114-115,128-140,529-534,579-584,629-633,635-637,656-661,744,747-748
+  s_58d143ee8d1538::t_e608afa3c8d973 783,786-787,830-836,839-844,846-849,855-864,980-982,984-986,992-993,999-1002,1088
+  s_58d143ee8d1538::t_c1ecfd4b4a2900 44,634,749,788,837,850-854,983,987-991,994-998
+  s_58d143ee8d1538::t_834d8211d1bae4 750,789,838,845
+backend/app/conversation/adapters/worksheet.py
+  s_58d143ee8d1538::t_e608afa3c8d973 220
+backend/app/memory/active_memory_assembler.py
+  s_58d143ee8d1538::t_e52ebbd67d7bdf 27-32
+backend/app/skills/support.py
+  s_58d143ee8d1538::t_d24d7ec9ab68e3 62-66
+backend/app/conversation/adapters/exposure.py
+  s_58d143ee8d1538::t_5f4b2409d08ef3 45,110-114,216-217,225
+backend/tests/test_context_engineering.py
+  s_58d143ee8d1538::t_c0e434f82b7cc1 361-386
+backend/app/tracing/versions.py
+  s_58d143ee8d1538::t_f0d7c886aeeeb4 21,25-26
+  s_58d143ee8d1538::t_c0e434f82b7cc1 15
+backend/tests/test_active_memory_assembler.py
+  s_58d143ee8d1538::t_f0d7c886aeeeb4 131,137-139,145-148
+backend/tests/test_roleplay_unified_context.py
+  s_58d143ee8d1538::t_c0e434f82b7cc1 129,143,148
+backend/app/llm/prompt_versions.json
+  s_58d143ee8d1538::t_e7f99ee46ec4d5 16-17,20-21,36-37
+backend/app/memory/context_orchestrator.py
+  s_58d143ee8d1538::t_e52ebbd67d7bdf 1-98
+backend/app/agents/support_generation.py
+  s_58d143ee8d1538::t_d24d7ec9ab68e3 48,88,193
+backend/tests/test_conversation_service.py
+  s_58d143ee8d1538::t_c990486d72980f 23,27,34,87-106
+  s_58d143ee8d1538::t_a3e0fe9d0fcadc 107-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "dd6051e570557489b13854856d26622d9c91fce7",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_58d143ee8d1538": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb7c0-59fe-7c30-840a-1f30461d0296",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
