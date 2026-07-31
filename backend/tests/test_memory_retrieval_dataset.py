@@ -7,6 +7,8 @@ from app.evals.memory_retrieval_dataset import (
     build_default_memory_retrieval_dataset,
     validate_memory_retrieval_splits,
 )
+from app.evals.models import MemoryRetrievalEvalCase, MemoryRetrievalFixture
+from app.models_long_term_memory import MemoryType
 
 
 def test_background_is_restricted_to_one_shared_scale_corpus() -> None:
@@ -155,3 +157,32 @@ def test_split_validator_rejects_query_leakage() -> None:
 
     with pytest.raises(ValueError, match="queries overlap"):
         validate_memory_retrieval_splits(contaminated)
+
+
+def test_case_rejects_indistinguishable_records_with_different_ids() -> None:
+    fixture = MemoryRetrievalFixture(
+        memory_id="target_a",
+        user_id="eval_user",
+        memory_type=MemoryType.HELPFUL_STRATEGY,
+        summary="demo：先写三个关键词。",
+        scenario_type="classroom_speech",
+        occurred_days_ago=1,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="indistinguishable memory fixtures",
+    ):
+        MemoryRetrievalEvalCase(
+            id="duplicate_fixture",
+            category="semantic_relevance",
+            user_id="eval_user",
+            query="demo：上次什么方法有帮助？",
+            allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+            memories=[
+                fixture,
+                fixture.model_copy(update={"memory_id": "target_b"}),
+            ],
+            expected_memory_ids=["target_a"],
+            demo=True,
+        )

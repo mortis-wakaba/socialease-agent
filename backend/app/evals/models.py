@@ -86,6 +86,7 @@ class MemoryRetrievalEvalCase(BaseModel):
     include_archived: bool = False
     memories: list[MemoryRetrievalFixture] = Field(default_factory=list)
     expected_memory_ids: list[str] = Field(default_factory=list)
+    relevance_groups: list[list[str]] = Field(default_factory=list)
     forbidden_memory_ids: list[str] = Field(default_factory=list)
     expected_abstain: bool = False
     demo: Literal[True]
@@ -96,11 +97,40 @@ class MemoryRetrievalEvalCase(BaseModel):
         memory_ids = [memory.memory_id for memory in self.memories]
         if len(memory_ids) != len(set(memory_ids)):
             raise ValueError("memory fixture ids must be unique within a case")
+        indistinguishable: dict[str, list[str]] = {}
+        for memory in self.memories:
+            signature = memory.model_dump_json(
+                exclude={"memory_id", "source_id", "confidence"},
+            )
+            indistinguishable.setdefault(signature, []).append(memory.memory_id)
+        duplicate_groups = [
+            fixture_ids
+            for fixture_ids in indistinguishable.values()
+            if len(fixture_ids) > 1
+        ]
+        if duplicate_groups:
+            raise ValueError(
+                "indistinguishable memory fixtures must not use different ids: "
+                f"{duplicate_groups!r}"
+            )
         if len(self.expected_memory_ids) != len(set(self.expected_memory_ids)):
             raise ValueError("expected memory ids must be unique")
         if len(self.forbidden_memory_ids) != len(set(self.forbidden_memory_ids)):
             raise ValueError("forbidden memory ids must be unique")
         expected = set(self.expected_memory_ids)
+        grouped = [
+            memory_id
+            for group in self.relevance_groups
+            for memory_id in group
+        ]
+        if any(not group for group in self.relevance_groups):
+            raise ValueError("relevance groups must not be empty")
+        if len(grouped) != len(set(grouped)):
+            raise ValueError("memory ids may belong to only one relevance group")
+        if self.relevance_groups and set(grouped) != expected:
+            raise ValueError(
+                "relevance groups must partition expected memory ids"
+            )
         forbidden = set(self.forbidden_memory_ids)
         available = set(memory_ids)
         if expected.intersection(forbidden):
@@ -112,6 +142,27 @@ class MemoryRetrievalEvalCase(BaseModel):
         if not self.expected_abstain and not expected:
             raise ValueError("each case must expect memories or explicit abstention")
         return self
+
+    def effective_relevance_groups(self) -> list[set[str]]:
+        """Return explicit equivalent groups or legacy singleton requirements."""
+        if self.relevance_groups:
+            return [set(group) for group in self.relevance_groups]
+        return [{memory_id} for memory_id in self.expected_memory_ids]
+
+    def relevance_recall(self, retrieved_ids: list[str]) -> float | None:
+        """Return required-group recall, treating equivalent members as any-of."""
+        groups = self.effective_relevance_groups()
+        if not groups:
+            return None
+        retrieved = set(retrieved_ids)
+        return sum(bool(group.intersection(retrieved)) for group in groups) / len(
+            groups
+        )
+
+    def all_relevance_groups_retrieved(self, retrieved_ids: list[str]) -> bool:
+        """Return whether every required relevance group has one retrieved item."""
+        recall = self.relevance_recall(retrieved_ids)
+        return recall is None or recall == 1.0
 
 
 class MemoryRetrievalScaleSeed(BaseModel):
@@ -162,8 +213,11 @@ class MemoryRetrievalStrategyReport(BaseModel):
     judged_item_precision_at_3: "EvalMetric | None" = None
     abstention_precision: "EvalMetric | None" = None
     abstention_recall: "EvalMetric | None" = None
+    latency_sample_count: int = Field(default=0, ge=0)
     mean_query_latency_ms: float = Field(default=0.0, ge=0.0)
+    p50_query_latency_ms: float = Field(default=0.0, ge=0.0)
     p95_query_latency_ms: float = Field(default=0.0, ge=0.0)
+    p99_query_latency_ms: float = Field(default=0.0, ge=0.0)
 
 
 class MemoryRetrievalBenchmarkReport(BaseModel):

@@ -1,5 +1,8 @@
 """Metric contracts shared by every episodic-memory retrieval strategy."""
 
+import pytest
+from pydantic import ValidationError
+
 from app.evals.memory_retrieval_metrics import (
     build_memory_retrieval_strategy_report,
 )
@@ -121,6 +124,85 @@ def test_recall_is_query_averaged_and_item_false_recall_is_separate() -> None:
     assert report.judged_item_precision_at_3.score == 0.5
 
 
+def test_equivalent_relevance_group_accepts_any_member_without_double_counting() -> None:
+    case = MemoryRetrievalEvalCase(
+        id="equivalent_summary",
+        category="multiple_representations",
+        user_id="eval_user",
+        query="上次发言时什么方法有帮助？",
+        allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+        memories=[
+            MemoryRetrievalFixture(
+                memory_id="raw_event",
+                user_id="eval_user",
+                memory_type=MemoryType.HELPFUL_STRATEGY,
+                summary="上次先写三个关键词后完成了发言。",
+                occurred_days_ago=2,
+            ),
+            MemoryRetrievalFixture(
+                memory_id="equivalent_summary",
+                user_id="eval_user",
+                memory_type=MemoryType.HELPFUL_STRATEGY,
+                summary="三个关键词曾帮助完成发言。",
+                occurred_days_ago=1,
+            ),
+        ],
+        expected_memory_ids=["raw_event", "equivalent_summary"],
+        relevance_groups=[["raw_event", "equivalent_summary"]],
+        demo=True,
+    )
+
+    report = build_memory_retrieval_strategy_report(
+        strategy=MemoryRetrievalBenchmarkStrategy.BM25_ONLY,
+        cases=[case],
+        outcomes=[
+            {
+                "case_id": case.id,
+                "retrieved_ids": ["equivalent_summary"],
+                "estimated_tokens": 10,
+            }
+        ],
+    )
+
+    assert report.relevant_recall_at_3.score == 1.0
+    assert report.relevant_hit_at_3.score == 1.0
+    assert report.all_relevant_recall_at_3.score == 1.0
+    assert report.case_pass_rate.score == 1.0
+
+
+def test_relevance_groups_must_partition_expected_ids() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="relevance groups must partition expected memory ids",
+    ):
+        MemoryRetrievalEvalCase(
+            id="bad_equivalence",
+            category="multiple_representations",
+            user_id="eval_user",
+            query="demo query",
+            allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+            memories=[
+                MemoryRetrievalFixture(
+                    memory_id="a",
+                    user_id="eval_user",
+                    memory_type=MemoryType.HELPFUL_STRATEGY,
+                    summary="demo a",
+                    occurred_days_ago=1,
+                ),
+                MemoryRetrievalFixture(
+                    memory_id="b",
+                    user_id="eval_user",
+                    memory_type=MemoryType.HELPFUL_STRATEGY,
+                    summary="demo b",
+                    occurred_days_ago=1,
+                ),
+            ],
+            expected_memory_ids=["a", "b"],
+            relevance_groups=[["a"]],
+            demo=True,
+        )
+
+
 def test_sealed_category_aliases_and_fixture_scope_drive_safety_metrics() -> None:
     conflict = MemoryRetrievalEvalCase(
         id="sealed_conflict",
@@ -206,3 +288,49 @@ def test_sealed_category_aliases_and_fixture_scope_drive_safety_metrics() -> Non
     assert report.cross_user_leakage_avoidance.score == 1.0
     assert report.stale_recall_avoidance.total == 2
     assert report.stale_recall_avoidance.score == 1.0
+
+
+def test_latency_report_exposes_sample_count_and_tail_percentiles() -> None:
+    cases: list[MemoryRetrievalEvalCase] = []
+    outcomes: list[dict[str, object]] = []
+    for index, latency in enumerate((1.0, 2.0, 3.0, 100.0)):
+        memory_id = f"target_{index}"
+        case = MemoryRetrievalEvalCase(
+            id=f"latency_{index}",
+            category="semantic_relevance",
+            user_id="eval_user",
+            query=f"demo latency query {index}",
+            allowed_memory_types=[MemoryType.HELPFUL_STRATEGY],
+            memories=[
+                MemoryRetrievalFixture(
+                    memory_id=memory_id,
+                    user_id="eval_user",
+                    memory_type=MemoryType.HELPFUL_STRATEGY,
+                    summary=f"demo latency target {index}",
+                    occurred_days_ago=index,
+                )
+            ],
+            expected_memory_ids=[memory_id],
+            demo=True,
+        )
+        cases.append(case)
+        outcomes.append(
+            {
+                "case_id": case.id,
+                "retrieved_ids": [memory_id],
+                "estimated_tokens": 5,
+                "query_latency_ms": latency,
+            }
+        )
+
+    report = build_memory_retrieval_strategy_report(
+        strategy=MemoryRetrievalBenchmarkStrategy.BM25_ONLY,
+        cases=cases,
+        outcomes=outcomes,
+    )
+
+    assert report.latency_sample_count == 4
+    assert report.mean_query_latency_ms == 26.5
+    assert report.p50_query_latency_ms == 2.0
+    assert report.p95_query_latency_ms == 100.0
+    assert report.p99_query_latency_ms == 100.0

@@ -60,7 +60,7 @@ def build_memory_retrieval_strategy_report(
         forbidden_clear = not set(retrieved_ids).intersection(
             case.forbidden_memory_ids
         )
-        expected_ok = expected.issubset(retrieved_ids)
+        expected_ok = case.all_relevance_groups_retrieved(retrieved_ids)
         predicted_abstain = not retrieved_ids
         abstain_ok = not case.expected_abstain or predicted_abstain
         passed = expected_ok and forbidden_clear and abstain_ok
@@ -70,10 +70,11 @@ def build_memory_retrieval_strategy_report(
             )
 
         if expected:
-            found_count = sum(memory_id in retrieved_ids for memory_id in expected)
-            query_recalls.append(found_count / len(expected))
-            query_hits.append(found_count > 0)
-            all_relevant_results.append(found_count == len(expected))
+            relevance_recall = case.relevance_recall(retrieved_ids)
+            assert relevance_recall is not None
+            query_recalls.append(relevance_recall)
+            query_hits.append(relevance_recall > 0)
+            all_relevant_results.append(relevance_recall == 1.0)
         judged_returned = set(retrieved_ids).intersection(
             expected.union(case.forbidden_memory_ids)
         )
@@ -182,8 +183,11 @@ def build_memory_retrieval_strategy_report(
         ),
         context_token_budget=_bool_metric(budget_results),
         case_pass_rate=_bool_metric(case_results),
+        latency_sample_count=len(latencies),
         mean_query_latency_ms=_mean(latencies),
-        p95_query_latency_ms=_percentile_95(latencies),
+        p50_query_latency_ms=_percentile(latencies, 0.50),
+        p95_query_latency_ms=_percentile(latencies, 0.95),
+        p99_query_latency_ms=_percentile(latencies, 0.99),
     )
 
 
@@ -205,9 +209,12 @@ def _mean(values: list[float]) -> float:
     return round(sum(values) / len(values), 6) if values else 0.0
 
 
-def _percentile_95(values: list[float]) -> float:
+def _percentile(values: list[float], quantile: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
-    index = min(len(ordered) - 1, math.ceil(len(ordered) * 0.95) - 1)
+    index = min(
+        len(ordered) - 1,
+        math.ceil(len(ordered) * quantile) - 1,
+    )
     return round(ordered[index], 6)

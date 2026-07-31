@@ -107,9 +107,7 @@ def evaluate_classical_strategy(
             case.forbidden_memory_ids
         )
         estimated_tokens = sum(hit.estimated_tokens for hit in hits)
-        expected_ok = all(
-            memory_id in retrieved_ids for memory_id in case.expected_memory_ids
-        )
+        expected_ok = case.all_relevance_groups_retrieved(retrieved_ids)
         abstain_ok = not case.expected_abstain or not retrieved_ids
         passed = expected_ok and forbidden_clear and abstain_ok
         outcomes.append(
@@ -118,6 +116,7 @@ def evaluate_classical_strategy(
                 "category": case.category,
                 "retrieved_ids": retrieved_ids,
                 "expected_ids": case.expected_memory_ids,
+                "relevance_groups": case.relevance_groups,
                 "forbidden_ids": case.forbidden_memory_ids,
                 "expected_abstain": case.expected_abstain,
                 "eligible_count": eligible_count,
