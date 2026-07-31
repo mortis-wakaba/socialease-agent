@@ -128,19 +128,24 @@ def test_roleplay_allowlist_selects_only_permitted_memory_types() -> None:
     assert blocked.drop_reason == ActiveMemoryDropReason.NOT_ALLOWED_FOR_SKILL
 
 
-def test_general_support_does_not_receive_episodic_memory() -> None:
+def test_general_support_receives_only_helpful_strategy_and_practice_experience() -> None:
     packet = ActiveMemoryAssembler().assemble(
         user_id="user-a",
         skill_context=_projection("general_support_skill"),
         current_request="今天有点紧张",
         memory_retrieval=_retrieval(
-            _hit("memory-1", MemoryType.HELPFUL_STRATEGY, "先停顿一下有帮助")
+            _hit("memory-1", MemoryType.HELPFUL_STRATEGY, "先停顿一下有帮助"),
+            _hit("memory-2", MemoryType.PRACTICE_EXPERIENCE, "完成过一次简短开场"),
+            _hit("memory-3", MemoryType.PRACTICE_MILESTONE, "连续练习了三次"),
         ),
         retrieval_user_id="user-a",
         assembled_at=NOW,
     )
 
-    assert packet.episodic_memories == []
+    assert packet.episodic_memories == [
+        "helpful_strategy: 先停顿一下有帮助",
+        "practice_experience: 完成过一次简短开场",
+    ]
     assert packet.selections[-1].drop_reason == (
         ActiveMemoryDropReason.NOT_ALLOWED_FOR_SKILL
     )

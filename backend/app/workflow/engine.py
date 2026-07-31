@@ -21,9 +21,11 @@ from app.db.factory import repository_factory
 from app.db.repositories import UserProfileRepository
 from app.memory.settings_store import UserMemorySettingsRepository
 from app.memory.active_memory_assembler import ActiveMemoryAssembler
+from app.memory.context_orchestrator import MemoryContextOrchestrator
 from app.memory.policy_engine import MemoryPolicyEngine
 from app.memory.proposal_extractor import MemoryProposalExtractor
 from app.memory.write_pipeline import MemoryWritePipeline
+from app.memory.retriever import EpisodicMemoryRetriever
 from app.models_long_term_memory import MemorySourceType
 from app.models_scenario import ScenarioSpec
 from app.models import (
@@ -47,8 +49,6 @@ from app.safety.permissions import PermissionAction, PermissionDecision, SafetyP
 from app.skills import SkillContext, SkillRegistry, SkillResult
 from app.tracing.logger import TraceLogger
 from app.tracing.versions import build_execution_version_info
-from app.memory.context_builder import build_memory_context
-from app.memory.context_selector import select_skill_context
 from app.protocols.service import protocol_service
 from app.privacy.persistence_gate import persistence_gate
 from app.privacy.policy import PersistenceKind
@@ -91,6 +91,7 @@ class AgentHarness:
         output_guardrail: OutputGuardrail | None = None,
         memory_write_pipeline: MemoryWritePipeline | None = None,
         active_memory_assembler: ActiveMemoryAssembler | None = None,
+        memory_context_orchestrator: MemoryContextOrchestrator | None = None,
     ) -> None:
         self.trace_logger = trace_logger
         self.safety_classifier = safety_classifier or create_safety_classifier()
@@ -106,6 +107,18 @@ class AgentHarness:
         )
         self.active_memory_assembler = (
             active_memory_assembler or ActiveMemoryAssembler()
+        )
+        self.memory_context_orchestrator = (
+            memory_context_orchestrator
+            or MemoryContextOrchestrator(
+                user_profile_repository=self.user_profile_repository,
+                settings_repository=self.memory_settings_repository,
+                episodic_retriever=EpisodicMemoryRetriever(
+                    repository=factory.long_term_memory_repository(),
+                    settings_repository=self.memory_settings_repository,
+                ),
+                assembler=self.active_memory_assembler,
+            )
         )
         self.memory_write_pipeline = memory_write_pipeline or MemoryWritePipeline(
             extractor=MemoryProposalExtractor(create_llm_client()),
@@ -138,13 +151,6 @@ class AgentHarness:
         stage_started = perf_counter()
         errors: list[str] = []
         request_id = _optional_string(request.context.get("request_id")) or get_request_id()
-        user_profile = await self.user_profile_repository.get_summary(request.user_id)
-        memory_context = build_memory_context(
-            practice_summary=user_profile,
-            memory_settings=await self.memory_settings_repository.get(
-                request.user_id
-            ),
-        )
         run_context = RunContext(
             run_id=run_id,
             user_id=request.user_id,
@@ -258,14 +264,10 @@ class AgentHarness:
             )
 
         skill = self.skill_registry.resolve_for_chat(intent_result.intent, safety_result)
-        run_context.skill_context = select_skill_context(
+        run_context.active_memory = await self.memory_context_orchestrator.assemble(
+            user_id=request.user_id,
             skill_name=skill.descriptor.name,
             request_context=run_context.request_context,
-            memory_context=memory_context,
-        )
-        run_context.active_memory = self.active_memory_assembler.assemble(
-            user_id=request.user_id,
-            skill_context=run_context.skill_context,
             current_request=request.message,
         )
         run_context.skill_context = run_context.active_memory.stable_memory
@@ -332,6 +334,11 @@ class AgentHarness:
             selected_skill=skill.descriptor.name,
             selected_agent=skill_result.selected_agent,
             grounding_metadata=_grounding_metadata(skill_result.structured_data),
+            memory_evidence=(
+                run_context.active_memory.episodic_memories
+                if run_context.active_memory is not None
+                else []
+            ),
             historical_user_messages=(
                 [
                     event.content

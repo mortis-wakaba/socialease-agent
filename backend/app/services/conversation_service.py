@@ -20,6 +20,9 @@ from app.conversation.repository import ConversationRepository, ModuleStartJob
 from app.db.factory import repository_factory
 from app.llm.factory import create_llm_client
 from app.memory.token_estimator import ConservativeTokenEstimator
+from app.memory.active_memory_assembler import ActiveMemoryAssembler
+from app.memory.context_orchestrator import MemoryContextOrchestrator
+from app.memory.retriever import EpisodicMemoryRetriever
 from app.models import (
     ChatRequest,
     Intent,
@@ -38,6 +41,7 @@ from app.models_conversation import (
     ConversationStatus,
     CrisisEscalatedEventPayload,
     ExposureParameters,
+    ModuleParameters,
     ModuleProposal,
     ModuleProposalEventPayload,
     ModuleProposalReason,
@@ -72,6 +76,12 @@ _MODULE_BY_INTENT = {
     Intent.CAMPUS_RESOURCE_QUERY: ModuleType.RESOURCE,
 }
 
+_SKILL_BY_MODULE = {
+    ModuleType.ROLEPLAY: "roleplay_skill",
+    ModuleType.WORKSHEET: "worksheet_skill",
+    ModuleType.EXPOSURE: "exposure_planning_skill",
+}
+
 
 class ConversationNoticeError(ValueError):
     """Raised when history persistence has not been explicitly acknowledged."""
@@ -97,12 +107,12 @@ class ConversationService:
         intent_router: BaseIntentRouter | None = None,
         context_manager: ConversationContextManager | None = None,
         module_coordinator: ModuleCoordinator | None = None,
+        memory_context_orchestrator: MemoryContextOrchestrator | None = None,
         proposal_ttl: timedelta = timedelta(minutes=15),
     ) -> None:
         self._harness = harness
-        self._repository = (
-            repository or repository_factory().conversation_repository()
-        )
+        factory = repository_factory()
+        self._repository = repository or factory.conversation_repository()
         self._safety_classifier = (
             safety_classifier or create_safety_classifier()
         )
@@ -115,6 +125,19 @@ class ConversationService:
             )
         self._intent_router = intent_router
         estimator = ConservativeTokenEstimator()
+        memory_assembler = ActiveMemoryAssembler(token_estimator=estimator)
+        self._memory_context_orchestrator = (
+            memory_context_orchestrator
+            or MemoryContextOrchestrator(
+                user_profile_repository=factory.user_profile_repository(),
+                settings_repository=factory.user_memory_settings_repository(),
+                episodic_retriever=EpisodicMemoryRetriever(
+                    repository=factory.long_term_memory_repository(),
+                    settings_repository=factory.user_memory_settings_repository(),
+                ),
+                assembler=memory_assembler,
+            )
+        )
         self._context_manager = context_manager or ConversationContextManager(
             repository=self._repository,
             compactor=ConversationCompactor(
@@ -502,13 +525,13 @@ class ConversationService:
             ),
             idempotency_key=f"user:{idempotency_key}",
         )
-        context = await self._context_manager.assemble(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            current_user_message=message,
-            current_event_id=user_event.event_id,
-        )
         if safety_result.risk_level == RiskLevel.CRISIS:
+            context = await self._context_manager.assemble(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                current_user_message=message,
+                current_event_id=user_event.event_id,
+            )
             preemption_events = await self._module_coordinator.preempt_for_crisis(
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -553,6 +576,12 @@ class ConversationService:
             and safety_result.risk_level == RiskLevel.LOW
             and _proposal_allowed_for_stack(stack, proposed_module)
         ):
+            context = await self._context_manager.assemble(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                current_user_message=message,
+                current_event_id=user_event.event_id,
+            )
             proposal = await self._create_proposal(
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -597,6 +626,15 @@ class ConversationService:
             )
 
         if stack:
+            context = await self._assemble_module_context(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                message=message,
+                module_type=active_run.module_type,
+                module_parameters=active_run.module_parameters,
+                current_event_id=user_event.event_id,
+                practice_thread_id=active_run.domain_session_id,
+            )
             context = await self._module_coordinator.project_context(context)
             result, module_event = await self._module_coordinator.handle_message(
                 conversation_id=conversation_id,
@@ -615,6 +653,12 @@ class ConversationService:
             )
 
         assistant_key = f"assistant:{idempotency_key}"
+        context = await self._context_manager.assemble(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            current_user_message=message,
+            current_event_id=user_event.event_id,
+        )
         replay = await self._repository.get_event_by_idempotency(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -697,10 +741,13 @@ class ConversationService:
             raise ConversationProposalError("proposal not found")
         if proposal.request_hash != request_hash:
             raise ConversationProposalError("proposal request hash mismatch")
-        context = await self._context_manager.assemble(
+        context = await self._assemble_module_context(
             conversation_id=conversation_id,
             user_id=user_id,
-            current_user_message=_module_start_message(proposal),
+            message=_module_start_message(proposal),
+            module_type=proposal.proposed_module,
+            module_parameters=proposal.bounded_parameters,
+            retrieve_memory=proposal.proposed_module != ModuleType.ROLEPLAY,
             current_event_id=proposal.source_event_id,
         )
         if proposal.status == ModuleProposalStatus.ACCEPTED:
@@ -733,10 +780,13 @@ class ConversationService:
         )
         if run is None or proposal is None:
             raise LookupError("module reconciliation state not found")
-        context = await self._context_manager.assemble(
+        context = await self._assemble_module_context(
             conversation_id=job.conversation_id,
             user_id=job.user_id,
-            current_user_message=_module_start_message(proposal),
+            message=_module_start_message(proposal),
+            module_type=proposal.proposed_module,
+            module_parameters=proposal.bounded_parameters,
+            retrieve_memory=proposal.proposed_module != ModuleType.ROLEPLAY,
             current_event_id=proposal.source_event_id,
         )
         return await self._module_coordinator.reconcile_claimed(
@@ -775,6 +825,41 @@ class ConversationService:
         return await self._module_coordinator.terminate_all(
             conversation_id=conversation_id,
             user_id=user_id,
+        )
+
+    async def _assemble_module_context(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        message: str,
+        module_type: ModuleType,
+        module_parameters: ModuleParameters | None = None,
+        retrieve_memory: bool = True,
+        current_event_id: str | None = None,
+        practice_thread_id: str | None = None,
+    ) -> ConversationWorkingContext:
+        """Retrieve and allocate memory only for modules that consume it."""
+        skill_name = _SKILL_BY_MODULE.get(module_type)
+        active_memory = None
+        if skill_name is not None and retrieve_memory:
+            active_memory = await self._memory_context_orchestrator.assemble(
+                user_id=user_id,
+                skill_name=skill_name,
+                current_request=message,
+                request_context=_module_memory_request_context(
+                    module_type,
+                    message,
+                    module_parameters,
+                ),
+                practice_thread_id=practice_thread_id,
+            )
+        return await self._context_manager.assemble(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            current_user_message=message,
+            current_event_id=current_event_id,
+            active_memory=active_memory,
         )
 
     async def _validated_pending_proposal(
@@ -892,6 +977,29 @@ def _module_start_message(proposal: ModuleProposal) -> str:
     return parameters.query
 
 
+def _module_memory_request_context(
+    module_type: ModuleType,
+    message: str,
+    parameters: ModuleParameters | None = None,
+) -> dict[str, object]:
+    """Expose only validated selector fields used by the target module skill."""
+    if module_type == ModuleType.ROLEPLAY:
+        if isinstance(parameters, RoleplayParameters):
+            return {
+                "scenario": parameters.scenario_description,
+                "difficulty": parameters.difficulty,
+            }
+        return {"scenario": message}
+    if module_type == ModuleType.EXPOSURE:
+        if isinstance(parameters, ExposureParameters):
+            context: dict[str, object] = {"target_scenario": parameters.goal}
+            if parameters.starting_anxiety is not None:
+                context["current_anxiety_level"] = parameters.starting_anxiety
+            return context
+        return {"target_scenario": message}
+    return {}
+
+
 def _proposal_reason(module_type: ModuleType) -> ModuleProposalReason:
     return {
         ModuleType.ROLEPLAY: ModuleProposalReason.EXPLICIT_PRACTICE_REQUEST,
@@ -977,6 +1085,7 @@ def _prompt_context(
         compact_summary=context.compact_summary,
         active_module_overlay=context.active_module_overlay,
         parent_resume_projections=context.parent_resume_projections,
+        retrieved_memories=context.selected_agent_memory[:3],
     )
 
 

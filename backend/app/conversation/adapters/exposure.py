@@ -34,7 +34,6 @@ class ExposureModuleAdapter:
         run: ModuleRun,
         context: ConversationWorkingContext,
     ) -> PreparedModuleStart:
-        del context
         parameters = _parameters(run)
         if parameters.starting_anxiety is None:
             return PreparedModuleStart(payload=None)
@@ -43,7 +42,7 @@ class ExposureModuleAdapter:
                 user_id=run.user_id,
                 target_scenario=parameters.goal,
                 current_anxiety_level=parameters.starting_anxiety,
-                previous_attempts=[],
+                previous_attempts=context.selected_agent_memory[:3],
             )
         )
         if prepared.blocked:
@@ -95,7 +94,6 @@ class ExposureModuleAdapter:
         context: ConversationWorkingContext,
         overlay: ModuleOverlay,
     ) -> ModuleAdapterResult:
-        del context
         if not isinstance(overlay.payload, ExposureOverlay):
             raise ValueError("exposure overlay payload is invalid")
         if run.domain_session_id:
@@ -109,7 +107,11 @@ class ExposureModuleAdapter:
                     awaiting_anxiety_level=True,
                 ),
             )
-        return await self._create_plan(run, anxiety)
+        return await self._create_plan(
+            run,
+            anxiety,
+            previous_attempts=context.selected_agent_memory[:3],
+        )
 
     async def build_overlay(
         self,
@@ -211,6 +213,8 @@ class ExposureModuleAdapter:
         self,
         run: ModuleRun,
         anxiety: int,
+        *,
+        previous_attempts: list[str] | None = None,
     ) -> ModuleAdapterResult:
         parameters = _parameters(run)
         result = await self._service.create_plan(
@@ -218,7 +222,7 @@ class ExposureModuleAdapter:
                 user_id=run.user_id,
                 target_scenario=parameters.goal,
                 current_anxiety_level=anxiety,
-                previous_attempts=[],
+                previous_attempts=(previous_attempts or [])[:3],
             ),
             plan_id=run.domain_session_id,
         )

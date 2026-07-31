@@ -24,6 +24,12 @@ from app.models_session_context import DurableCheckpointContext
 
 
 _SKILL_EPISODIC_ALLOWLIST: dict[str, frozenset[MemoryType]] = {
+    "general_support_skill": frozenset(
+        {
+            MemoryType.HELPFUL_STRATEGY,
+            MemoryType.PRACTICE_EXPERIENCE,
+        }
+    ),
     "roleplay_skill": frozenset(
         {
             MemoryType.HELPFUL_STRATEGY,

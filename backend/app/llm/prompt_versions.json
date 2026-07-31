@@ -13,12 +13,12 @@
       "version": "memory-extraction-v3"
     },
     "output_guardrail": {
-      "fingerprint": "sha256:09511924d2cc4ed9",
-      "version": "output-guardrail-v6"
+      "fingerprint": "sha256:4ce10b055a55fd22",
+      "version": "output-guardrail-v7"
     },
     "output_repair": {
-      "fingerprint": "sha256:9ac8a346068d6430",
-      "version": "output-repair-v4"
+      "fingerprint": "sha256:179e63e8206ebe6f",
+      "version": "output-repair-v5"
     },
     "resource_agent_loop": {
       "fingerprint": "sha256:9abd2bf441da79f6",
@@ -33,8 +33,8 @@
       "version": "safety-v1"
     },
     "support_generation": {
-      "fingerprint": "sha256:8fb967390ea50184",
-      "version": "support-v4"
+      "fingerprint": "sha256:89bca8c723dd7309",
+      "version": "support-v5"
     },
     "worksheet_extraction": {
       "fingerprint": "sha256:df5a65d4df060c09",

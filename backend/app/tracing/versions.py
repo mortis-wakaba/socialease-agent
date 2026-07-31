@@ -12,18 +12,18 @@ from app.models_trace import ExecutionVersionInfo
 
 
 TRACE_SCHEMA_VERSION = "trace-v2"
-GUARDRAIL_POLICY_VERSION = "output-guardrail-2026-07-19"
+GUARDRAIL_POLICY_VERSION = "output-guardrail-2026-07-31"
 SKILL_REGISTRY_VERSION = "bounded-skills-2026-07-19"
 
 PROMPT_VERSIONS: dict[str, str] = {
     "safety_classifier": "safety-v1",
     "intent_router": "intent-v3",
-    "support_generation": "support-v4",
+    "support_generation": "support-v5",
     "roleplay": "roleplay-v7",
     "worksheet_extraction": "worksheet-v4",
     "resource_agent_loop": "resource-loop-v2",
-    "output_guardrail": "output-guardrail-v6",
-    "output_repair": "output-repair-v4",
+    "output_guardrail": "output-guardrail-v7",
+    "output_repair": "output-repair-v5",
     "conversation_compaction": "conversation-compaction-v1",
     "memory_extraction": "memory-extraction-v3",
 }

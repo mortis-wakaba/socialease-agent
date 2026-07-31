@@ -190,6 +190,7 @@ class OutputGuardrail:
         selected_skill: str,
         selected_agent: str,
         grounding_metadata: GroundingMetadata | None = None,
+        memory_evidence: list[str] | None = None,
         historical_user_messages: list[str] | None = None,
         _allow_repair: bool = True,
     ) -> OutputGuardrailResult:
@@ -219,6 +220,10 @@ class OutputGuardrail:
             redact_sensitive_identifiers(message)[0]
             for message in (historical_user_messages or [])[-32:]
         ]
+        safe_memory_evidence = [
+            redact_sensitive_identifiers(item)[0]
+            for item in (memory_evidence or [])[:3]
+        ]
         safe_response = redact_sensitive_identifiers(response)[0]
         classification_prompt = build_output_guardrail_user_prompt(
             user_message=safe_message,
@@ -232,6 +237,7 @@ class OutputGuardrail:
                 if grounding_metadata is not None
                 else None
             ),
+            memory_evidence=safe_memory_evidence,
             historical_user_messages=safe_history,
         )
         assessment: SemanticOutputAssessment | None = None
@@ -311,6 +317,7 @@ class OutputGuardrail:
                     selected_skill=selected_skill,
                     selected_agent=selected_agent,
                     grounding_metadata=grounding_metadata,
+                    memory_evidence=safe_memory_evidence,
                     historical_user_messages=safe_history,
                     violations=semantic_violations,
                     semantic_retry_attempted=semantic_retry_attempted,
@@ -340,6 +347,7 @@ class OutputGuardrail:
         selected_skill: str,
         selected_agent: str,
         grounding_metadata: GroundingMetadata | None,
+        memory_evidence: list[str],
         historical_user_messages: list[str],
         violations: list[SemanticOutputViolation],
         semantic_retry_attempted: bool,
@@ -361,6 +369,7 @@ class OutputGuardrail:
                     violations=[
                         violation.model_dump(mode="json") for violation in violations
                     ],
+                    memory_evidence=memory_evidence,
                     historical_user_messages=historical_user_messages,
                 ),
                 temperature=0.0,
@@ -382,6 +391,7 @@ class OutputGuardrail:
             selected_skill=selected_skill,
             selected_agent="output_guardrail_repair",
             grounding_metadata=grounding_metadata,
+            memory_evidence=memory_evidence,
             historical_user_messages=historical_user_messages,
             _allow_repair=False,
         )

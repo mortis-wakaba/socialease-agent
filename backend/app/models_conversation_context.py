@@ -145,6 +145,7 @@ class ConversationPromptContext(StrictConversationModel):
         default_factory=list,
         max_length=2,
     )
+    retrieved_memories: list[str] = Field(default_factory=list, max_length=3)
 
 
 def conversation_id_hash(conversation_id: str) -> str:

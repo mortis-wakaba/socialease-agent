@@ -217,4 +217,5 @@ def _prompt_context(
         compact_summary=context.compact_summary,
         active_module_overlay=context.active_module_overlay,
         parent_resume_projections=context.parent_resume_projections,
+        retrieved_memories=context.selected_agent_memory[:3],
     )

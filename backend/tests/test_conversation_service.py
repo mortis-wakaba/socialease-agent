@@ -20,15 +20,18 @@ from app.models import (
 )
 from app.models_conversation import (
     ConversationEventType,
+    ExposureParameters,
     HISTORY_NOTICE_VERSION,
     ModuleProposalStatus,
     ModuleType,
+    RoleplayParameters,
 )
 from app.services.conversation_service import (
     ConversationCommandInProgressError,
     ConversationNoticeError,
     ConversationProposalError,
     ConversationService,
+    _module_memory_request_context,
 )
 from tests.postgres_test_support import fetch_one
 
@@ -79,6 +82,28 @@ class GeneralIntent:
             confidence=0.8,
             reason="test",
         )
+
+
+def test_module_memory_context_uses_validated_parameters_not_turn_text() -> None:
+    roleplay = _module_memory_request_context(
+        ModuleType.ROLEPLAY,
+        "我想补充一句",
+        RoleplayParameters(
+            scenario_description="小组讨论",
+            difficulty=3,
+        ),
+    )
+    exposure = _module_memory_request_context(
+        ModuleType.EXPOSURE,
+        "完成了，先保持难度",
+        ExposureParameters(goal="课堂发言", starting_anxiety=7),
+    )
+
+    assert roleplay == {"scenario": "小组讨论", "difficulty": 3}
+    assert exposure == {
+        "target_scenario": "课堂发言",
+        "current_anxiety_level": 7,
+    }
 
 
 class GeneralHarness:

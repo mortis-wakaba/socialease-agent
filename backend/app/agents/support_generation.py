@@ -45,6 +45,7 @@ class SupportGenerationAgent:
         safety_result: SafetyResult,
         support_context: SupportGenerationContext | None = None,
         conversation_context: ConversationPromptContext | None = None,
+        retrieved_memories: list[str] | None = None,
         application_constraints: PresentationConstraints | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Return validated LLM support or a deterministic safe fallback."""
@@ -84,6 +85,7 @@ class SupportGenerationAgent:
                     conversation_context=_conversation_context_payload(
                         conversation_context
                     ),
+                    retrieved_memories=(retrieved_memories or [])[:3],
                     response_constraints=(
                         application_constraints.model_dump(mode="json")
                         if application_constraints is not None
@@ -188,6 +190,7 @@ class SupportGenerationAgent:
                 citation.model_dump(mode="json") for citation in guidance.citations
             ],
             "retrieval_unknown": guidance.unknown,
+            "memory_evidence_count": len((retrieved_memories or [])[:3]),
             "llm_usage": LLMUsage(used=True).model_dump(mode="json"),
             "fallback_used": False,
             "support_context_fields": sorted(

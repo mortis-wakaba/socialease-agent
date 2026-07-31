@@ -126,6 +126,7 @@ async def test_unified_roleplay_uses_timeline_and_stores_only_features() -> None
     assert session.messages == []
     assert len(session.practice_features) == 1
     assert previous_turn.content in llm.user_prompt
+    assert "helpful_strategy: 先复述再表达观点" in llm.user_prompt
     assert result.response == "我听到了。你希望我具体怎么配合？"
 
 
@@ -139,11 +140,12 @@ def _context(
         current_user_message="我想补充一个不同看法。",
         recent_events=recent_events,
         active_module_stack=[run],
+        selected_agent_memory=["helpful_strategy: 先复述再表达观点"],
         diagnostics=ConversationContextDiagnostics(
             conversation_id_hash="0" * 16,
             recent_event_count=len(recent_events),
             active_module_count=1,
-            selected_memory_count=0,
+            selected_memory_count=1,
             estimated_tokens=128,
             total_token_budget=10_000,
             budget_profile=ConversationContextProfile.ROLEPLAY,

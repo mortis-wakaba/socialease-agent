@@ -59,6 +59,11 @@ class SupportSkill:
             safety_result=context.safety_result,
             support_context=support_context,
             conversation_context=context.conversation_context,
+            retrieved_memories=(
+                context.active_memory.episodic_memories
+                if context.active_memory is not None
+                else []
+            ),
             application_constraints=context.response_constraints,
         )
         return SkillResult(
