@@ -15,7 +15,7 @@
     "test:e2e:production-auth": "playwright test --config playwright.production-auth.config.ts"
   },
   "dependencies": {
-    "next": "^16.2.12",
+    "next": "^16.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "sharp": "0.35.3"
