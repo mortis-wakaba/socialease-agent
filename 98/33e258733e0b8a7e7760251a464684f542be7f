@@ -1,0 +1,53 @@
+frontend/e2e/conversation-stream-contract.spec.ts
+  s_ef6954d802d82a::t_cea9ed44f6b8c1 1-27
+frontend/lib/api.ts
+  s_4b02df954c6a39::t_cb58ebe7006a26 293-308,665-737
+  s_ef6954d802d82a::t_cea9ed44f6b8c1 48
+  s_4b02df954c6a39::t_20c2f80849a563 738
+frontend/playwright.contract.config.ts
+  s_ef6954d802d82a::t_ebcce89f550184 1-7
+frontend/app/chat/page.tsx
+  s_4b02df954c6a39::t_cb58ebe7006a26 38,146,148,152-153,168,501-512
+  s_ef6954d802d82a::t_95f35bed195557 684-688
+  s_4b02df954c6a39::t_ea49afd2982c31 513
+frontend/app/trace/page.tsx
+  s_4b02df954c6a39::t_bd6e3d744e4f5d 163
+frontend/lib/conversation-stream.ts
+  s_ef6954d802d82a::t_cea9ed44f6b8c1 1-54
+frontend/lib/types.ts
+  s_4b02df954c6a39::t_bd6e3d744e4f5d 68
+  s_ef6954d802d82a::t_93b300aac43061 290,295,301-303,329,333
+  s_ef6954d802d82a::t_95f35bed195557 137-229,251-253,263-265,277-278,281-282,284,308,311-315,336-339
+  s_ef6954d802d82a::t_7fbcdc5e6b3e29 340
+frontend/package.json
+  s_ef6954d802d82a::t_ebcce89f550184 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "9833e258733e0b8a7e7760251a464684f542be7f",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_4b02df954c6a39": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff48c-1f9e-72d1-a614-94c16c431542",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_ef6954d802d82a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff4bd-55fb-79d2-98c6-fad3a0ca646d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
