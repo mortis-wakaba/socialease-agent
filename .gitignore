@@ -57,6 +57,12 @@ frontend/test-results/
 backend/app/evals/reports/
 frontend/playwright-report/
 
+# Local evaluation and model artifacts
+backend/.cache/evals/
+model-cache/
+backend/model-cache/
+.local/
+
 # Translations
 *.mo
 *.pot

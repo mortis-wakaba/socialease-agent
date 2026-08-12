@@ -1,4 +1,4 @@
-.PHONY: dev-backend dev-calendar-mcp dev-frontend test-backend test-calendar-mcp test-postgres-runtime test-redis-context eval eval-gate eval-memory-vector eval-memory-ablation eval-llm eval-output-guardrail prompt-version-check update-prompt-versions privacy-check lock-python typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
+.PHONY: dev-backend dev-calendar-mcp dev-frontend test-backend test-calendar-mcp test-postgres-runtime test-redis-context backfill-memory-embeddings eval eval-gate eval-memory-vector eval-memory-ablation eval-llm eval-output-guardrail prompt-version-check update-prompt-versions privacy-check lock-python typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
 
 dev-backend:
 	cd backend && uvicorn app.main:app --reload
@@ -22,6 +22,9 @@ test-postgres-runtime:
 
 test-redis-context:
 	cd backend && SOCIALEASE_TEST_REDIS_URL=$${SOCIALEASE_TEST_REDIS_URL:-redis://localhost:6379/0} pytest -p no:rerunfailures -m redis_integration -s tests/test_conversation_context_cache.py tests/test_module_overlay_store.py tests/test_task_sessions.py
+
+backfill-memory-embeddings:
+	cd backend && SOCIALEASE_MEMORY_RETRIEVAL_MODE=dense_only python -m app.memory.embedding_backfill
 
 eval:
 	cd backend && python -m app.evals.run
