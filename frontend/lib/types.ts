@@ -65,6 +65,7 @@ export type TraceRecord = {
     outcome: string;
   }>;
   output_guardrail_action?: "allow" | "augment" | "repair" | "replace" | null;
+  output_guardrail_evaluation_mode?: "deterministic_only" | "full" | null;
   output_guardrail_categories?: string[];
   output_guardrail_semantic_checked?: boolean;
   output_guardrail_semantic_failed?: boolean;
@@ -133,6 +134,99 @@ export type ModuleRunStatus =
   | "suspended"
   | "completed"
   | "terminated";
+export type ModuleProposalReason =
+  | "explicit_practice_request"
+  | "structured_reflection_may_help"
+  | "graded_practice_may_help"
+  | "resource_lookup_requested";
+
+export type RoleplayParameters = {
+  kind: "roleplay";
+  scenario_description: string;
+  practice_goal: string | null;
+  difficulty: number;
+};
+
+export type WorksheetParameters = {
+  kind: "worksheet";
+  situation: string;
+};
+
+export type ExposureParameters = {
+  kind: "exposure";
+  goal: string;
+  starting_anxiety: number | null;
+};
+
+export type ResourceParameters = {
+  kind: "resource";
+  query: string;
+};
+
+export type ModuleParameters =
+  | RoleplayParameters
+  | WorksheetParameters
+  | ExposureParameters
+  | ResourceParameters;
+
+export type ModuleProposalEventPayload = {
+  kind: "module_proposal";
+  proposal_id: string;
+  proposed_module: ModuleType;
+  reason_code: ModuleProposalReason;
+};
+
+export type ModuleLifecycleEventPayload = {
+  kind: "module_lifecycle";
+  module_run_id: string;
+  module_type: ModuleType;
+  parent_module_run_id: string | null;
+};
+
+export type CrisisEscalatedEventPayload = {
+  kind: "crisis_escalated";
+  risk_level: "crisis";
+};
+
+export type RoleplayMessageEventPayload = {
+  kind: "roleplay_message";
+  session_id: string;
+  blocked: boolean;
+};
+
+export type WorksheetMessageEventPayload = {
+  kind: "worksheet_message";
+  worksheet_id: string;
+  completed: boolean;
+  missing_fields: string[];
+};
+
+export type ExposureMessageEventPayload = {
+  kind: "exposure_message";
+  plan_id: string | null;
+  awaiting_anxiety_level: boolean;
+  blocked: boolean;
+  attempt_status: "completed" | "skipped" | "too_hard" | null;
+  next_task_id: string | null;
+  permission_to_increase: boolean;
+};
+
+export type ResourceMessageEventPayload = {
+  kind: "resource_message";
+  search_session_id: string | null;
+  citation_count: number;
+  citation_ids: string[];
+  unknown: boolean;
+};
+
+export type ConversationEventPayload =
+  | ModuleProposalEventPayload
+  | ModuleLifecycleEventPayload
+  | CrisisEscalatedEventPayload
+  | RoleplayMessageEventPayload
+  | WorksheetMessageEventPayload
+  | ExposureMessageEventPayload
+  | ResourceMessageEventPayload;
 
 export type Conversation = {
   conversation_id: string;
@@ -154,9 +248,9 @@ export type ConversationEvent = {
   event_type: ConversationEventType;
   role: "user" | "assistant" | "system";
   content: string;
-  structured_payload?: Record<string, unknown> | null;
-  module_run_id?: string | null;
-  parent_module_run_id?: string | null;
+  structured_payload: ConversationEventPayload | null;
+  module_run_id: string | null;
+  parent_module_run_id: string | null;
   idempotency_key: string;
   created_at: string;
 };
@@ -166,8 +260,9 @@ export type ModuleProposal = {
   conversation_id: string;
   user_id: string;
   proposed_module: ModuleType;
-  reason_code: string;
-  bounded_parameters: Record<string, unknown>;
+  source_event_id: string | null;
+  reason_code: ModuleProposalReason;
+  bounded_parameters: ModuleParameters;
   status: ModuleProposalStatus;
   request_hash: string;
   expires_at: string;
@@ -179,38 +274,45 @@ export type ModuleRun = {
   conversation_id: string;
   user_id: string;
   module_type: ModuleType;
-  parent_module_run_id?: string | null;
+  source_event_id: string | null;
+  parent_module_run_id: string | null;
   depth: number;
   status: ModuleRunStatus;
-  module_parameters: Record<string, unknown>;
-  domain_session_id?: string | null;
+  module_parameters: ModuleParameters;
+  domain_session_id: string | null;
   started_at: string;
-  ended_at?: string | null;
+  ended_at: string | null;
   version: number;
 };
 
 export type ConversationPage = {
   items: Conversation[];
-  next_cursor?: string | null;
+  next_cursor: string | null;
 };
 
 export type ConversationEventPage = {
   items: ConversationEvent[];
-  next_cursor?: string | null;
+  next_cursor: string | null;
 };
 
 export type ConversationContextDiagnostics = {
   conversation_id_hash: string;
   recent_event_count: number;
-  recent_event_sequence_start?: number | null;
-  recent_event_sequence_end?: number | null;
-  compact_summary_version?: number | null;
+  recent_event_sequence_start: number | null;
+  recent_event_sequence_end: number | null;
+  compact_summary_version: number | null;
   active_module_count: number;
   selected_memory_count: number;
   estimated_tokens: number;
   total_token_budget: number;
+  budget_profile: "ordinary" | "roleplay" | "worksheet" | "exposure" | "resource";
   dropped_sections: string[];
   tokenizer_backend: string;
+  context_backend: string;
+  cache_status: string;
+  active_overlay_type: string | null;
+  active_overlay_version: number | null;
+  parent_resume_projection_count: number;
 };
 
 export type ConversationDetailResponse = {
@@ -224,12 +326,17 @@ export type ConversationMessageResponse = {
   conversation: Conversation;
   appended_events: ConversationEvent[];
   active_module_stack: ModuleRun[];
-  pending_module_proposal?: ModuleProposal | null;
+  pending_module_proposal: ModuleProposal | null;
   response: string;
   safety_result: SafetyResult;
   context_diagnostics: ConversationContextDiagnostics;
-  workflow_response?: ChatResponse | null;
+  workflow_response: ChatResponse | null;
 };
+
+export type ConversationStreamPayload =
+  | { type: "response_chunk"; text: string }
+  | { type: "response_completed"; result: ConversationMessageResponse }
+  | { type: "response_error"; detail: string };
 
 export type ModuleControlResponse = {
   conversation: Conversation;

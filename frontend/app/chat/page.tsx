@@ -35,6 +35,7 @@ export default function ChatPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streamedResponse, setStreamedResponse] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showNotice, setShowNotice] = useState(false);
   const [noticeAcknowledged, setNoticeAcknowledged] = useState(false);
@@ -142,12 +143,14 @@ export default function ChatPage() {
     setLoading(true);
     setError(null);
     setInput("");
+    setStreamedResponse("");
     try {
-      const result = await api.sendConversationMessage(
+      const result = await api.sendConversationMessageStream(
         current.conversation_id,
         userId,
         message,
-        createIdempotencyKey()
+        createIdempotencyKey(),
+        (chunk) => setStreamedResponse((value) => value + chunk)
       );
       setEvents((items) => mergeEvents(items, result.appended_events));
       setCurrent(result.conversation);
@@ -162,6 +165,7 @@ export default function ChatPage() {
       setInput(message);
       setError(errorMessage(err, "消息发送失败"));
     } finally {
+      setStreamedResponse("");
       setLoading(false);
     }
   }
@@ -494,6 +498,19 @@ export default function ChatPage() {
                       载入更多历史
                     </Button>
                   ) : null}
+                  {streamedResponse ? (
+                    <div
+                      className="mr-auto max-w-[92%] rounded-lg border border-line bg-white p-3"
+                      aria-live="polite"
+                    >
+                      <div className="mb-1 text-xs text-slate-500">
+                        SocialEase · 正在回复
+                      </div>
+                      <p className="whitespace-pre-wrap text-sm leading-6 text-slate-800">
+                        {streamedResponse}
+                      </p>
+                    </div>
+                  ) : null}
                   {loading ? (
                     <div className="text-sm text-slate-500" role="status">
                       正在更新安全对话…
@@ -664,7 +681,11 @@ function proposalForEvent(
   if (event.event_type !== "module_proposed") {
     return null;
   }
-  const proposalId = event.structured_payload?.proposal_id;
+  const payload = event.structured_payload;
+  if (payload?.kind !== "module_proposal") {
+    return null;
+  }
+  const proposalId = payload.proposal_id;
   return (
     proposals.find((proposal) => proposal.proposal_id === proposalId) ?? null
   );

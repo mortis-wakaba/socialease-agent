@@ -160,7 +160,7 @@ export default function TracePage() {
               ? `Detected: ${trace.output_guardrail_categories?.join(", ")}`
               : trace.output_guardrail_semantic_failed
                 ? `Semantic check failed (${trace.output_guardrail_semantic_error_type ?? "unknown"}${trace.output_guardrail_semantic_schema_error_code ? `: ${trace.output_guardrail_semantic_schema_error_code}` : ""}${trace.output_guardrail_semantic_schema_error_field ? `: ${trace.output_guardrail_semantic_schema_error_field}` : ""}); deterministic checks remained active.`
-                : "No product-boundary violation detected.",
+                : `No product-boundary violation detected. Mode: ${trace.output_guardrail_evaluation_mode ?? "full"}.`,
           badge: (
             <Badge
               tone={

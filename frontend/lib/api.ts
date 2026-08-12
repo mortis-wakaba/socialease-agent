@@ -45,6 +45,7 @@ import {
   saveAccountSession,
   tokenStorageMode
 } from "./auth";
+import { parseConversationStreamFrame } from "./conversation-stream";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -286,6 +287,22 @@ export const api = {
           idempotency_key: idempotencyKey
         })
       }
+    );
+  },
+
+  sendConversationMessageStream(
+    conversationId: string,
+    userId: string,
+    message: string,
+    idempotencyKey: string,
+    onChunk: (text: string) => void
+  ) {
+    return requestConversationMessageStream(
+      conversationId,
+      userId,
+      message,
+      idempotencyKey,
+      onChunk
     );
   },
 
@@ -644,6 +661,80 @@ export const api = {
     );
   }
 };
+
+async function requestConversationMessageStream(
+  conversationId: string,
+  userId: string,
+  message: string,
+  idempotencyKey: string,
+  onChunk: (text: string) => void,
+  retryOnUnauthorized = true
+): Promise<ConversationMessageResponse> {
+  const path = `/api/conversations/${encodeURIComponent(conversationId)}/messages/stream`;
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      ...authHeaders(),
+      ...csrfHeaders()
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      message,
+      idempotency_key: idempotencyKey
+    })
+  });
+  if (response.status === 401 && retryOnUnauthorized) {
+    const refreshed = await tryRefreshSession();
+    if (refreshed) {
+      return requestConversationMessageStream(
+        conversationId,
+        userId,
+        message,
+        idempotencyKey,
+        onChunk,
+        false
+      );
+    }
+  }
+  if (!response.ok) {
+    const parsed = await parseApiError(response);
+    throw new Error(parsed.message);
+  }
+  if (!response.body) {
+    throw new Error("Streaming response body was unavailable");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed: ConversationMessageResponse | null = null;
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const parsed = parseConversationStreamFrame(frame);
+      if (parsed.type === "response_chunk") {
+        onChunk(parsed.text);
+      } else if (parsed.type === "response_completed") {
+        completed = parsed.result;
+      } else if (parsed.type === "response_error") {
+        throw new Error(parsed.detail);
+      }
+    }
+    if (done) {
+      break;
+    }
+  }
+  if (!completed) {
+    throw new Error("Streaming response ended before completion");
+  }
+  return completed;
+}
 
 function memoryLifecycleRequest(
   userId: string,
