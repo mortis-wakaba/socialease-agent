@@ -1,0 +1,92 @@
+docs/adr/0007-production-database-and-boundary-gates.md
+  s_ef6954d802d82a::t_2886219bdffce7 5-6,51,58,66-71
+docs/adr/0005-chat-harness-executable-skill-dispatch.md
+  s_ef6954d802d82a::t_2886219bdffce7 52-54
+docs/knowledge_base_design.md
+  s_ef6954d802d82a::t_7295618dc0158c 168,170-173
+  s_ef6954d802d82a::t_56810d57a734f0 21,25,39,53,65,126
+docs/architecture_diagram.md
+  s_ef6954d802d82a::t_29eabcccd445d1 53-66,74-75,79-81,104-109
+  s_ef6954d802d82a::t_065425a20796cd 89
+README.md
+  s_70b334910b4f4b::t_2f68c88aeb02bc 284
+  s_ef6954d802d82a::t_9db8bf29835ef0 267,272-273
+  s_ef6954d802d82a::t_7295618dc0158c 265-266,269-271,291,299-300
+docs/migrations.md
+  s_ef6954d802d82a::t_7295618dc0158c 68-69,73-80
+docs/environment_config.md
+  s_70b334910b4f4b::t_2418638350241f 108
+  s_70b334910b4f4b::t_db58258a1d3584 138-139,141
+  s_ef6954d802d82a::t_065425a20796cd 177-180,211-212
+  s_70b334910b4f4b::t_bc413e909d3106 99,112,119-122
+  s_70b334910b4f4b::t_97ed36993f6809 130,136-137
+  s_8702c99cac8ed0::t_32bceea53d6c84 106
+  s_8702c99cac8ed0::t_58f3913c8df4d9 95-98,100-102,104-105,109-111,113,118,123
+  s_8702c99cac8ed0::t_ed4ff9b01d1c68 142
+  s_70b334910b4f4b::t_277b6d433a8583 124-125
+  s_70b334910b4f4b::t_0b88f501b12416 151-154
+  s_8702c99cac8ed0::t_a86dfdcd1b1df0 103,114-117
+  s_70b334910b4f4b::t_7360526960cbdf 143-145,149
+  s_70b334910b4f4b::t_99cb499c79618b 176
+  s_ef6954d802d82a::t_7c00a6d300af59 140
+  s_70b334910b4f4b::t_1c6980e5ee0578 131,135
+  s_ef6954d802d82a::t_7295618dc0158c 65-67
+  s_70b334910b4f4b::t_ea83a99c50108c 146-148
+  s_8702c99cac8ed0::t_eb153bab70d268 107
+  s_70b334910b4f4b::t_dde3aebb0b8c3d 132-134
+  s_70b334910b4f4b::t_a3d2061b407e62 126-129,150,155-158
+  s_70b334910b4f4b::t_383bfc2592f283 159
+docs/adr/0009-legacy-roleplay-readonly-import.md
+  s_ef6954d802d82a::t_2886219bdffce7 3,22-26
+  s_ef6954d802d82a::t_2fc0befd8813fe 27
+docs/agent_harness_design.md
+  s_ef6954d802d82a::t_7f4559c104d1fc 37,48-49,75,287-288,294-307
+  s_ef6954d802d82a::t_065425a20796cd 27
+docs/production_readiness.md
+  s_ef6954d802d82a::t_207fa3022ba386 60-63
+  s_ef6954d802d82a::t_d5b23d9b223f9b 7,10,20,183
+  s_ef6954d802d82a::t_065425a20796cd 68-69
+docs/deployment_runbook.md
+  s_ef6954d802d82a::t_065425a20796cd 247-248
+docs/README.md
+  s_ef6954d802d82a::t_7295618dc0158c 42-43,46-47
+docs/benchmark_report.md
+  s_ef6954d802d82a::t_d5b23d9b223f9b 3-5,83,86,94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "5dc667a9352c837fd7988ec93ce05d4d096bbe01",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_70b334910b4f4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe53e-c050-7d80-bcd6-bf30a00019da",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_8702c99cac8ed0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fd0c4-a410-75e1-9007-4d04fff3b50c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_ef6954d802d82a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff4bd-55fb-79d2-98c6-fad3a0ca646d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
