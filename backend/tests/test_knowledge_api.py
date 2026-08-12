@@ -12,12 +12,6 @@ TEST_AUTH_SECRET = "knowledge-test-secret"
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
-
-
-@pytest.fixture
 async def client() -> httpx.AsyncClient:
     """Create an async ASGI client for knowledge API tests."""
     transport = httpx.ASGITransport(app=app)

@@ -111,6 +111,7 @@ class TraceRecord(BaseModel):
     agent_loop_stop_reason: str | None = None
     agent_loop_steps: list[dict[str, Any]] = Field(default_factory=list)
     output_guardrail_action: str | None = None
+    output_guardrail_evaluation_mode: str | None = None
     output_guardrail_categories: list[str] = Field(default_factory=list)
     output_guardrail_semantic_checked: bool = False
     output_guardrail_semantic_failed: bool = False

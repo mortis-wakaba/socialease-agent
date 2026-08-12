@@ -141,6 +141,7 @@ async def test_roleplay_can_nest_exposure_but_resource_cannot_nest() -> None:
         status=ModuleRunStatus.ACTIVE,
     )
     ModuleStackPolicy.validate_push([roleplay], ModuleType.EXPOSURE)
+    assert ModuleStackPolicy.can_push([roleplay], ModuleType.EXPOSURE) is True
 
     resource = _run(
         "resource-1",
@@ -151,6 +152,7 @@ async def test_roleplay_can_nest_exposure_but_resource_cannot_nest() -> None:
     )
     with pytest.raises(ConversationStateError):
         ModuleStackPolicy.validate_push([resource], ModuleType.ROLEPLAY)
+    assert ModuleStackPolicy.can_push([resource], ModuleType.ROLEPLAY) is False
 
 
 @pytest.mark.anyio

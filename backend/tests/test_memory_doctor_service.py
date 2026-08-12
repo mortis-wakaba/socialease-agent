@@ -36,12 +36,11 @@ NOW = datetime(2026, 7, 26, 8, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
-@pytest.fixture
-async def client(monkeypatch: pytest.MonkeyPatch) -> httpx.AsyncClient:
+async def client(
+    monkeypatch: pytest.MonkeyPatch,
+    migrated_database: str,
+) -> httpx.AsyncClient:
+    del migrated_database
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(

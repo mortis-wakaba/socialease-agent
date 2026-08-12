@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -26,12 +25,12 @@ from app.models_conversation import (
     ModuleType,
     RoleplayParameters,
 )
+from app.conversation.module_catalog import module_memory_request_context
 from app.services.conversation_service import (
     ConversationCommandInProgressError,
     ConversationNoticeError,
     ConversationProposalError,
     ConversationService,
-    _module_memory_request_context,
 )
 from tests.postgres_test_support import fetch_one
 
@@ -85,7 +84,7 @@ class GeneralIntent:
 
 
 def test_module_memory_context_uses_validated_parameters_not_turn_text() -> None:
-    roleplay = _module_memory_request_context(
+    roleplay = module_memory_request_context(
         ModuleType.ROLEPLAY,
         "我想补充一句",
         RoleplayParameters(
@@ -93,7 +92,7 @@ def test_module_memory_context_uses_validated_parameters_not_turn_text() -> None
             difficulty=3,
         ),
     )
-    exposure = _module_memory_request_context(
+    exposure = module_memory_request_context(
         ModuleType.EXPOSURE,
         "完成了，先保持难度",
         ExposureParameters(goal="课堂发言", starting_anxiety=7),
@@ -117,7 +116,9 @@ class GeneralHarness:
         trusted_safety_result: SafetyResult,
         trusted_intent_result: IntentResult,
         trusted_conversation_context,
+        streaming_requested: bool = False,
     ) -> ChatResponse:
+        del streaming_requested
         self.conversation_contexts.append(trusted_conversation_context)
         response = "可以先说说现在最困扰你的部分。"
         return ChatResponse(
@@ -156,16 +157,10 @@ class BlockingGeneralHarness(GeneralHarness):
 @pytest.fixture
 def repository(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    migrated_database: str,
 ) -> PostgresConversationRepository:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return PostgresConversationRepository()
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async conversation service tests on asyncio only."""
-    return "asyncio"
+    return PostgresConversationRepository(database_url=migrated_database)
 
 
 def _service(

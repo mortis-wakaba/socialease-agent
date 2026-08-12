@@ -7,20 +7,16 @@ import pytest
 
 from app.auth.tokens import create_auth_token
 from app.main import app
+from app.observability.metrics import InMemoryMetricsRepository
 from app.workflow.default_hooks import metrics_hook
 
 TEST_AUTH_SECRET = "harness-test-secret"
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
-
-
-@pytest.fixture
-async def client() -> httpx.AsyncClient:
+async def client(monkeypatch: pytest.MonkeyPatch) -> httpx.AsyncClient:
     """Create an async ASGI client without relying on Starlette TestClient."""
+    monkeypatch.setattr(metrics_hook, "repository", InMemoryMetricsRepository())
     await metrics_hook.reset()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(

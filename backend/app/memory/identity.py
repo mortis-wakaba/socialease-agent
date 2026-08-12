@@ -38,6 +38,25 @@ def memory_idempotency_key(
     return sha256(material.encode("utf-8")).hexdigest()
 
 
+def memory_supersession_idempotency_key(
+    *,
+    user_id: str,
+    target_memory_id: str,
+    memory_type: str,
+    summary: str,
+) -> str:
+    """Return a retry-safe identity for one owner-confirmed replacement."""
+    material = "\0".join(
+        (
+            user_id,
+            target_memory_id,
+            memory_type,
+            normalize_memory_summary(summary),
+        )
+    )
+    return sha256(material.encode("utf-8")).hexdigest()
+
+
 def memory_expiry(
     *,
     memory_type: MemoryType,

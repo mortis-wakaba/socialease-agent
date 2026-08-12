@@ -66,6 +66,7 @@ async def test_cleanup_scheduler_run_once_calls_retention_service() -> None:
         service,  # type: ignore[arg-type]
         CleanupSchedulerConfig(abandoned_plan_minutes=45),
         now_fn=lambda: now,
+        run_lock=FakeRunLock(),  # type: ignore[arg-type]
     )
 
     result = await scheduler.run_once()
@@ -109,6 +110,7 @@ async def test_cleanup_scheduler_run_forever_respects_max_runs_and_interval() ->
         service,  # type: ignore[arg-type]
         CleanupSchedulerConfig(interval_seconds=3),
         sleep_fn=record_sleep,
+        run_lock=FakeRunLock(),  # type: ignore[arg-type]
     )
 
     runs = await scheduler.run_forever(max_runs=3)
@@ -129,6 +131,7 @@ async def test_cleanup_scheduler_continues_after_iteration_error() -> None:
         service,  # type: ignore[arg-type]
         CleanupSchedulerConfig(interval_seconds=1),
         sleep_fn=record_sleep,
+        run_lock=FakeRunLock(),  # type: ignore[arg-type]
     )
 
     runs = await scheduler.run_forever(max_runs=2)

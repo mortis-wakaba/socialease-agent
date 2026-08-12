@@ -11,18 +11,70 @@ from app.conversation.module_overlay_store import (
     ModuleOverlayStore,
     ProtectedModuleOverlay,
 )
+from app.conversation.module_coordinator import ModuleCoordinator
 from app.memory.task_state_store import (
     InMemoryTaskStateStore,
     RedisTaskStateStore,
     TaskStateStoreUnavailable,
 )
-from app.models_conversation import ModuleRun, RoleplayParameters, ModuleType
+from app.models_conversation import (
+    ConversationEvent,
+    ConversationEventRole,
+    ConversationEventType,
+    ModuleRun,
+    ModuleType,
+    RoleplayMessageEventPayload,
+    RoleplayParameters,
+)
+from app.models_conversation_context import (
+    ConversationContextDiagnostics,
+    ConversationWorkingContext,
+)
 from app.models_module_overlay import ModuleOverlay, RoleplayOverlay
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
+class CountingTaskStateStore(InMemoryTaskStateStore[ProtectedModuleOverlay]):
+    """Count overlay reads while retaining the in-memory store behavior."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.get_calls = 0
+
+    async def get(
+        self,
+        *,
+        user_id: str,
+        task_id: str,
+    ) -> ProtectedModuleOverlay | None:
+        self.get_calls += 1
+        return await super().get(user_id=user_id, task_id=task_id)
+
+
+class ReplayMessageRepository:
+    """Minimal repository double for an idempotent module-message replay."""
+
+    def __init__(self, run: ModuleRun, event: ConversationEvent) -> None:
+        self.run = run
+        self.event = event
+
+    async def list_module_stack(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[ModuleRun]:
+        del conversation_id, user_id
+        return [self.run]
+
+    async def get_event_by_idempotency(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationEvent | None:
+        del conversation_id, user_id, idempotency_key
+        return self.event
 
 
 @pytest.mark.anyio
@@ -80,6 +132,66 @@ async def test_overlay_cache_tamper_is_a_safe_miss() -> None:
     )
 
     assert await store.get(run) is None
+
+
+@pytest.mark.anyio
+async def test_coordinator_projects_module_context_once_for_replay() -> None:
+    backing = CountingTaskStateStore()
+    store = ModuleOverlayStore(
+        store=backing,
+        protector=AESGCMConversationContentProtector(
+            key=b"x" * 32,
+            key_version="test-v1",
+        ),
+    )
+    run = _run()
+    await store.put(run, _overlay(run))
+    replay = ConversationEvent(
+        event_id="module-replay-event",
+        conversation_id=run.conversation_id,
+        user_id=run.user_id,
+        sequence_no=2,
+        event_type=ConversationEventType.MODULE_MESSAGE,
+        role=ConversationEventRole.ASSISTANT,
+        content="已重放模块响应。",
+        structured_payload=RoleplayMessageEventPayload(session_id="session-1"),
+        module_run_id=run.module_run_id,
+        idempotency_key="module-response:turn-1",
+        created_at=datetime.now(UTC),
+    )
+    coordinator = ModuleCoordinator(
+        repository=ReplayMessageRepository(run, replay),  # type: ignore[arg-type]
+        adapters={},
+        overlay_store=store,
+    )
+    context = ConversationWorkingContext(
+        conversation_id=run.conversation_id,
+        current_user_message="继续",
+        diagnostics=ConversationContextDiagnostics(
+            conversation_id_hash="0" * 16,
+            recent_event_count=0,
+            active_module_count=1,
+            selected_memory_count=0,
+            estimated_tokens=0,
+            total_token_budget=7000,
+            tokenizer_backend="test",
+        ),
+    )
+
+    result, event, projected = await coordinator.handle_message(
+        conversation_id=run.conversation_id,
+        user_id=run.user_id,
+        message="继续",
+        idempotency_key="turn-1",
+        context=context,
+    )
+
+    assert result.response == replay.content
+    assert event == replay
+    assert projected.active_module_overlay is not None
+    assert projected.active_module_overlay.module_run_id == run.module_run_id
+    assert projected.diagnostics.active_overlay_type == ModuleType.ROLEPLAY.value
+    assert backing.get_calls == 1
 
 
 @pytest.mark.anyio

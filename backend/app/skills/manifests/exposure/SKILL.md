@@ -2,21 +2,19 @@
 
 ## When to use
 
-Use this skill when the user wants a gradual, safe, stoppable social-practice ladder for a specific social goal.
+This manifest describes the legacy `SkillRegistry` boundary for exposure intent. It redirects the user to the unified Conversation workflow; it does not create or update an exposure plan. After the user accepts a typed Module Proposal, the Conversation Exposure Adapter owns execution.
 
 ## Inputs
 
 - `user_id`
-- target scenario
-- current anxiety level
-- previous attempts
-- task feedback such as completed, skipped, or too hard
+- current user message
 
 ## Output contract
 
-- A 5-7 step practice ladder from easier to harder.
-- Each task includes difficulty, estimated time, success criteria, fallback task, and citations.
-- Feedback updates the suggested next task.
+- `use_unified_conversation` navigation result.
+- No plan, attempt, protocol, or memory mutation.
+
+The Conversation Exposure Adapter, not this skill entrypoint, consumes a confirmed proposal and invokes the domain service that creates the bounded, stoppable practice ladder.
 
 ## Safety boundaries
 
@@ -27,4 +25,4 @@ Use this skill when the user wants a gradual, safe, stoppable social-practice la
 
 ## Fallback behavior
 
-Use deterministic planning rules when LLM is unavailable; preserve citations from social-skills guidance.
+Return the deterministic unified-conversation navigation result; this boundary does not invoke an LLM.

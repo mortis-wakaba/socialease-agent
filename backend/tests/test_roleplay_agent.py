@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.agents.roleplay import RoleplayAgent
+from app.llm.prompts import build_roleplay_user_prompt
 from app.models_knowledge import Citation
 from app.models_roleplay import (
     RoleplayGuidance,
@@ -83,6 +84,21 @@ def make_session() -> RoleplaySession:
         created_at=now,
         updated_at=now,
     )
+
+
+def test_roleplay_prompt_includes_stable_context_without_episodic_memory() -> None:
+    prompt = build_roleplay_user_prompt(
+        scenario={"summary": "小组讨论"},
+        difficulty=3,
+        guidance="先听完再回应。",
+        recent_messages=[],
+        user_message="我想补充一点。",
+        stable_memory_context={"preferred_style": "gentle_specific"},
+    )
+
+    assert '"preferred_style": "gentle_specific"' in prompt
+    assert "Stable preference and practice context" in prompt
+    assert "Relevant episodic memories" not in prompt
 
 
 def test_feedback_uses_privacy_safe_features_when_content_is_minimized() -> None:
@@ -193,6 +209,19 @@ async def test_next_turn_uses_llm_when_available() -> None:
     prompt = str(llm_client.calls[0]["user_prompt"])
     assert "课堂上轮到我发言" in prompt
     assert "先说核心观点" in prompt
+
+
+@pytest.mark.anyio
+async def test_next_turn_accepts_injected_system_prompt_builder() -> None:
+    llm_client = FakeLLMClient(response="我理解你的边界。")
+    agent = RoleplayAgent(
+        llm_client=llm_client,
+        system_prompt_builder=lambda: "E10d speaker contract",
+    )
+
+    await agent.next_turn(make_session(), "这周排满了，暂时接不了。")
+
+    assert llm_client.calls[0]["system_prompt"] == "E10d speaker contract"
 
 
 @pytest.mark.anyio

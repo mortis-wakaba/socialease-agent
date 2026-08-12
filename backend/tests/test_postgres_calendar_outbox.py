@@ -5,8 +5,6 @@ import asyncio
 import os
 from uuid import uuid4
 
-from alembic import command
-from alembic.config import Config
 import pytest
 
 from app.calendar.outbox import CalendarActionOutbox
@@ -21,20 +19,9 @@ from app.safety.direct_actions import direct_action_request_hash
 TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
 
 pytestmark = [
-    pytest.mark.skipif(
-        not TEST_DATABASE_URL,
-        reason="SOCIALEASE_TEST_DATABASE_URL is required.",
-    ),
+    pytest.mark.usefixtures("migrated_database"),
     pytest.mark.anyio,
 ]
-
-
-@pytest.fixture(scope="module", autouse=True)
-def migrated_database() -> None:
-    """Apply the outbox migration before integration tests."""
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL or "")
-    command.upgrade(config, "head")
 
 
 async def _approved_job(outbox: CalendarActionOutbox):

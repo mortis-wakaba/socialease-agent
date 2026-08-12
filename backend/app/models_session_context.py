@@ -41,7 +41,7 @@ class RoleplayPromptContext(BaseModel):
         default_factory=list,
         max_length=2,
     )
-    retrieved_memories: list[str] = Field(default_factory=list, max_length=3)
+    stable_memory_context: dict[str, object] = Field(default_factory=dict)
     diagnostics: ConversationContextDiagnostics
 
 

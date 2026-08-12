@@ -1,6 +1,7 @@
 """User-facing models for inspecting and controlling agent memory."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,6 +61,7 @@ class EpisodicMemoryView(BaseModel):
     updated_at: datetime
     last_retrieved_at: datetime | None = None
     expires_at: datetime | None = None
+    supersedes_id: str | None = None
     version: int
 
 
@@ -132,6 +134,57 @@ class MemoryVersionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_version: int = Field(ge=1)
+
+
+class MemorySupersedeRequest(BaseModel):
+    """Explicit owner confirmation for replacing one saved memory."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    summary: str = Field(min_length=1, max_length=500)
+    expected_version: int = Field(ge=1)
+
+
+class MemoryCorrectionResolutionRequest(BaseModel):
+    """Natural-language correction text awaiting server-side target resolution."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    statement: str = Field(min_length=2, max_length=1200)
+
+
+class MemoryCorrectionCandidateView(BaseModel):
+    """One owner-scoped target candidate requiring an explicit user decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memory_id: str
+    memory_type: MemoryType
+    current_summary: str
+    replacement_summary: str
+    expected_version: int = Field(ge=1)
+
+
+class MemoryCorrectionResolutionResponse(BaseModel):
+    """Two-step correction result that never mutates memory by itself."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    status: Literal[
+        "confirmation_required",
+        "not_correction",
+        "no_match",
+        "rejected",
+        "unavailable",
+        "resolution_failed",
+    ]
+    candidates: list[MemoryCorrectionCandidateView] = Field(
+        default_factory=list,
+        max_length=3,
+    )
+    error_category: str | None = None
+    output_parser_version: str
 
 
 class MemoryMutationResponse(BaseModel):

@@ -1,7 +1,6 @@
 """Tests for nested module push, pop, resume, and explicit termination."""
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -175,16 +174,10 @@ class FailOnceStartAdapter(RecordingAdapter):
 @pytest.fixture
 def repository(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    migrated_database: str,
 ) -> PostgresConversationRepository:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return PostgresConversationRepository()
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async module coordinator tests on asyncio only."""
-    return "asyncio"
+    return PostgresConversationRepository(database_url=migrated_database)
 
 
 @pytest.mark.anyio
@@ -395,14 +388,18 @@ async def test_active_module_receives_messages_on_same_timeline(
         proposal,
         _working_context(conversation.conversation_id),
     )
-    result, event = await coordinator.handle_message(
+    result, event, projected = await coordinator.handle_message(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         message="我的练习回复",
         idempotency_key="turn-001",
         context=_working_context(conversation.conversation_id),
     )
-    replay_result, replay_event = await coordinator.handle_message(
+    (
+        replay_result,
+        replay_event,
+        replay_projected,
+    ) = await coordinator.handle_message(
         conversation_id=conversation.conversation_id,
         user_id="owner",
         message="我的练习回复",
@@ -415,6 +412,10 @@ async def test_active_module_receives_messages_on_same_timeline(
     assert event.sequence_no == 3
     assert replay_result.response == result.response
     assert replay_event.event_id == event.event_id
+    assert projected.active_module_overlay is not None
+    assert replay_projected.active_module_overlay is not None
+    assert projected.diagnostics.active_overlay_type == ModuleType.ROLEPLAY.value
+    assert replay_projected.diagnostics.active_overlay_type == ModuleType.ROLEPLAY.value
     assert adapter.actions.count("message:我的练习回复") == 1
     refreshed = await repository.get_module_run_for_user(
         module_run_id=event.module_run_id or "",

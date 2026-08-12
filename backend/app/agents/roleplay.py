@@ -1,5 +1,7 @@
 """Role-play agent for safe, RAG-grounded social practice scenarios."""
 
+from collections.abc import Callable
+
 from app.llm.base import BaseLLMClient
 from app.llm.prompts import (
     build_roleplay_system_prompt,
@@ -52,8 +54,16 @@ _FALLBACK_PROMPTS = {
 class RoleplayAgent:
     """Generate optional LLM-backed role-play turns plus structured feedback."""
 
-    def __init__(self, llm_client: BaseLLMClient | None = None) -> None:
+    def __init__(
+        self,
+        llm_client: BaseLLMClient | None = None,
+        *,
+        system_prompt_builder: Callable[[], str] | None = None,
+    ) -> None:
         self.llm_client = llm_client
+        self.system_prompt_builder = (
+            system_prompt_builder or build_roleplay_system_prompt
+        )
 
     def guidance_query(self, scenario: ScenarioSpec) -> str:
         """Build one bounded RAG query from open scenario facets."""
@@ -140,7 +150,7 @@ class RoleplayAgent:
             else "No specific guidance found; use general safe role-play scaffolding."
         )
         return await self.llm_client.generate_text(
-            system_prompt=build_roleplay_system_prompt(),
+            system_prompt=self.system_prompt_builder(),
             user_prompt=build_roleplay_user_prompt(
                 scenario=_scenario_spec(session).model_dump(mode="json"),
                 difficulty=session.difficulty,
@@ -153,10 +163,10 @@ class RoleplayAgent:
                     and prompt_context.compact_state is not None
                     else None
                 ),
-                retrieved_memories=(
-                    prompt_context.retrieved_memories
+                stable_memory_context=(
+                    prompt_context.stable_memory_context
                     if prompt_context is not None
-                    else []
+                    else {}
                 ),
                 shared_summary=(
                     prompt_context.shared_summary.model_dump(mode="json")

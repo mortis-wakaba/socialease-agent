@@ -5,7 +5,10 @@ import json
 import pytest
 
 from app.agents.support import SupportAgent
-from app.agents.support_generation import SupportGenerationAgent
+from app.agents.support_generation import (
+    SupportGenerationAgent,
+    requests_direct_wording_v2,
+)
 from app.models import Intent, RiskLevel, SafetyResult
 from app.models_support_generation import PresentationConstraints
 
@@ -25,6 +28,139 @@ class FakeLLMClient:
     ) -> str:
         del system_prompt, user_prompt, temperature
         return self.response
+
+
+class FakeJSONModeLLMClient(FakeLLMClient):
+    """Expose JSON mode and fail if support generation uses plain text."""
+
+    json_mode_enabled = True
+
+    async def generate_text(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.2,
+    ) -> str:
+        del system_prompt, user_prompt, temperature
+        raise AssertionError("plain text generation must not be used")
+
+    async def generate_json_text(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.2,
+    ) -> str:
+        del system_prompt, user_prompt, temperature
+        return self.response
+
+
+class FakeStreamingLLMClient(FakeLLMClient):
+    """Yield configured provider deltas without buffering."""
+
+    def __init__(self, deltas: list[str]) -> None:
+        super().__init__("")
+        self.deltas = deltas
+
+    async def stream_text(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.2,
+    ):
+        assert "plain text" in system_prompt
+        assert "User message" in user_prompt
+        del temperature
+        for delta in self.deltas:
+            yield delta
+
+
+def _append_to(items: list[str]):
+    async def append(item: str) -> None:
+        items.append(item)
+
+    return append
+
+
+@pytest.mark.anyio
+async def test_support_generation_streams_only_complete_checked_sentences() -> None:
+    agent = SupportGenerationAgent(
+        llm_client=FakeStreamingLLMClient(
+            ["听起来这件事让你有些紧", "张。可以先准备一句开场。"]
+        )
+    )
+    chunks: list[str] = []
+
+    response, metadata = await agent.respond_stream(
+        message="最近小组讨论让我有点紧张",
+        intent=Intent.EMOTIONAL_SUPPORT,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="low"),
+        chunk_sink=_append_to(chunks),
+    )
+
+    assert chunks == ["听起来这件事让你有些紧张。", "可以先准备一句开场。"]
+    assert response == "".join(chunks)
+    assert metadata["native_streaming_used"] is True
+    assert metadata["fallback_used"] is False
+
+
+@pytest.mark.anyio
+async def test_support_generation_never_streams_unsafe_sentence() -> None:
+    agent = SupportGenerationAgent(
+        llm_client=FakeStreamingLLMClient(
+            ["先慢一点。", "你患有社交焦虑症。"]
+        )
+    )
+    chunks: list[str] = []
+
+    response, metadata = await agent.respond_stream(
+        message="最近小组讨论让我有点紧张",
+        intent=Intent.EMOTIONAL_SUPPORT,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="low"),
+        chunk_sink=_append_to(chunks),
+    )
+
+    assert chunks[0] == "先慢一点。"
+    assert "你患有" not in "".join(chunks)
+    assert response == "".join(chunks)
+    assert metadata["stream_interrupted"] is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "这次我只想准备一句很短的开场。",
+        "请只根据现在这句话，给一个不超过二十字的开场。",
+        "请帮我组织一句简短拒绝。",
+    ],
+)
+def test_e10b_direct_wording_v2_accepts_explicit_phrase_requests(
+    message: str,
+) -> None:
+    assert requests_direct_wording_v2(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "我想练习开场。",
+        "陪我做一次角色扮演。",
+        "给我一些参与小组讨论的建议。",
+        "我不知道该怎么办。",
+    ],
+)
+def test_e10b_direct_wording_v2_rejects_practice_and_generic_support(
+    message: str,
+) -> None:
+    assert not requests_direct_wording_v2(message)
+
+
+def test_support_generation_agent_uses_v2_direct_wording_matcher_by_default() -> None:
+    agent = SupportGenerationAgent(llm_client=None)
+
+    assert agent.direct_wording_matcher("这次我只想准备一句很短的开场。")
 
 
 def _valid_generation() -> str:
@@ -68,6 +204,22 @@ async def test_support_generation_uses_validated_micro_cbt_structure() -> None:
 
 
 @pytest.mark.anyio
+async def test_support_generation_uses_provider_json_mode_when_enabled() -> None:
+    agent = SupportGenerationAgent(
+        llm_client=FakeJSONModeLLMClient(_valid_generation())
+    )
+
+    _response, data = await agent.respond(
+        message="小组讨论时我总觉得一开口大家就会觉得我的观点很差。",
+        intent=Intent.EMOTIONAL_SUPPORT,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="test"),
+    )
+
+    assert data["fallback_used"] is False
+    assert data["json_mode_used"] is True
+
+
+@pytest.mark.anyio
 async def test_support_generation_guardrail_falls_back_on_coercive_output() -> None:
     payload = json.loads(_valid_generation())
     payload["practice_steps"] = ["不能暂停，必须立刻完成最高难度练习"]
@@ -84,6 +236,31 @@ async def test_support_generation_guardrail_falls_back_on_coercive_output() -> N
     assert "不能暂停" not in response
     assert data["fallback_used"] is True
     assert data["fallback_reason"] == "OUTPUT_GUARDRAIL"
+    assert data["llm_usage"]["error_category"] == "PROHIBITED_SUPPORT_CONTENT"
+
+
+@pytest.mark.anyio
+async def test_support_generation_rejects_historical_thought_as_current_span() -> None:
+    """Keep CBT current-message grounding strict for the generic support route."""
+    payload = json.loads(_valid_generation())
+    payload["automatic_thought"] = "一开口大家就会觉得我的观点很差"
+    agent = SupportGenerationAgent(
+        llm_client=FakeLLMClient(json.dumps(payload, ensure_ascii=False))
+    )
+
+    _response, data = await agent.respond(
+        message="我上次课堂发言前在担心什么？",
+        intent=Intent.PROGRESS_REVIEW,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="test"),
+        memory_tool_evidence=[
+            "practice_experience: 当时担心一开口大家就会觉得观点很差。"
+        ],
+    )
+
+    assert data["fallback_reason"] == "OUTPUT_GUARDRAIL"
+    assert data["llm_usage"]["error_category"] == (
+        "UNGROUNDED_AUTOMATIC_THOUGHT"
+    )
 
 
 def test_deterministic_fallback_honors_roleplay_pause() -> None:

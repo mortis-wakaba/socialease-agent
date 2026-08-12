@@ -294,8 +294,12 @@ class ModuleCoordinator:
         message: str,
         idempotency_key: str,
         context: ConversationWorkingContext,
-    ) -> tuple[ModuleAdapterResult, ConversationEvent]:
-        """Send one message to the active top module frame."""
+    ) -> tuple[
+        ModuleAdapterResult,
+        ConversationEvent,
+        ConversationWorkingContext,
+    ]:
+        """Send one message using the coordinator-owned context projection."""
         stack = await self._repository.list_module_stack(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -303,6 +307,9 @@ class ModuleCoordinator:
         if not stack:
             raise LookupError("active module not found")
         run = stack[-1]
+        projected_context = await self.project_context(
+            context.model_copy(update={"active_module_stack": stack})
+        )
         response_key = f"module-response:{idempotency_key}"
         replay = await self._repository.get_event_by_idempotency(
             conversation_id=conversation_id,
@@ -319,10 +326,8 @@ class ModuleCoordinator:
                     event_payload=replay.structured_payload,
                 ),
                 replay,
+                projected_context,
             )
-        projected_context = await self.project_context(
-            context.model_copy(update={"active_module_stack": stack})
-        )
         overlay = projected_context.active_module_overlay
         if overlay is None or overlay.module_run_id != run.module_run_id:
             raise LookupError("active module overlay not found")
@@ -356,7 +361,7 @@ class ModuleCoordinator:
             result=result,
             idempotency_key=response_key,
         )
-        return result, event
+        return result, event, projected_context
 
     async def terminate_current(
         self,

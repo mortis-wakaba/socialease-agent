@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.protocols.service import ProtocolService
 from app.services.retention_service import retention_service
 from app.safety.actions import HarnessAction

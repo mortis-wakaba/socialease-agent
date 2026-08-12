@@ -3,6 +3,11 @@
 from datetime import UTC, datetime
 
 from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
+from app.memory.completed_event_writer import CompletedPracticeMemoryWriter
+from app.memory.metadata_contract import (
+    MemoryOutcomeCode,
+    write_metadata_from_scenario,
+)
 from app.models_conversation import (
     ModuleRun,
     RoleplayMessageEventPayload,
@@ -20,14 +25,21 @@ from app.models_roleplay import (
     RoleplayResumeRequest,
     RoleplayStartRequest,
 )
+from app.models_long_term_memory import MemoryEvidenceType, MemorySourceType
 from app.services.roleplay_service import RoleplayService, roleplay_service
 
 
 class RoleplayModuleAdapter:
     """Map role-play sessions to a conversation module frame."""
 
-    def __init__(self, service: RoleplayService | None = None) -> None:
+    def __init__(
+        self,
+        service: RoleplayService | None = None,
+        *,
+        memory_writer: CompletedPracticeMemoryWriter | None = None,
+    ) -> None:
         self._service = service or roleplay_service
+        self._memory_writer = memory_writer
 
     async def prepare_start(
         self,
@@ -178,10 +190,30 @@ class RoleplayModuleAdapter:
         )
 
     async def terminate(self, run: ModuleRun) -> None:
-        await self._service.complete_conversation_session(
+        session = await self._service.complete_conversation_session(
             session_id=_session_id(run),
             user_id=run.user_id,
         )
+        if self._memory_writer is not None and session.practice_features:
+            scenario = session.scenario_spec
+            if scenario is None:
+                return
+            await self._memory_writer.record_completed_practice(
+                user_id=run.user_id,
+                source_id=session.session_id,
+                safe_summary=(
+                    f"已完成一次角色扮演练习：{scenario.safe_summary}"
+                ),
+                metadata=write_metadata_from_scenario(
+                    scenario,
+                    source_type=MemorySourceType.ROLEPLAY,
+                    evidence_type=(
+                        MemoryEvidenceType.COMPLETED_PRODUCT_ACTION
+                    ),
+                    outcome_code=MemoryOutcomeCode.COMPLETED,
+                    practice_thread_id=session.session_id,
+                ),
+            )
 
     async def delete_runtime_context(self, run: ModuleRun) -> None:
         del run

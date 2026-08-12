@@ -405,7 +405,7 @@ def _shared_roleplay_prompt_context(
         ),
         shared_summary=context.compact_summary,
         parent_resume_projections=context.parent_resume_projections,
-        retrieved_memories=context.selected_agent_memory[:3],
+        stable_memory_context=context.selected_stable_memory,
         diagnostics=context.diagnostics,
     )
 

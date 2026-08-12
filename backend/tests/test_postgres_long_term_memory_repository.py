@@ -5,8 +5,6 @@ import os
 from uuid import uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import text
 
 from app.db.postgres.long_term_memory_repository import (
@@ -53,24 +51,35 @@ from app.services.memory_privacy_service import MemoryPrivacyService
 TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
 NOW = datetime(2026, 7, 26, 8, 0, tzinfo=timezone.utc)
 
-pytestmark = pytest.mark.skipif(
-    not TEST_DATABASE_URL,
-    reason="SOCIALEASE_TEST_DATABASE_URL is required for PostgreSQL integration tests.",
-)
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
+
+class _DeterministicEmbeddingProvider:
+    """Small test double with the production 512-dimensional contract."""
+
+    provider_name = "test"
+    model_name = "test-bge"
+    model_revision = "test-bge-v1"
+    dimensions = 512
+    model_size_mb = 0.0
+
+    def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector(text) for text in texts]
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector(text) for text in texts]
+
+    @staticmethod
+    def _vector(text: str) -> list[float]:
+        vector = [0.0] * 512
+        vector[0 if "关键词" in text else 1] = 1.0
+        return vector
 
 
 def _scenario(description: str) -> ScenarioSpec:
     return ScenarioInterpreter().interpret(description=description).model_copy(
         update={"scenario_id": f"scenario_{description}"}
     )
-
-
-@pytest.fixture(scope="module", autouse=True)
-def migrated_database() -> None:
-    """Apply the complete Alembic chain before repository tests."""
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL or "")
-    command.upgrade(config, "head")
 
 
 @pytest.fixture
@@ -98,6 +107,86 @@ async def test_memory_fts_index_covers_the_custom_search_vector(
     normalized = " ".join(definition.casefold().split())
     assert "using gin" in normalized
     assert "socialease_memory_fts_text(summary)" in normalized
+
+
+@pytest.mark.anyio
+async def test_pgvector_schema_and_search_are_owner_scoped() -> None:
+    """Persisted embeddings should be indexed and filtered inside PostgreSQL."""
+    assert TEST_DATABASE_URL is not None
+    provider = _DeterministicEmbeddingProvider()
+    repository = PostgresLongTermMemoryRepository(
+        database_url=TEST_DATABASE_URL,
+        embedding_provider=provider,
+    )
+    user_id = f"pg_vector_{uuid4().hex}"
+    matching = _memory(user_id).model_copy(
+        update={"summary": "先写下一个关键词，再开始表达。"}
+    )
+    other_user = _memory(f"other_{user_id}").model_copy(
+        update={"summary": "先写下一个关键词，再开始表达。"}
+    )
+    await repository.create_memory(matching, reason_code="vector_test")
+    await repository.create_memory(other_user, reason_code="vector_test")
+
+    results = await repository.search_memory_vector_candidates(
+        user_id=user_id,
+        statuses=(MemoryRecordStatus.ACTIVE,),
+        memory_types=(matching.memory_type,),
+        query_vector=provider.embed_queries(["关键词"])[0],
+        embedding_revision=provider.model_revision,
+        minimum_similarity=0.9,
+        now=NOW,
+        limit=10,
+    )
+    async with repository.engine.connect() as connection:
+        index_definition = (await connection.execute(
+            text(
+                """SELECT pg_get_indexdef(indexrelid)
+                FROM pg_index
+                WHERE indexrelid =
+                    'idx_episodic_memories_embedding_hnsw'::regclass"""
+            )
+        )).scalar_one()
+
+    assert [(record.memory_id, similarity) for record, similarity in results] == [
+        (matching.memory_id, pytest.approx(1.0))
+    ]
+    assert "using hnsw" in " ".join(index_definition.casefold().split())
+
+
+@pytest.mark.anyio
+async def test_embedding_backfill_is_idempotent() -> None:
+    """Existing lexical-only rows should be safely upgraded outside migration."""
+    assert TEST_DATABASE_URL is not None
+    user_id = f"pg_vector_backfill_{uuid4().hex}"
+    lexical_repository = PostgresLongTermMemoryRepository(
+        database_url=TEST_DATABASE_URL
+    )
+    record = _memory(user_id).model_copy(
+        update={"summary": "先写下一个关键词，再开始表达。"}
+    )
+    await lexical_repository.create_memory(record, reason_code="backfill_test")
+    vector_repository = PostgresLongTermMemoryRepository(
+        database_url=TEST_DATABASE_URL,
+        embedding_provider=_DeterministicEmbeddingProvider(),
+    )
+
+    # The integration database is session-scoped, so this production-wide
+    # backfill may also upgrade lexical-only rows created by earlier tests.
+    first = await vector_repository.backfill_embeddings(limit=100_000)
+    second = await vector_repository.backfill_embeddings(limit=100_000)
+    async with vector_repository.engine.connect() as connection:
+        revision = (await connection.execute(
+            text(
+                """SELECT embedding_revision FROM episodic_memories
+                WHERE memory_id = :memory_id AND user_id = :user_id"""
+            ),
+            {"memory_id": record.memory_id, "user_id": user_id},
+        )).scalar_one()
+
+    assert first >= 1
+    assert second == 0
+    assert revision == _DeterministicEmbeddingProvider.model_revision
 
 
 @pytest.mark.anyio

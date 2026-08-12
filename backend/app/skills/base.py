@@ -9,6 +9,7 @@ from app.models_conversation_context import ConversationPromptContext
 from app.models_context import SkillContextProjection
 from app.models_support_generation import PresentationConstraints
 from app.workflow.context import RunContext
+from app.workflow.context import ResponseChunkSink
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,11 @@ class SkillContext:
         """Return explicit presentation preferences independent from business intent."""
         return self.run.response_constraints
 
+    @property
+    def response_chunk_sink(self) -> ResponseChunkSink | None:
+        """Return the optional sink for policy-approved response sentences."""
+        return self.run.response_chunk_sink
+
 
 @dataclass(frozen=True)
 class SkillResult:
@@ -74,6 +80,7 @@ class SkillResult:
     response: str
     structured_data: dict[str, Any] = field(default_factory=dict)
     selected_agent: str = "unknown_skill"
+    memory_evidence: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

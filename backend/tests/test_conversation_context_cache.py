@@ -31,18 +31,12 @@ from app.models_conversation_context import ConversationCompactSummary
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    """Run async cache contracts on asyncio."""
-    return "asyncio"
-
-
-@pytest.fixture
 def repository(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
+    migrated_database: str,
 ) -> PostgresConversationRepository:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return PostgresConversationRepository()
+    return PostgresConversationRepository(database_url=migrated_database)
 
 
 @pytest.mark.anyio

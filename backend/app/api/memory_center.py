@@ -11,10 +11,13 @@ from app.memory.long_term_repository import (
 )
 from app.models_memory_center import (
     MemoryCenterResponse,
+    MemoryCorrectionResolutionRequest,
+    MemoryCorrectionResolutionResponse,
     MemoryEditRequest,
     MemoryMutationResponse,
     MemoryProposalDecisionResponse,
     MemoryProposalListResponse,
+    MemorySupersedeRequest,
     MemoryVersionRequest,
 )
 from app.models_memory import (
@@ -23,9 +26,14 @@ from app.models_memory import (
     MemoryTypePersonalizationResponse,
 )
 from app.services.memory_center_service import memory_center_service
+from app.services.memory_correction_service import MemoryCorrectionService
 
 
 router = APIRouter(tags=["memory-center"])
+memory_correction_service = MemoryCorrectionService(
+    memory_repository=memory_center_service.memory_repository,
+    settings_repository=memory_center_service.settings_repository,
+)
 
 
 @router.get(
@@ -52,6 +60,23 @@ async def list_memory_proposals(
     """Return pending candidates that still require an owner decision."""
     require_owner_path_user(user_id, current_user)
     return await memory_center_service.list_proposals(user_id)
+
+
+@router.post(
+    "/users/{user_id}/memory-corrections/resolve",
+    response_model=MemoryCorrectionResolutionResponse,
+)
+async def resolve_memory_correction(
+    user_id: str,
+    request: MemoryCorrectionResolutionRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> MemoryCorrectionResolutionResponse:
+    """Resolve owner-scoped candidates without mutating any saved memory."""
+    require_owner_path_user(user_id, current_user)
+    return await memory_correction_service.resolve(
+        user_id=user_id,
+        statement=request.statement,
+    )
 
 
 @router.put(
@@ -101,6 +126,35 @@ async def edit_memory(
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except (MemoryNotFoundError, MemoryConflictError) as error:
+        raise _memory_http_error(error) from error
+
+
+@router.post(
+    "/users/{user_id}/memories/{memory_id}/supersede",
+    response_model=MemoryMutationResponse,
+)
+async def supersede_memory(
+    user_id: str,
+    memory_id: str,
+    request: MemorySupersedeRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> MemoryMutationResponse:
+    """Replace one owner-selected memory through an atomic lifecycle change."""
+    require_owner_path_user(user_id, current_user)
+    try:
+        return await memory_center_service.supersede(
+            user_id=user_id,
+            memory_id=memory_id,
+            summary=request.summary,
+            expected_version=request.expected_version,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (
+        MemoryNotFoundError,
+        MemoryConflictError,
+        InvalidMemoryTransitionError,
+    ) as error:
         raise _memory_http_error(error) from error
 
 

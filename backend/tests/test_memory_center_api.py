@@ -7,8 +7,11 @@ from uuid import uuid4
 import httpx
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.db.factory import repository_factory
 from app.main import app
+from app.memory.identity import memory_supersession_idempotency_key
 from app.memory.retriever import EpisodicMemoryRetriever
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
@@ -27,11 +30,6 @@ from app.models_memory import UserConsentState
 
 
 NOW = datetime.now(timezone.utc)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
 
 
 @pytest.fixture
@@ -212,6 +210,128 @@ async def test_memory_edit_archive_restore_delete_are_versioned_and_scoped(
 
 
 @pytest.mark.anyio
+async def test_memory_supersession_is_owner_scoped_atomic_and_audited(
+    client: httpx.AsyncClient,
+) -> None:
+    user_id = f"memory_supersession_owner_{uuid4().hex}"
+    other_id = f"memory_supersession_other_{uuid4().hex}"
+    repository = repository_factory().long_term_memory_repository()
+    old = _memory(user_id, summary="准备完整逐字稿曾对小组发言有帮助。")
+    await repository.create_memory(old, reason_code="user_confirmed_proposal")
+
+    forbidden = await client.post(
+        f"/api/users/{user_id}/memories/{old.memory_id}/supersede",
+        headers=_headers(other_id),
+        json={"summary": "现在只写三个关键词。", "expected_version": 1},
+    )
+    replaced = await client.post(
+        f"/api/users/{user_id}/memories/{old.memory_id}/supersede",
+        headers=_headers(user_id),
+        json={
+            "summary": "现在只写三个关键词提示，不再准备完整逐字稿。",
+            "expected_version": 1,
+        },
+    )
+
+    assert forbidden.status_code == 403
+    assert replaced.status_code == 200
+    replacement_payload = replaced.json()["memory"]
+    assert replacement_payload["status"] == "active"
+    assert replacement_payload["supersedes_id"] == old.memory_id
+    replacement_id = replacement_payload["memory_id"]
+
+    retired = await repository.get_memory(old.memory_id, user_id)
+    replacement = await repository.get_memory(replacement_id, user_id)
+    assert retired is not None and retired.status == MemoryRecordStatus.SUPERSEDED
+    assert retired.version == 2
+    assert replacement is not None and replacement.supersedes_id == old.memory_id
+    assert replacement.memory_type == old.memory_type
+
+    stale = await client.post(
+        f"/api/users/{user_id}/memories/{old.memory_id}/supersede",
+        headers=_headers(user_id),
+        json={"summary": "换成一句开场。", "expected_version": 1},
+    )
+    assert stale.status_code == 409
+
+    events = await repository.list_events(user_id=user_id, limit=20)
+    assert any(
+        event.subject_id == old.memory_id
+        and event.event_type.value == "memory_superseded"
+        for event in events
+    )
+    assert any(
+        event.subject_id == replacement_id
+        and event.event_type.value == "memory_committed"
+        for event in events
+    )
+    assert "三个关键词" not in str(
+        [event.model_dump(mode="json") for event in events]
+    )
+
+
+@pytest.mark.anyio
+async def test_memory_supersession_rejects_unsafe_replacement_without_retiring_old(
+    client: httpx.AsyncClient,
+) -> None:
+    user_id = f"memory_supersession_safe_{uuid4().hex}"
+    repository = repository_factory().long_term_memory_repository()
+    old = _memory(user_id)
+    await repository.create_memory(old, reason_code="user_confirmed_proposal")
+
+    response = await client.post(
+        f"/api/users/{user_id}/memories/{old.memory_id}/supersede",
+        headers=_headers(user_id),
+        json={
+            "summary": "我确诊了焦虑症，请保存电话 13912345678。",
+            "expected_version": 1,
+        },
+    )
+
+    assert response.status_code == 422
+    unchanged = await repository.get_memory(old.memory_id, user_id)
+    assert unchanged is not None
+    assert unchanged.status == MemoryRecordStatus.ACTIVE
+    assert unchanged.version == 1
+
+
+@pytest.mark.anyio
+async def test_memory_supersession_rolls_back_old_status_when_insert_conflicts(
+    client: httpx.AsyncClient,
+) -> None:
+    user_id = f"memory_supersession_conflict_{uuid4().hex}"
+    summary = "现在改为只写三个关键词提示。"
+    repository = repository_factory().long_term_memory_repository()
+    old = _memory(user_id, summary="以前会准备完整逐字稿。")
+    await repository.create_memory(old, reason_code="user_confirmed_proposal")
+    key = memory_supersession_idempotency_key(
+        user_id=user_id,
+        target_memory_id=old.memory_id,
+        memory_type=old.memory_type.value,
+        summary=summary,
+    )
+    blocker = _memory(user_id, summary=summary).model_copy(
+        update={
+            "memory_id": f"memory_{key[:32]}",
+            "idempotency_key": key,
+        }
+    )
+    await repository.create_memory(blocker, reason_code="test_conflict")
+
+    response = await client.post(
+        f"/api/users/{user_id}/memories/{old.memory_id}/supersede",
+        headers=_headers(user_id),
+        json={"summary": summary, "expected_version": 1},
+    )
+
+    assert response.status_code == 409
+    unchanged = await repository.get_memory(old.memory_id, user_id)
+    assert unchanged is not None
+    assert unchanged.status == MemoryRecordStatus.ACTIVE
+    assert unchanged.version == 1
+
+
+@pytest.mark.anyio
 async def test_memory_edit_rejects_unsafe_content(
     client: httpx.AsyncClient,
 ) -> None:
@@ -334,6 +454,11 @@ async def test_confirm_and_reject_proposals_erase_pending_bodies(
     [
         ("GET", "/api/users/{owner}/memories", None),
         ("GET", "/api/users/{owner}/memory-proposals", None),
+        (
+            "POST",
+            "/api/users/{owner}/memory-corrections/resolve",
+            {"statement": "之前不是完整逐字稿，而是三个关键词。"},
+        ),
         (
             "PATCH",
             "/api/users/{owner}/memories/memory-x",

@@ -3,14 +3,11 @@
 import httpx
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.api.conversations import conversation_service
 from app.main import app
 from app.models_conversation import HISTORY_NOTICE_VERSION
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
 
 
 @pytest.fixture
@@ -92,6 +89,39 @@ async def test_conversation_api_keeps_proposal_in_one_timeline(
     assert rejected.status_code == 200
     assert rejected.json()["status"] == "rejected"
 
+
+@pytest.mark.anyio
+async def test_low_risk_general_support_streams_sentence_events(
+    client: httpx.AsyncClient,
+) -> None:
+    headers = {"X-Demo-User-Id": "stream-owner"}
+    created = await client.post(
+        "/api/conversations",
+        headers=headers,
+        json={
+            "user_id": "stream-owner",
+            "title": "Stream",
+            "history_notice_version": HISTORY_NOTICE_VERSION,
+            "history_notice_acknowledged": True,
+        },
+    )
+    conversation_id = created.json()["conversation_id"]
+
+    response = await client.post(
+        f"/api/conversations/{conversation_id}/messages/stream",
+        headers=headers,
+        json={
+            "user_id": "stream-owner",
+            "message": "最近和同学相处让我有点紧张",
+            "idempotency_key": "stream-message-001",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: response_chunk" in response.text
+    assert "event: response_completed" in response.text
+    assert '"evaluation_mode":"deterministic_only"' in response.text
 
 @pytest.mark.anyio
 async def test_conversation_api_hides_cross_owner_history(

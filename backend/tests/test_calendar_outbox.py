@@ -23,15 +23,7 @@ from app.safety.direct_actions import direct_action_request_hash
 
 TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
 
-pytestmark = pytest.mark.skipif(
-    not TEST_DATABASE_URL,
-    reason="SOCIALEASE_TEST_DATABASE_URL is required.",
-)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
+pytestmark = pytest.mark.usefixtures("migrated_database")
 
 
 @pytest.fixture

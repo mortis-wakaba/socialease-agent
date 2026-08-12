@@ -9,6 +9,7 @@ import pytest
 from app.agents.worksheet import WorksheetAgent
 from app.db.repositories import InMemoryWorksheetRepository
 from app.memory.task_state_store import InMemoryTaskStateStore, RedisTaskStateStore
+from app.memory.settings_store import InMemoryUserMemorySettingsRepository
 from app.memory.worksheet_store import WorksheetStore
 from app.models_support import SupportQueryRequest, SupportSearchContext
 from app.models_worksheet import (
@@ -18,7 +19,19 @@ from app.models_worksheet import (
 )
 from app.services.support_resource_service import SupportResourceService
 from app.services.errors import ServiceNotFoundError
+from app.privacy.persistence_gate import PersistenceGate
+import app.services.worksheet_service as worksheet_service_module
 from app.services.worksheet_service import WorksheetService
+
+
+@pytest.fixture(autouse=True)
+def isolated_persistence_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep worksheet task-session tests independent from PostgreSQL."""
+    monkeypatch.setattr(
+        worksheet_service_module,
+        "persistence_gate",
+        PersistenceGate(repository=InMemoryUserMemorySettingsRepository()),
+    )
 
 
 class MutableClock:

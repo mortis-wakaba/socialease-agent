@@ -7,14 +7,11 @@ from uuid import uuid4
 import httpx
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.main import app
 from app.calendar.mcp_client import CalendarMCPError
 from app.calendar.service import calendar_service
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
 
 
 @pytest.fixture

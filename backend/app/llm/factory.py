@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 import os
 
+import httpx
+
 from app.llm.base import BaseLLMClient
 from app.llm.openai_compatible import OpenAICompatibleLLMClient
 from app.llm.retry import CircuitBreaker, ProviderConcurrencyLimiter, RetryPolicy
@@ -21,6 +23,7 @@ class LLMConfig:
     api_key: str | None
     model: str | None
     timeout_seconds: float
+    json_mode_enabled: bool = False
     retry_max_attempts: int = 3
     retry_initial_backoff_seconds: float = 0.25
     circuit_failure_threshold: int = 3
@@ -39,6 +42,9 @@ class LLMConfig:
             api_key=os.getenv("LLM_API_KEY"),
             model=os.getenv("LLM_MODEL"),
             timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
+            json_mode_enabled=(
+                os.getenv("LLM_JSON_MODE_ENABLED", "false").casefold() == "true"
+            ),
             retry_max_attempts=int(os.getenv("LLM_RETRY_MAX_ATTEMPTS", "3")),
             retry_initial_backoff_seconds=float(
                 os.getenv("LLM_RETRY_INITIAL_BACKOFF_SECONDS", "0.25")
@@ -57,7 +63,11 @@ class LLMConfig:
         )
 
 
-def create_llm_client(config: LLMConfig | None = None) -> BaseLLMClient | None:
+def create_llm_client(
+    config: LLMConfig | None = None,
+    *,
+    http_client: httpx.AsyncClient | None = None,
+) -> BaseLLMClient | None:
     """Create an optional provider client, or None when LLM support is disabled."""
     resolved = config or LLMConfig.from_env()
     if not resolved.enabled:
@@ -71,6 +81,8 @@ def create_llm_client(config: LLMConfig | None = None) -> BaseLLMClient | None:
         api_key=resolved.api_key,
         model=resolved.model,
         timeout_seconds=resolved.timeout_seconds,
+        json_mode_enabled=resolved.json_mode_enabled,
+        http_client=http_client,
         retry_policy=RetryPolicy(
             max_attempts=resolved.retry_max_attempts,
             initial_backoff_seconds=resolved.retry_initial_backoff_seconds,

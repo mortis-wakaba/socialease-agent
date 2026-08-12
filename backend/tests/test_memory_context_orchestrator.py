@@ -1,130 +1,117 @@
-"""Tests for the shared stable and episodic memory orchestration boundary."""
+"""Tests for stable and exact working-memory context orchestration."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from app.memory.context_orchestrator import MemoryContextOrchestrator
 from app.memory.settings_store import InMemoryUserMemorySettingsRepository
-from app.models_long_term_memory import (
-    MemoryRecordStatus,
-    MemoryRetrievalDiagnostics,
-    MemoryRetrievalHit,
-    MemoryRetrievalRequest,
-    MemoryRetrievalResult,
-    MemoryRetrievalScore,
-    MemoryRetrievalStrategy,
-    MemoryType,
+from app.models_memory import (
+    PracticePreferences,
+    UserConsentState,
+    UserPracticeSummary,
 )
-from app.models_memory import UserConsentState, UserPracticeSummary
+from app.models_session_context import DurableCheckpointContext, RoleplayCompactState
 
 
-NOW = datetime(2026, 7, 31, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 9, tzinfo=UTC)
 
 
 class ProfileRepository:
-    """Return one privacy-minimized summary without external persistence."""
+    """Return one bounded stable practice summary."""
 
     async def get_summary(self, user_id: str) -> UserPracticeSummary:
         del user_id
-        return UserPracticeSummary()
-
-
-class CapturingRetriever:
-    """Capture the application-owned retrieval request and return fixed hits."""
-
-    def __init__(self) -> None:
-        self.requests: list[MemoryRetrievalRequest] = []
-
-    async def retrieve(
-        self,
-        request: MemoryRetrievalRequest,
-    ) -> MemoryRetrievalResult:
-        self.requests.append(request)
-        hits = [
-            MemoryRetrievalHit(
-                memory_id="memory-1",
-                memory_type=MemoryType.HELPFUL_STRATEGY,
-                summary="先写下一句开场有帮助",
-                status=MemoryRecordStatus.ACTIVE,
-                occurred_at=NOW,
-                score=MemoryRetrievalScore(
-                    lexical=0.8,
-                    scenario=0.0,
-                    recency=1.0,
-                    novelty=1.0,
-                    confidence=0.9,
-                    total=0.9,
-                ),
-                estimated_tokens=12,
-            )
-        ]
-        return MemoryRetrievalResult(
-            hits=hits,
-            diagnostics=MemoryRetrievalDiagnostics(
-                strategy=request.strategy,
-                candidate_count=1,
-                eligible_count=1,
-                returned_count=1,
-                estimated_tokens=12,
-                token_budget=256,
-                abstained=False,
-                consent_allowed=True,
-            ),
+        return UserPracticeSummary(
+            recent_scenarios=["小组讨论"],
+            latest_practice_at=NOW,
         )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
 @pytest.mark.anyio
-async def test_general_support_uses_allowlist_and_sql_text_baseline() -> None:
+async def test_orchestrator_auto_injects_only_consent_allowed_stable_memory() -> None:
     settings = InMemoryUserMemorySettingsRepository()
     await settings.save(
         user_id="owner",
-        consent_state=UserConsentState(consent_to_practice_summary=True),
+        consent_state=UserConsentState(
+            consent_to_practice_summary=True,
+            consent_to_save_preferences=True,
+        ),
+        practice_preferences=PracticePreferences(
+            preferred_feedback_style="gentle_specific"
+        ),
     )
-    retriever = CapturingRetriever()
     orchestrator = MemoryContextOrchestrator(
         user_profile_repository=ProfileRepository(),  # type: ignore[arg-type]
         settings_repository=settings,
-        episodic_retriever=retriever,  # type: ignore[arg-type]
     )
 
     packet = await orchestrator.assemble(
         user_id="owner",
         skill_name="general_support_skill",
-        current_request="今天想练习开口",
+        current_request="今天想练习开场",
     )
 
-    assert packet.episodic_memories == [
-        "helpful_strategy: 先写下一句开场有帮助"
-    ]
-    request = retriever.requests[0]
-    assert request.strategy == MemoryRetrievalStrategy.SQL_TEXT
-    assert set(request.allowed_memory_types) == {
-        MemoryType.HELPFUL_STRATEGY,
-        MemoryType.PRACTICE_EXPERIENCE,
-    }
+    assert packet.stable_memory.values["preferred_feedback_style"] == (
+        "gentle_specific"
+    )
+    assert packet.episodic_memories == []
+    assert packet.working_memory is None
 
 
 @pytest.mark.anyio
-async def test_skill_without_episodic_allowlist_skips_retrieval() -> None:
+async def test_orchestrator_never_auto_searches_episodic_memory_from_query_text() -> None:
     settings = InMemoryUserMemorySettingsRepository()
-    retriever = CapturingRetriever()
+    await settings.save(
+        user_id="owner",
+        consent_state=UserConsentState(consent_to_practice_summary=True),
+    )
     orchestrator = MemoryContextOrchestrator(
         user_profile_repository=ProfileRepository(),  # type: ignore[arg-type]
         settings_repository=settings,
-        episodic_retriever=retriever,  # type: ignore[arg-type]
+    )
+
+    for message in (
+        "继续上次那个练习",
+        "我以前练过哪些表达方法？",
+        "删除我的长期记忆",
+    ):
+        packet = await orchestrator.assemble(
+            user_id="owner",
+            skill_name="general_support_skill",
+            current_request=message,
+        )
+        assert packet.episodic_memories == []
+
+
+@pytest.mark.anyio
+async def test_exact_application_checkpoint_is_restored_without_semantic_search() -> None:
+    settings = InMemoryUserMemorySettingsRepository()
+    checkpoint = DurableCheckpointContext(
+        compact_state=RoleplayCompactState(
+            current_topic="课堂发言开场",
+            user_goal="先表达一个简短观点",
+            updated_at=NOW,
+        ),
+        checkpoint_version=3,
+        estimated_tokens=32,
+        token_budget=128,
+    )
+    orchestrator = MemoryContextOrchestrator(
+        user_profile_repository=ProfileRepository(),  # type: ignore[arg-type]
+        settings_repository=settings,
     )
 
     packet = await orchestrator.assemble(
         user_id="owner",
-        skill_name="support_resource_rag_skill",
-        current_request="查找公开资源",
+        skill_name="roleplay_skill",
+        current_request="任何下一轮消息",
+        durable_checkpoint=checkpoint,
     )
 
+    assert packet.working_memory == checkpoint
     assert packet.episodic_memories == []
-    assert retriever.requests == []
+    assert any(
+        item.memory_layer.value == "working" and item.selected
+        for item in packet.selections
+    )

@@ -8,6 +8,8 @@ from uuid import uuid4
 import httpx
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.auth.rate_limit import reset_auth_rate_limiters_for_tests
 from app.auth.tokens import create_auth_token
 from app.main import app
@@ -18,12 +20,6 @@ from tests.postgres_test_support import execute_sql, fetch_one
 
 TEST_AUTH_SECRET = "test-real-account-secret"
 ALLOWED_ORIGIN = "http://127.0.0.1:3000"
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
 
 
 @pytest.fixture(autouse=True)

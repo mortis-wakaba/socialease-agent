@@ -9,8 +9,6 @@ import sys
 import textwrap
 
 import pytest
-from alembic import command
-from alembic.config import Config
 
 
 TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
@@ -24,12 +22,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_postgres_runtime_smoke_covers_auth_chat_consent_memory_delete() -> None:
+def test_postgres_runtime_smoke_covers_auth_chat_consent_memory_delete(
+    migrated_database: str,
+) -> None:
     """Run a real app import and API smoke flow against PostgreSQL."""
     assert TEST_DATABASE_URL is not None
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
-    command.upgrade(config, "head")
+    assert migrated_database == TEST_DATABASE_URL
 
     env = {
         **os.environ,
@@ -60,12 +58,12 @@ def test_postgres_runtime_smoke_covers_auth_chat_consent_memory_delete() -> None
     assert "postgres runtime smoke ok" in result.stdout
 
 
-def test_postgres_runtime_state_survives_fresh_application_process() -> None:
+def test_postgres_runtime_state_survives_fresh_application_process(
+    migrated_database: str,
+) -> None:
     """Persist through one app process and read through a separately imported app."""
     assert TEST_DATABASE_URL is not None
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
-    command.upgrade(config, "head")
+    assert migrated_database == TEST_DATABASE_URL
     env = {
         **os.environ,
         "SOCIALEASE_DATABASE_URL": TEST_DATABASE_URL,

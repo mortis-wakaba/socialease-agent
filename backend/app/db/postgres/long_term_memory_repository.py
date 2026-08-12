@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import json
+import logging
 
 from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
@@ -21,6 +22,12 @@ from app.memory.long_term_repository import (
     _require_memory_transition,
     _safe_query_terms,
 )
+from app.memory.embedding import (
+    BGE_SMALL_ZH_DIMENSIONS,
+    run_embedding,
+    vector_literal,
+)
+from app.memory.recall import DenseEmbeddingProvider
 from app.models_long_term_memory import (
     EpisodicMemoryRecord,
     MemoryEvent,
@@ -32,6 +39,9 @@ from app.models_long_term_memory import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class PostgresLongTermMemoryRepository:
     """PostgreSQL adapter with row locking and user-scoped mutations."""
 
@@ -39,10 +49,12 @@ class PostgresLongTermMemoryRepository:
         self,
         database_url: str | None = None,
         engine: AsyncEngine | None = None,
+        embedding_provider: DenseEmbeddingProvider | None = None,
     ) -> None:
         self.engine = engine or shared_postgres_async_engine(
             database_url or database_settings().database_url
         )
+        self.embedding_provider = embedding_provider
 
     async def create_memory(
         self,
@@ -53,6 +65,7 @@ class PostgresLongTermMemoryRepository:
         """Create an active episodic memory and audit event atomically."""
         if record.version != 1 or record.status != MemoryRecordStatus.ACTIVE:
             raise MemoryConflictError("new episodic memory must be active at version 1")
+        embedding_values = await self._embedding_values(record.summary)
         event = _memory_event(
             record=record,
             event_type=MemoryEventType.MEMORY_COMMITTED,
@@ -63,27 +76,11 @@ class PostgresLongTermMemoryRepository:
         )
         try:
             async with self.engine.begin() as connection:
-                (await connection.execute(
-                    text(
-                        """INSERT INTO episodic_memories (
-                        memory_id, user_id, memory_type, summary, scenario_type,
-                        scenario_id, practice_thread_id, skill_codes, context_tags,
-                        source_type, source_id, evidence_type, confidence, status,
-                        occurred_at, created_at, updated_at, last_retrieved_at,
-                        expires_at, consent_version, content_hash, supersedes_id,
-                        version, idempotency_key
-                        ) VALUES (
-                        :memory_id, :user_id, :memory_type, :summary, :scenario_type,
-                        :scenario_id, :practice_thread_id,
-                        CAST(:skill_codes AS json), CAST(:context_tags AS json),
-                        :source_type, :source_id, :evidence_type, :confidence, :status,
-                        :occurred_at, :created_at, :updated_at, :last_retrieved_at,
-                        :expires_at, :consent_version, :content_hash, :supersedes_id,
-                        :version, :idempotency_key
-                        )"""
-                    ),
-                    _postgres_memory_values(record),
-                ))
+                await _insert_postgres_memory(
+                    connection,
+                    record=record,
+                    embedding_values=embedding_values,
+                )
                 await _insert_postgres_event(connection, event)
         except IntegrityError as error:
             raise MemoryConflictError(
@@ -247,6 +244,70 @@ class PostgresLongTermMemoryRepository:
                 parameters,
             )).mappings().all()
         return [_memory_from_mapping(row) for row in rows]
+
+    async def search_memory_vector_candidates(
+        self,
+        *,
+        user_id: str,
+        statuses: tuple[MemoryRecordStatus, ...],
+        memory_types: tuple[MemoryType, ...],
+        query_vector: list[float],
+        embedding_revision: str,
+        minimum_similarity: float,
+        now: datetime,
+        limit: int = 50,
+    ) -> list[tuple[EpisodicMemoryRecord, float]]:
+        """Use pgvector cosine search with tenant and lifecycle filters in SQL."""
+        if not statuses or not memory_types:
+            return []
+        timestamp = _aware_now(now)
+        bounded_limit = min(max(limit, 1), 100)
+        bounded_similarity = min(max(minimum_similarity, -1.0), 1.0)
+        parameters: dict[str, object] = {
+            "user_id": user_id,
+            "now": timestamp,
+            "limit": bounded_limit,
+            "embedding_revision": embedding_revision,
+            "minimum_similarity": bounded_similarity,
+            "query_embedding": vector_literal(
+                query_vector,
+                dimensions=BGE_SMALL_ZH_DIMENSIONS,
+            ),
+        }
+        status_names: list[str] = []
+        for index, status in enumerate(statuses):
+            name = f"status_{index}"
+            status_names.append(f":{name}")
+            parameters[name] = status.value
+        type_names: list[str] = []
+        for index, memory_type in enumerate(memory_types):
+            name = f"memory_type_{index}"
+            type_names.append(f":{name}")
+            parameters[name] = memory_type.value
+        distance = "embedding <=> CAST(:query_embedding AS vector)"
+        statement = text(
+            f"""SELECT *, 1.0 - ({distance}) AS vector_similarity
+            FROM episodic_memories
+            WHERE user_id = :user_id
+            AND status IN ({', '.join(status_names)})
+            AND memory_type IN ({', '.join(type_names)})
+            AND (expires_at IS NULL OR expires_at > :now)
+            AND embedding IS NOT NULL
+            AND embedding_revision = :embedding_revision
+            AND 1.0 - ({distance}) >= :minimum_similarity
+            ORDER BY {distance}, occurred_at DESC, memory_id ASC
+            LIMIT :limit"""
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(text("SET LOCAL hnsw.ef_search = 200"))
+            await connection.execute(
+                text("SET LOCAL hnsw.iterative_scan = strict_order")
+            )
+            rows = (await connection.execute(statement, parameters)).mappings().all()
+        return [
+            (_memory_from_mapping(row), float(row["vector_similarity"]))
+            for row in rows
+        ]
 
     async def search_memory_candidates(
         self,
@@ -435,6 +496,115 @@ class PostgresLongTermMemoryRepository:
             )
         return updated
 
+    async def supersede_memory(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        expected_version: int,
+        replacement: EpisodicMemoryRecord,
+        reason_code: str,
+        changed_at: datetime | None = None,
+    ) -> EpisodicMemoryRecord:
+        """Create a replacement and retire its owner-scoped predecessor atomically."""
+        timestamp = _aware_now(changed_at)
+        if (
+            replacement.user_id != user_id
+            or replacement.supersedes_id != memory_id
+            or replacement.status != MemoryRecordStatus.ACTIVE
+            or replacement.version != 1
+            or replacement.memory_id == memory_id
+        ):
+            raise MemoryConflictError("invalid episodic supersession replacement")
+        embedding_values = await self._embedding_values(replacement.summary)
+        try:
+            async with self.engine.begin() as connection:
+                row = (await connection.execute(
+                    text(
+                        """SELECT * FROM episodic_memories
+                        WHERE memory_id = :memory_id AND user_id = :user_id
+                        FOR UPDATE"""
+                    ),
+                    {"memory_id": memory_id, "user_id": user_id},
+                )).mappings().first()
+                if row is None:
+                    raise MemoryNotFoundError(
+                        "user-scoped episodic memory was not found"
+                    )
+                current = _memory_from_mapping(row)
+                _require_expected_version(current.version, expected_version)
+                _require_memory_transition(
+                    current.status,
+                    MemoryRecordStatus.SUPERSEDED,
+                )
+                if (
+                    replacement.memory_type != current.memory_type
+                    or replacement.occurred_at < current.occurred_at
+                ):
+                    raise MemoryConflictError(
+                        "replacement must preserve type and follow its predecessor"
+                    )
+                retired = current.model_copy(
+                    update={
+                        "status": MemoryRecordStatus.SUPERSEDED,
+                        "updated_at": timestamp,
+                        "version": current.version + 1,
+                    }
+                )
+                result = (await connection.execute(
+                    text(
+                        """UPDATE episodic_memories
+                        SET status = :status, updated_at = :updated_at,
+                            version = :version
+                        WHERE memory_id = :memory_id AND user_id = :user_id
+                        AND version = :expected_version"""
+                    ),
+                    {
+                        "status": retired.status.value,
+                        "updated_at": retired.updated_at,
+                        "version": retired.version,
+                        "memory_id": memory_id,
+                        "user_id": user_id,
+                        "expected_version": expected_version,
+                    },
+                ))
+                if result.rowcount != 1:
+                    raise MemoryConflictError(
+                        "episodic memory was changed concurrently"
+                    )
+                await _insert_postgres_memory(
+                    connection,
+                    record=replacement,
+                    embedding_values=embedding_values,
+                )
+                await _insert_postgres_event(
+                    connection,
+                    _memory_event(
+                        record=retired,
+                        event_type=MemoryEventType.MEMORY_SUPERSEDED,
+                        from_status=current.status,
+                        to_status=MemoryRecordStatus.SUPERSEDED,
+                        reason_code=reason_code,
+                        created_at=timestamp,
+                    ),
+                )
+                await _insert_postgres_event(
+                    connection,
+                    _memory_event(
+                        record=replacement,
+                        event_type=MemoryEventType.MEMORY_COMMITTED,
+                        from_status=None,
+                        to_status=MemoryRecordStatus.ACTIVE,
+                        reason_code=reason_code,
+                        created_at=timestamp,
+                    ),
+                )
+        except IntegrityError as error:
+            raise MemoryConflictError(
+                "episodic supersession replacement already exists"
+            ) from error
+        return replacement
+
     async def update_memory_summary(
         self,
         *,
@@ -449,6 +619,7 @@ class PostgresLongTermMemoryRepository:
     ) -> EpisodicMemoryRecord:
         """Update a safe summary with row locking and content-free audit."""
         timestamp = _aware_now(changed_at)
+        embedding_values = await self._embedding_values(summary)
         try:
             async with self.engine.begin() as connection:
                 row = (await connection.execute(
@@ -479,7 +650,11 @@ class PostgresLongTermMemoryRepository:
                         """UPDATE episodic_memories
                         SET summary = :summary, content_hash = :content_hash,
                             idempotency_key = :idempotency_key,
-                            updated_at = :updated_at, version = :version
+                            updated_at = :updated_at, version = :version,
+                            embedding = CAST(:embedding AS vector),
+                            embedding_model = :embedding_model,
+                            embedding_revision = :embedding_revision,
+                            embedding_updated_at = :embedding_updated_at
                         WHERE memory_id = :memory_id
                         AND user_id = :user_id
                         AND version = :expected_version"""
@@ -493,6 +668,7 @@ class PostgresLongTermMemoryRepository:
                         "memory_id": memory_id,
                         "user_id": user_id,
                         "expected_version": expected_version,
+                        **embedding_values,
                     },
                 ))
                 if result.rowcount != 1:
@@ -515,6 +691,105 @@ class PostgresLongTermMemoryRepository:
                 "an equivalent episodic memory already exists"
             ) from error
         return updated
+
+    async def _embedding_values(self, summary: str) -> dict[str, object]:
+        """Return nullable vector columns without making memory writes unavailable."""
+        provider = self.embedding_provider
+        if provider is None:
+            return {
+                "embedding": None,
+                "embedding_model": None,
+                "embedding_revision": None,
+                "embedding_updated_at": None,
+            }
+        try:
+            vectors = await run_embedding(provider.embed_documents, [summary])
+            if len(vectors) != 1:
+                raise RuntimeError("Embedding provider returned an incomplete batch")
+            return {
+                "embedding": vector_literal(
+                    vectors[0],
+                    dimensions=BGE_SMALL_ZH_DIMENSIONS,
+                ),
+                "embedding_model": provider.model_name,
+                "embedding_revision": provider.model_revision,
+                "embedding_updated_at": _aware_now(None),
+            }
+        except Exception as error:
+            logger.warning(
+                "Memory embedding generation failed; storing lexical-only memory: %s",
+                error.__class__.__name__,
+            )
+            return {
+                "embedding": None,
+                "embedding_model": None,
+                "embedding_revision": None,
+                "embedding_updated_at": None,
+            }
+
+    async def backfill_embeddings(self, *, limit: int = 10_000) -> int:
+        """Idempotently embed bounded active/archived rows for the current model."""
+        provider = self.embedding_provider
+        if provider is None:
+            return 0
+        bounded_limit = min(max(limit, 1), 100_000)
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
+                text(
+                    """SELECT memory_id, user_id, summary, content_hash
+                    FROM episodic_memories
+                    WHERE status IN ('active', 'archived')
+                    AND (
+                        embedding IS NULL
+                        OR embedding_revision != :embedding_revision
+                    )
+                    ORDER BY updated_at ASC, memory_id ASC
+                    LIMIT :limit"""
+                ),
+                {
+                    "embedding_revision": provider.model_revision,
+                    "limit": bounded_limit,
+                },
+            )).mappings().all()
+        if not rows:
+            return 0
+        summaries = [str(row["summary"]) for row in rows]
+        vectors = await run_embedding(provider.embed_documents, summaries)
+        if len(vectors) != len(rows):
+            raise RuntimeError("Embedding provider returned an incomplete batch")
+        timestamp = _aware_now(None)
+        updated_count = 0
+        statement = text(
+            """UPDATE episodic_memories
+            SET embedding = CAST(:embedding AS vector),
+                embedding_model = :embedding_model,
+                embedding_revision = :embedding_revision,
+                embedding_updated_at = :embedding_updated_at
+            WHERE memory_id = :memory_id
+            AND user_id = :user_id
+            AND content_hash = :content_hash"""
+        )
+        async with self.engine.begin() as connection:
+            for offset in range(0, len(rows), 256):
+                batch = rows[offset : offset + 256]
+                values = [
+                    {
+                        "embedding": vector_literal(
+                            vectors[offset + index],
+                            dimensions=BGE_SMALL_ZH_DIMENSIONS,
+                        ),
+                        "embedding_model": provider.model_name,
+                        "embedding_revision": provider.model_revision,
+                        "embedding_updated_at": timestamp,
+                        "memory_id": row["memory_id"],
+                        "user_id": row["user_id"],
+                        "content_hash": row["content_hash"],
+                    }
+                    for index, row in enumerate(batch)
+                ]
+                result = await connection.execute(statement, values)
+                updated_count += max(result.rowcount or 0, 0)
+        return updated_count
 
     async def delete_memory(
         self,
@@ -773,6 +1048,39 @@ def _postgres_memory_values(record: EpisodicMemoryRecord) -> dict[str, object]:
     }
 
 
+async def _insert_postgres_memory(
+    connection: AsyncConnection,
+    *,
+    record: EpisodicMemoryRecord,
+    embedding_values: dict[str, object],
+) -> None:
+    """Insert one validated memory inside a caller-owned transaction."""
+    await connection.execute(
+        text(
+            """INSERT INTO episodic_memories (
+            memory_id, user_id, memory_type, summary, scenario_type,
+            scenario_id, practice_thread_id, skill_codes, context_tags,
+            source_type, source_id, evidence_type, confidence, status,
+            occurred_at, created_at, updated_at, last_retrieved_at,
+            expires_at, consent_version, content_hash, supersedes_id,
+            version, idempotency_key, embedding, embedding_model,
+            embedding_revision, embedding_updated_at
+            ) VALUES (
+            :memory_id, :user_id, :memory_type, :summary, :scenario_type,
+            :scenario_id, :practice_thread_id,
+            CAST(:skill_codes AS json), CAST(:context_tags AS json),
+            :source_type, :source_id, :evidence_type, :confidence, :status,
+            :occurred_at, :created_at, :updated_at, :last_retrieved_at,
+            :expires_at, :consent_version, :content_hash, :supersedes_id,
+            :version, :idempotency_key,
+            CAST(:embedding AS vector), :embedding_model,
+            :embedding_revision, :embedding_updated_at
+            )"""
+        ),
+        {**_postgres_memory_values(record), **embedding_values},
+    )
+
+
 def _postgres_checkpoint_values(
     checkpoint: PracticeThreadCheckpoint,
 ) -> dict[str, object]:
@@ -828,7 +1136,16 @@ async def _insert_postgres_event(
 
 
 def _memory_from_mapping(row: RowMapping) -> EpisodicMemoryRecord:
-    return EpisodicMemoryRecord.model_validate(dict(row))
+    payload = dict(row)
+    for key in (
+        "embedding",
+        "embedding_model",
+        "embedding_revision",
+        "embedding_updated_at",
+        "vector_similarity",
+    ):
+        payload.pop(key, None)
+    return EpisodicMemoryRecord.model_validate(payload)
 
 
 def _checkpoint_from_mapping(row: RowMapping) -> PracticeThreadCheckpoint:

@@ -20,13 +20,10 @@ from app.services.retention_service import retention_service
 from app.services.roleplay_service import roleplay_service
 
 
-pytestmark = pytest.mark.load
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
+pytestmark = [
+    pytest.mark.load,
+    pytest.mark.usefixtures("migrated_database"),
+]
 
 
 @pytest.fixture

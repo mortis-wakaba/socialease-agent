@@ -92,6 +92,19 @@ class LongTermMemoryRepository(Protocol):
         limit: int = 50,
     ) -> list[EpisodicMemoryRecord]: ...
 
+    async def search_memory_vector_candidates(
+        self,
+        *,
+        user_id: str,
+        statuses: tuple[MemoryRecordStatus, ...],
+        memory_types: tuple[MemoryType, ...],
+        query_vector: list[float],
+        embedding_revision: str,
+        minimum_similarity: float,
+        now: datetime,
+        limit: int = 50,
+    ) -> list[tuple[EpisodicMemoryRecord, float]]: ...
+
     async def record_retrieval(
         self,
         *,
@@ -108,6 +121,17 @@ class LongTermMemoryRepository(Protocol):
         user_id: str,
         expected_version: int,
         target_status: MemoryRecordStatus,
+        reason_code: str,
+        changed_at: datetime | None = None,
+    ) -> EpisodicMemoryRecord: ...
+
+    async def supersede_memory(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        expected_version: int,
+        replacement: EpisodicMemoryRecord,
         reason_code: str,
         changed_at: datetime | None = None,
     ) -> EpisodicMemoryRecord: ...

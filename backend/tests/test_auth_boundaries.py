@@ -5,6 +5,8 @@ from uuid import uuid4
 import httpx
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.auth.tokens import create_auth_token
 from app.main import app
 from app.models_exposure import ExposurePlanRequest
@@ -17,12 +19,6 @@ from app.safety.direct_actions import PROTOCOL_HEADER_NAME
 
 
 TEST_AUTH_SECRET = "test-production-auth-secret"
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
 
 
 @pytest.fixture

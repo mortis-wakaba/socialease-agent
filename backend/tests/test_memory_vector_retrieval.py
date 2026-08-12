@@ -19,7 +19,7 @@ from app.evals.vector_memory_retrieval import (
     passes_vector_gate,
     run_vector_memory_retrieval_benchmark,
 )
-from app.evals.dense_embedding import FastEmbedBgeSmallZh
+from app.memory.embedding import FastEmbedBgeSmallZh
 
 
 class _DeterministicEmbedding:
@@ -69,7 +69,7 @@ def test_vector_benchmark_exercises_large_candidate_corpus() -> None:
     os.getenv("RUN_VECTOR_EVALS", "").casefold() != "true",
     reason=(
         "Set RUN_VECTOR_EVALS=true after installing "
-        "requirements-vector-eval.txt."
+        "the standard backend runtime dependencies."
     ),
 )
 def test_real_bge_vector_and_hybrid_memory_benchmark() -> None:

@@ -1,6 +1,10 @@
 """FastAPI routes for unified user-owned conversations."""
 
+import asyncio
+from collections.abc import AsyncIterator
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from app.auth.context import AuthContext
 from app.auth.dependencies import (
@@ -23,6 +27,9 @@ from app.models_conversation_api import (
     ConversationExportResponse,
     ConversationMessageRequest,
     ConversationMessageResponse,
+    ConversationStreamChunkEvent,
+    ConversationStreamCompletedEvent,
+    ConversationStreamErrorEvent,
     ConversationModuleDecisionRequest,
     ConversationModuleTerminateRequest,
     ConversationUpdateRequest,
@@ -34,9 +41,15 @@ from app.services.conversation_service import (
     ConversationProposalError,
 )
 from app.services.conversation_runtime import conversation_service
+from app.services.response_streaming import (
+    conversation_sse_event,
+    sentence_chunks,
+    sentence_streaming_allowed,
+)
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+_STREAM_PRODUCERS: set[asyncio.Task[None]] = set()
 
 
 @router.post("", response_model=Conversation)
@@ -229,6 +242,87 @@ async def send_conversation_message(
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
     except (ConversationCommandInProgressError, ConversationIdempotencyError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{conversation_id}/messages/stream")
+async def stream_conversation_message(
+    conversation_id: str,
+    request: ConversationMessageRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> StreamingResponse:
+    """Deliver eligible low-risk replies as policy-approved sentence buffers."""
+    user_id = resolve_request_user_id(request.user_id, current_user)
+
+    async def events() -> AsyncIterator[str]:
+        queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+
+        async def chunk_sink(text: str) -> None:
+            await queue.put(("chunk", text))
+
+        async def produce() -> None:
+            try:
+                result = await conversation_service().send_message(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    message=request.message,
+                    idempotency_key=request.idempotency_key,
+                    streaming_requested=True,
+                    response_chunk_sink=chunk_sink,
+                )
+                await queue.put(("completed", result))
+            except LookupError:
+                await queue.put(("error", "Conversation not found"))
+            except (
+                ConversationCommandInProgressError,
+                ConversationIdempotencyError,
+            ) as exc:
+                await queue.put(("error", str(exc)))
+            except Exception:
+                await queue.put(
+                    ("error", "The response could not be completed")
+                )
+
+        producer = asyncio.create_task(produce())
+        _STREAM_PRODUCERS.add(producer)
+        producer.add_done_callback(_STREAM_PRODUCERS.discard)
+        streamed_chunks = 0
+        while True:
+            kind, payload = await queue.get()
+            if kind == "chunk" and isinstance(payload, str):
+                streamed_chunks += 1
+                yield conversation_sse_event(
+                    ConversationStreamChunkEvent(text=payload)
+                )
+                continue
+            if kind == "completed" and isinstance(
+                payload, ConversationMessageResponse
+            ):
+                if streamed_chunks == 0 and sentence_streaming_allowed(payload):
+                    for chunk in sentence_chunks(payload.response):
+                        yield conversation_sse_event(
+                            ConversationStreamChunkEvent(text=chunk)
+                        )
+                yield conversation_sse_event(
+                    ConversationStreamCompletedEvent(result=payload)
+                )
+                break
+            if kind == "error" and isinstance(payload, str):
+                yield conversation_sse_event(
+                    ConversationStreamErrorEvent(detail=payload)
+                )
+                break
+
+        # The module-level task set keeps a disconnected client's bounded producer
+        # alive through durable command completion.
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(

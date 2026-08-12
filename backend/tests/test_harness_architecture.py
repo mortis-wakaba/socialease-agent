@@ -1,5 +1,6 @@
 """Tests for harness permissions, hooks, and on-demand skill manifests."""
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -7,10 +8,15 @@ import pytest
 
 from app.models import ChatRequest, Intent, RiskLevel, SafetyResult, TraceRecord
 from app.models_long_term_memory import MemoryPipelineResult
-from app.models_memory import PracticePreferences, UserConsentState, UserPracticeSummary
+from app.models_memory import (
+    PracticePreferences,
+    UserConsentState,
+    UserMemorySettings,
+    UserPracticeSummary,
+)
 from app.memory.context_builder import build_memory_context
-from app.db.factory import repository_factory
-from app.protocols.service import protocol_service
+from app.memory.settings_store import InMemoryUserMemorySettingsRepository
+from app.protocols.service import ProtocolService
 from app.safety.actions import HarnessAction
 from app.safety.permissions import PermissionAction, PermissionDecision, SafetyPermissionGate
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
@@ -155,7 +161,15 @@ class FailingInterventionPlanService:
     """Test memory service that fails during plan creation."""
 
     def create_for_action(self, **kwargs: object) -> object:
-        raise RuntimeError("sqlite locked")
+        raise RuntimeError("database unavailable")
+
+
+@pytest.fixture
+def create_test_harness(
+    isolated_harness_factory: Callable[..., AgentHarness],
+) -> Callable[..., AgentHarness]:
+    """Return the shared database-independent Harness builder."""
+    return isolated_harness_factory
 
 
 def test_permission_gate_action_matrix() -> None:
@@ -203,9 +217,11 @@ def test_skill_manifest_loads_on_demand() -> None:
 
 
 @pytest.mark.anyio
-async def test_agent_harness_runs_lifecycle_hooks() -> None:
+async def test_agent_harness_runs_lifecycle_hooks(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
     hook = RecordingHook()
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         hooks=(hook,),
     )
@@ -229,9 +245,11 @@ async def test_agent_harness_runs_lifecycle_hooks() -> None:
 
 
 @pytest.mark.anyio
-async def test_agent_harness_emits_privacy_safe_progress_in_execution_order() -> None:
+async def test_agent_harness_emits_privacy_safe_progress_in_execution_order(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
     events: list[WorkflowProgressEvent] = []
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
     )
 
@@ -266,8 +284,10 @@ async def test_agent_harness_emits_privacy_safe_progress_in_execution_order() ->
 
 
 @pytest.mark.anyio
-async def test_agent_harness_progress_sink_failure_does_not_break_run() -> None:
-    harness = AgentHarness(
+async def test_agent_harness_progress_sink_failure_does_not_break_run(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
     )
 
@@ -288,9 +308,11 @@ async def test_agent_harness_progress_sink_failure_does_not_break_run() -> None:
 
 
 @pytest.mark.anyio
-async def test_agent_harness_loads_run_context_for_skill() -> None:
+async def test_agent_harness_loads_run_context_for_skill(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
     skill = ContextInspectingSupportSkill()
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         skill_registry=SkillRegistry(executable_skills=(skill,)),
     )
@@ -330,12 +352,13 @@ async def test_agent_harness_loads_run_context_for_skill() -> None:
     ],
 )
 async def test_harness_boundary_paths_do_not_create_business_plans(
+    create_test_harness: Callable[..., AgentHarness],
     message: str,
     expected_intent: Intent,
     expected_skill: str,
     expected_action: str,
 ) -> None:
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         intent_router=workflow_engine.IntentRouter(),
     )
@@ -359,22 +382,16 @@ async def test_memory_context_builder_combines_profile_and_preferences() -> None
             latest_anxiety_level=6,
             preferred_difficulty=2,
         ),
-        memory_settings=(
-            await repository_factory()
-            .user_memory_settings_repository()
-            .get("memory_context_empty")
-        ).model_copy(
-            update={
-                "consent_state": UserConsentState(
-                    consent_to_practice_summary=True,
-                    consent_to_save_preferences=True,
-                ),
-                "practice_preferences": PracticePreferences(
-                    preferred_roleplay_difficulty=4,
-                    preferred_feedback_style="gentle_specific",
-                    preferred_practice_scenarios=["dorm_conflict"],
-                )
-            }
+        memory_settings=UserMemorySettings(
+            consent_state=UserConsentState(
+                consent_to_practice_summary=True,
+                consent_to_save_preferences=True,
+            ),
+            practice_preferences=PracticePreferences(
+                preferred_roleplay_difficulty=4,
+                preferred_feedback_style="gentle_specific",
+                preferred_practice_scenarios=["dorm_conflict"],
+            ),
         ),
     )
 
@@ -385,9 +402,13 @@ async def test_memory_context_builder_combines_profile_and_preferences() -> None
 
 
 @pytest.mark.anyio
-async def test_legacy_roleplay_skill_redirects_after_consent() -> None:
+async def test_legacy_roleplay_skill_redirects_after_consent(
+    create_test_harness: Callable[..., AgentHarness],
+    isolated_protocol_service: ProtocolService,
+) -> None:
     user_id = f"memory_context_roleplay_{uuid4().hex}"
-    await repository_factory().user_memory_settings_repository().save(
+    memory_settings = InMemoryUserMemorySettingsRepository()
+    await memory_settings.save(
         user_id=user_id,
         consent_state=UserConsentState(consent_to_save_preferences=True),
         practice_preferences=PracticePreferences(
@@ -395,7 +416,10 @@ async def test_legacy_roleplay_skill_redirects_after_consent() -> None:
             preferred_practice_scenarios=["dorm_conflict"],
         ),
     )
-    harness = AgentHarness(trace_logger=TraceLogger(repository=InMemoryTraceRepository()))
+    harness = create_test_harness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
+        memory_settings_repository=memory_settings,
+    )
 
     consent_response = await harness.run(
         ChatRequest(
@@ -406,7 +430,7 @@ async def test_legacy_roleplay_skill_redirects_after_consent() -> None:
     )
 
     protocol_id = consent_response.structured_data["protocol_id"]
-    await protocol_service.respond(
+    await isolated_protocol_service.respond(
         protocol_id=protocol_id,
         user_id=user_id,
         approved=True,
@@ -438,8 +462,10 @@ async def test_legacy_roleplay_skill_redirects_after_consent() -> None:
 
 
 @pytest.mark.anyio
-async def test_memory_extraction_failure_does_not_change_safe_chat_response() -> None:
-    harness = AgentHarness(
+async def test_memory_extraction_failure_does_not_change_safe_chat_response(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         memory_write_pipeline=FailingMemoryPipeline(),
     )
@@ -465,9 +491,14 @@ async def test_memory_extraction_failure_does_not_change_safe_chat_response() ->
 
 
 @pytest.mark.anyio
-async def test_legacy_exposure_skill_redirects_after_consent() -> None:
+async def test_legacy_exposure_skill_redirects_after_consent(
+    create_test_harness: Callable[..., AgentHarness],
+    isolated_protocol_service: ProtocolService,
+) -> None:
     user_id = f"chat_exposure_plan_{uuid4().hex}"
-    harness = AgentHarness(trace_logger=TraceLogger(repository=InMemoryTraceRepository()))
+    harness = create_test_harness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository())
+    )
 
     consent_response = await harness.run(
         ChatRequest(
@@ -481,7 +512,7 @@ async def test_legacy_exposure_skill_redirects_after_consent() -> None:
     )
 
     protocol_id = consent_response.structured_data["protocol_id"]
-    await protocol_service.respond(
+    await isolated_protocol_service.respond(
         protocol_id=protocol_id,
         user_id=user_id,
         approved=True,
@@ -506,9 +537,11 @@ async def test_legacy_exposure_skill_redirects_after_consent() -> None:
 
 
 @pytest.mark.anyio
-async def test_before_action_hook_can_block_action() -> None:
+async def test_before_action_hook_can_block_action(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
     hook = ActionBlockingHook()
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         hooks=(hook,),
     )
@@ -531,9 +564,11 @@ async def test_before_action_hook_can_block_action() -> None:
 
 
 @pytest.mark.anyio
-async def test_before_action_hook_cannot_block_crisis_escalation() -> None:
+async def test_before_action_hook_cannot_block_crisis_escalation(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
     hook = ActionBlockingHook()
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         hooks=(hook,),
     )
@@ -554,9 +589,11 @@ async def test_before_action_hook_cannot_block_crisis_escalation() -> None:
 
 
 @pytest.mark.anyio
-async def test_before_memory_write_hook_can_block_intervention_plan() -> None:
+async def test_before_memory_write_hook_can_block_intervention_plan(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
     hook = MemoryWriteBlockingHook()
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         hooks=(hook,),
     )
@@ -576,9 +613,11 @@ async def test_before_memory_write_hook_can_block_intervention_plan() -> None:
 
 
 @pytest.mark.anyio
-async def test_before_memory_write_hook_is_not_called_for_crisis() -> None:
+async def test_before_memory_write_hook_is_not_called_for_crisis(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
     hook = MemoryWriteBlockingHook()
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         hooks=(hook,),
     )
@@ -598,8 +637,10 @@ async def test_before_memory_write_hook_is_not_called_for_crisis() -> None:
 
 
 @pytest.mark.anyio
-async def test_privacy_guard_hook_blocks_sensitive_memory_write() -> None:
-    harness = AgentHarness(
+async def test_privacy_guard_hook_blocks_sensitive_memory_write(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         hooks=(PrivacyGuardHook(),),
     )
@@ -621,9 +662,11 @@ async def test_privacy_guard_hook_blocks_sensitive_memory_write() -> None:
 
 
 @pytest.mark.anyio
-async def test_metrics_hook_collects_non_identifying_trace_metrics() -> None:
+async def test_metrics_hook_collects_non_identifying_trace_metrics(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
     hook = MetricsHook()
-    harness = AgentHarness(
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         hooks=(hook,),
     )
@@ -655,8 +698,10 @@ async def test_metrics_hook_collects_non_identifying_trace_metrics() -> None:
 
 
 @pytest.mark.anyio
-async def test_safety_classifier_failure_fails_closed_to_high_risk() -> None:
-    harness = AgentHarness(
+async def test_safety_classifier_failure_fails_closed_to_high_risk(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         safety_classifier=FailingSafetyClassifier(),
     )
@@ -681,8 +726,10 @@ async def test_safety_classifier_failure_fails_closed_to_high_risk() -> None:
 
 
 @pytest.mark.anyio
-async def test_skill_failure_returns_safe_recovery_response() -> None:
-    harness = AgentHarness(
+async def test_skill_failure_returns_safe_recovery_response(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
+    harness = create_test_harness(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         skill_registry=SkillRegistry(executable_skills=(FailingSkill(),)),
     )
@@ -709,6 +756,7 @@ async def test_skill_failure_returns_safe_recovery_response() -> None:
 
 @pytest.mark.anyio
 async def test_memory_write_failure_is_reported_without_failing_chat(
+    create_test_harness: Callable[..., AgentHarness],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -716,7 +764,9 @@ async def test_memory_write_failure_is_reported_without_failing_chat(
         "intervention_plan_service",
         FailingInterventionPlanService(),
     )
-    harness = AgentHarness(trace_logger=TraceLogger(repository=InMemoryTraceRepository()))
+    harness = create_test_harness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository())
+    )
 
     response = await harness.run(
         ChatRequest(

@@ -20,12 +20,6 @@ async def _ok_endpoint(request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
-
-
 @pytest.mark.anyio
 async def test_structured_request_logging_records_slow_request(
     monkeypatch: pytest.MonkeyPatch,

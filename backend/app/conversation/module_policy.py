@@ -133,6 +133,19 @@ class ModuleStackPolicy:
                 f"{parent.value} cannot contain {child_type.value}"
             )
 
+    @classmethod
+    def can_push(
+        cls,
+        stack: Sequence[ModuleRun],
+        child_type: ModuleType,
+    ) -> bool:
+        """Return whether a proposal may be offered for the current stack."""
+        try:
+            cls.validate_push(stack, child_type)
+        except ConversationStateError:
+            return False
+        return True
+
     @staticmethod
     def safety_preempts_modules(*, crisis: bool, has_active_module: bool) -> bool:
         """Return whether routing must bypass the active module stack."""

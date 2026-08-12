@@ -1,5 +1,6 @@
 """Tests for the non-writing Calendar proposal Skill and intent route."""
 
+from collections.abc import Callable
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -76,8 +77,10 @@ async def test_calendar_skill_asks_for_time_when_missing() -> None:
 
 
 @pytest.mark.anyio
-async def test_harness_routes_calendar_request_to_non_writing_preview() -> None:
-    harness = AgentHarness(
+async def test_harness_routes_calendar_request_to_non_writing_preview(
+    isolated_harness_factory: Callable[..., AgentHarness],
+) -> None:
+    harness = isolated_harness_factory(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
     )
 

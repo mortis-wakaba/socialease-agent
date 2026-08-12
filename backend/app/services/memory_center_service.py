@@ -4,7 +4,13 @@ from datetime import datetime, timezone
 
 from app.db.factory import repository_factory
 from app.memory.commit_service import EpisodicMemoryCommitter
-from app.memory.identity import memory_content_hash, memory_idempotency_key
+from app.memory.identity import (
+    MEMORY_CONSENT_VERSION,
+    memory_content_hash,
+    memory_expiry,
+    memory_idempotency_key,
+    memory_supersession_idempotency_key,
+)
 from app.memory.long_term_repository import (
     InvalidMemoryTransitionError,
     LongTermMemoryRepository,
@@ -237,6 +243,102 @@ class MemoryCenterService:
             expected_version=expected_version,
             target_status=MemoryRecordStatus.ARCHIVED,
             reason_code="user_archived",
+        )
+
+    async def supersede(
+        self,
+        *,
+        user_id: str,
+        memory_id: str,
+        summary: str,
+        expected_version: int,
+    ) -> MemoryMutationResponse:
+        """Atomically replace one explicitly selected owner memory."""
+        current = await self._require_memory(
+            user_id=user_id,
+            memory_id=memory_id,
+        )
+        timestamp = datetime.now(timezone.utc)
+        proposal = MemoryProposal(
+            memory_type=current.memory_type,
+            summary=summary,
+            scenario_type=current.scenario_type,
+            scenario_id=current.scenario_id,
+            practice_thread_id=current.practice_thread_id,
+            skill_codes=current.skill_codes,
+            context_tags=current.context_tags,
+            source_type=MemorySourceType.USER_CONFIRMED,
+            source_id=current.memory_id,
+            evidence_type=MemoryEvidenceType.USER_CONFIRMED,
+            confidence=1.0,
+            occurred_at=timestamp,
+        )
+        decision = self.policy_engine.decide(
+            proposal,
+            consent_state=(
+                await self.settings_repository.get(user_id)
+            ).consent_state,
+            risk_level=RiskLevel.LOW,
+        )
+        if (
+            decision.action == MemoryPolicyAction.REJECT
+            or decision.safe_summary is None
+        ):
+            raise ValueError(
+                f"memory_summary_rejected:{decision.reason.value}"
+            )
+        safe_summary = decision.safe_summary
+        idempotency_key = memory_supersession_idempotency_key(
+            user_id=user_id,
+            target_memory_id=current.memory_id,
+            memory_type=current.memory_type.value,
+            summary=safe_summary,
+        )
+        replacement = EpisodicMemoryRecord(
+            memory_id=f"memory_{idempotency_key[:32]}",
+            user_id=user_id,
+            memory_type=current.memory_type,
+            summary=safe_summary,
+            scenario_type=current.scenario_type,
+            scenario_id=current.scenario_id,
+            practice_thread_id=current.practice_thread_id,
+            skill_codes=current.skill_codes,
+            context_tags=current.context_tags,
+            source_type=MemorySourceType.USER_CONFIRMED,
+            source_id=current.memory_id,
+            evidence_type=MemoryEvidenceType.USER_CONFIRMED,
+            confidence=1.0,
+            status=MemoryRecordStatus.ACTIVE,
+            occurred_at=timestamp,
+            created_at=timestamp,
+            updated_at=timestamp,
+            expires_at=memory_expiry(
+                memory_type=current.memory_type,
+                created_at=timestamp,
+            ),
+            consent_version=MEMORY_CONSENT_VERSION,
+            content_hash=memory_content_hash(safe_summary),
+            idempotency_key=idempotency_key,
+            supersedes_id=current.memory_id,
+        )
+        saved = await self.memory_repository.supersede_memory(
+            memory_id=current.memory_id,
+            user_id=user_id,
+            expected_version=expected_version,
+            replacement=replacement,
+            reason_code="user_confirmed_supersession",
+            changed_at=timestamp,
+        )
+        return MemoryMutationResponse(
+            user_id=user_id,
+            memory=_memory_view(
+                saved,
+                events=await self.memory_repository.list_events(
+                    user_id=user_id,
+                    subject_id=saved.memory_id,
+                    limit=100,
+                ),
+            ),
         )
 
     async def restore(
@@ -476,6 +578,7 @@ def _memory_view(
         updated_at=record.updated_at,
         last_retrieved_at=record.last_retrieved_at,
         expires_at=record.expires_at,
+        supersedes_id=record.supersedes_id,
         version=record.version,
     )
 

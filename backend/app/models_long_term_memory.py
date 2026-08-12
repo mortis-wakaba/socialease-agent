@@ -125,11 +125,14 @@ class MemoryProposalStatus(str, Enum):
 
 
 class MemoryRetrievalStrategy(str, Enum):
-    """Deterministic retrieval baselines compared before vector adoption."""
+    """Effective candidate-retrieval strategy reported by diagnostics."""
 
     RECENT = "recent"
     METADATA = "metadata"
     SQL_TEXT = "sql_text"
+    POSTGRES_FTS = "postgres_fts"
+    DENSE_ONLY = "dense_only"
+    HYBRID = "hybrid"
 
 
 class EpisodicMemoryRecord(BaseModel):
@@ -335,6 +338,7 @@ class MemoryRetrievalRequest(BaseModel):
     scenario_id: str | None = Field(default=None, max_length=128)
     practice_thread_id: str | None = Field(default=None, max_length=128)
     skill_codes: list[SocialSkillCode] = Field(default_factory=list, max_length=5)
+    context_tags: list[str] = Field(default_factory=list, max_length=5)
     include_archived: bool = False
     limit: int = Field(default=3, ge=1, le=3)
     strategy: MemoryRetrievalStrategy = MemoryRetrievalStrategy.SQL_TEXT
@@ -352,6 +356,7 @@ class MemoryRetrievalScore(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     continuity: float = Field(default=0.0, ge=0.0, le=1.0)
     skill_overlap: float = Field(default=0.0, ge=0.0, le=1.0)
+    fusion: float = Field(default=0.0, ge=0.0, le=1.0)
     total: float = Field(ge=0.0, le=1.0)
 
 

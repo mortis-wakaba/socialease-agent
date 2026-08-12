@@ -2,14 +2,21 @@
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import ValidationError
 
 from app.agents.support import SupportAgent
 from app.knowledge.service import KnowledgeService
-from app.llm.base import BaseLLMClient
-from app.llm.prompts import build_support_system_prompt, build_support_user_prompt
+from app.guardrails.output import OutputGuardrail, OutputGuardrailAction
+from app.guardrails.policy import OutputGuardrailMode
+from app.llm.base import BaseLLMClient, JSONModeLLMClient, StreamingLLMClient
+from app.llm.prompts import (
+    build_support_stream_system_prompt,
+    build_support_system_prompt,
+    build_support_user_prompt,
+)
 from app.llm.retry import ProviderError
 from app.models import Intent, RiskLevel, SafetyResult
 from app.models_conversation_context import ConversationPromptContext
@@ -21,6 +28,7 @@ from app.privacy.redaction import (
     redact_sensitive_identifiers,
     redact_validated_candidates,
 )
+from app.services.response_streaming import SentenceBuffer
 
 
 class SupportGenerationAgent:
@@ -32,10 +40,14 @@ class SupportGenerationAgent:
         llm_client: BaseLLMClient | None,
         knowledge: KnowledgeService | None = None,
         fallback_agent: SupportAgent | None = None,
+        direct_wording_matcher: Callable[[str], bool] | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.knowledge = knowledge or KnowledgeService()
         self.fallback_agent = fallback_agent or SupportAgent()
+        self.direct_wording_matcher = (
+            direct_wording_matcher or requests_direct_wording_v2
+        )
 
     async def respond(
         self,
@@ -45,7 +57,7 @@ class SupportGenerationAgent:
         safety_result: SafetyResult,
         support_context: SupportGenerationContext | None = None,
         conversation_context: ConversationPromptContext | None = None,
-        retrieved_memories: list[str] | None = None,
+        memory_tool_evidence: list[str] | None = None,
         application_constraints: PresentationConstraints | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Return validated LLM support or a deterministic safe fallback."""
@@ -67,35 +79,58 @@ class SupportGenerationAgent:
             )
 
         guidance = self.knowledge.query(message, KnowledgeBaseType.SOCIAL_SKILLS)
+        json_mode_used = (
+            isinstance(self.llm_client, JSONModeLLMClient)
+            and self.llm_client.json_mode_enabled
+        )
         try:
-            raw_output = await self.llm_client.generate_text(
-                system_prompt=build_support_system_prompt(),
-                user_prompt=build_support_user_prompt(
-                    message=message,
-                    intent=intent.value,
-                    risk_level=safety_result.risk_level.value,
-                    retrieved_guidance=[
-                        {
-                            "title": citation.title,
-                            "snippet": citation.snippet,
-                        }
-                        for citation in guidance.citations
-                    ],
-                    application_context=_support_context_payload(support_context),
-                    conversation_context=_conversation_context_payload(
-                        conversation_context
-                    ),
-                    retrieved_memories=(retrieved_memories or [])[:3],
-                    response_constraints=(
-                        application_constraints.model_dump(mode="json")
-                        if application_constraints is not None
-                        else {}
-                    ),
+            system_prompt = build_support_system_prompt()
+            user_prompt = build_support_user_prompt(
+                message=message,
+                intent=intent.value,
+                risk_level=safety_result.risk_level.value,
+                retrieved_guidance=[
+                    {
+                        "title": citation.title,
+                        "snippet": citation.snippet,
+                    }
+                    for citation in guidance.citations
+                ],
+                application_context=_support_context_payload(support_context),
+                conversation_context=_conversation_context_payload(
+                    conversation_context
                 ),
-                temperature=0.1,
+                stable_memory_context=(
+                    conversation_context.stable_memory_context
+                    if conversation_context is not None
+                    else {}
+                ),
+                memory_tool_evidence=(memory_tool_evidence or [])[:3],
+                response_constraints=(
+                    application_constraints.model_dump(mode="json")
+                    if application_constraints is not None
+                    else {}
+                ),
             )
+            if json_mode_used:
+                raw_output = await self.llm_client.generate_json_text(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.1,
+                )
+            else:
+                raw_output = await self.llm_client.generate_text(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.1,
+                )
             proposal = _parse_support_generation(raw_output)
-            _validate_support_generation(proposal, message=message, intent=intent)
+            _validate_support_generation(
+                proposal,
+                message=message,
+                intent=intent,
+                direct_wording_matcher=self.direct_wording_matcher,
+            )
         except SupportGuardrailError as exc:
             return self._fallback(
                 message=message,
@@ -105,6 +140,7 @@ class SupportGenerationAgent:
                 error_category=exc.category,
                 validation_issues=[str(exc)],
                 application_constraints=application_constraints,
+                json_mode_used=json_mode_used,
             )
         except json.JSONDecodeError as exc:
             return self._fallback(
@@ -115,6 +151,7 @@ class SupportGenerationAgent:
                 error_category="JSON_PARSE_ERROR",
                 validation_issues=[f"line_{exc.lineno}:column_{exc.colno}"],
                 application_constraints=application_constraints,
+                json_mode_used=json_mode_used,
             )
         except ValidationError as exc:
             return self._fallback(
@@ -125,6 +162,7 @@ class SupportGenerationAgent:
                 error_category="SCHEMA_VALIDATION_ERROR",
                 validation_issues=_safe_validation_issues(exc),
                 application_constraints=application_constraints,
+                json_mode_used=json_mode_used,
             )
         except ValueError as exc:
             return self._fallback(
@@ -135,6 +173,7 @@ class SupportGenerationAgent:
                 error_category="JSON_SHAPE_ERROR",
                 validation_issues=[str(exc)[:160]],
                 application_constraints=application_constraints,
+                json_mode_used=json_mode_used,
             )
         except Exception as exc:
             category = (
@@ -149,6 +188,7 @@ class SupportGenerationAgent:
                 fallback_reason="PROVIDER_ERROR",
                 error_category=category,
                 application_constraints=application_constraints,
+                json_mode_used=json_mode_used,
             )
 
         constraints = _resolve_presentation_constraints(
@@ -190,7 +230,8 @@ class SupportGenerationAgent:
                 citation.model_dump(mode="json") for citation in guidance.citations
             ],
             "retrieval_unknown": guidance.unknown,
-            "memory_evidence_count": len((retrieved_memories or [])[:3]),
+            "memory_evidence_count": len((memory_tool_evidence or [])[:3]),
+            "json_mode_used": json_mode_used,
             "llm_usage": LLMUsage(used=True).model_dump(mode="json"),
             "fallback_used": False,
             "support_context_fields": sorted(
@@ -216,6 +257,147 @@ class SupportGenerationAgent:
             ),
         }
 
+    async def respond_stream(
+        self,
+        *,
+        message: str,
+        intent: Intent,
+        safety_result: SafetyResult,
+        chunk_sink: Callable[[str], Awaitable[None]],
+        support_context: SupportGenerationContext | None = None,
+        conversation_context: ConversationPromptContext | None = None,
+        memory_tool_evidence: list[str] | None = None,
+        application_constraints: PresentationConstraints | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Stream complete, deterministically checked sentences for an eligible turn."""
+        if (
+            self.llm_client is None
+            or not isinstance(self.llm_client, StreamingLLMClient)
+            or safety_result.risk_level is not RiskLevel.LOW
+            or intent not in {Intent.EMOTIONAL_SUPPORT, Intent.PROGRESS_REVIEW}
+            or memory_tool_evidence
+        ):
+            return await self.respond(
+                message=message,
+                intent=intent,
+                safety_result=safety_result,
+                support_context=support_context,
+                conversation_context=conversation_context,
+                memory_tool_evidence=memory_tool_evidence,
+                application_constraints=application_constraints,
+            )
+
+        guidance = self.knowledge.query(message, KnowledgeBaseType.SOCIAL_SKILLS)
+        constraints = _resolve_presentation_constraints(
+            message=message,
+            proposed=PresentationConstraints(),
+            application=application_constraints,
+        )
+        user_prompt = build_support_user_prompt(
+            message=message,
+            intent=intent.value,
+            risk_level=safety_result.risk_level.value,
+            retrieved_guidance=[
+                {"title": citation.title, "snippet": citation.snippet}
+                for citation in guidance.citations
+            ],
+            application_context=_support_context_payload(support_context),
+            conversation_context=_conversation_context_payload(
+                conversation_context
+            ),
+            stable_memory_context=(
+                conversation_context.stable_memory_context
+                if conversation_context is not None
+                else {}
+            ),
+            memory_tool_evidence=[],
+            response_constraints=constraints.model_dump(mode="json"),
+        )
+        sentence_buffer = SentenceBuffer(maximum_chars=1000)
+        output_guardrail = OutputGuardrail()
+        emitted: list[str] = []
+        redaction_categories: set[str] = set()
+
+        async def emit_checked(sentence: str) -> None:
+            safe_sentence, categories = redact_sensitive_identifiers(sentence)
+            redaction_categories.update(categories)
+            checked = await output_guardrail.evaluate(
+                user_message=message,
+                response=safe_sentence,
+                intent=intent,
+                risk_level=safety_result.risk_level,
+                selected_skill="general_support_skill",
+                selected_agent="support_stream_generation_agent",
+                evaluation_mode=OutputGuardrailMode.DETERMINISTIC_ONLY,
+            )
+            if checked.action is not OutputGuardrailAction.ALLOW:
+                raise SupportGuardrailError(
+                    "Streaming support failed deterministic output guardrails.",
+                    category="PROHIBITED_STREAM_CONTENT",
+                )
+            if safe_sentence:
+                await chunk_sink(safe_sentence)
+                emitted.append(safe_sentence)
+
+        error_category: str | None = None
+        try:
+            async for delta in self.llm_client.stream_text(
+                system_prompt=build_support_stream_system_prompt(),
+                user_prompt=user_prompt,
+                temperature=0.1,
+            ):
+                for sentence in sentence_buffer.feed(delta):
+                    await emit_checked(sentence)
+            final_sentence = sentence_buffer.flush()
+            if final_sentence:
+                await emit_checked(final_sentence)
+            if not emitted:
+                raise ValueError("streaming provider returned an empty response")
+        except Exception as exc:
+            error_category = (
+                exc.category.value
+                if isinstance(exc, ProviderError)
+                else getattr(exc, "category", "STREAM_GENERATION_ERROR")
+            )
+            if not emitted:
+                return self._fallback(
+                    message=message,
+                    intent=intent,
+                    safety_result=safety_result,
+                    fallback_reason="STREAM_GENERATION_ERROR",
+                    error_category=str(error_category),
+                    application_constraints=application_constraints,
+                )
+            interruption = "这次回复暂时中断了，可以稍后重试，也可以先停在这里。"
+            await emit_checked(interruption)
+
+        response = "".join(emitted)
+        return response, {
+            "agent": "support_stream_generation_agent",
+            "action": "bounded_streaming_support_generation",
+            "native_streaming_used": True,
+            "stream_interrupted": error_category is not None,
+            "presentation_constraints": constraints.model_dump(mode="json"),
+            "citations": [
+                citation.model_dump(mode="json") for citation in guidance.citations
+            ],
+            "retrieval_unknown": guidance.unknown,
+            "memory_evidence_count": 0,
+            "llm_usage": LLMUsage(
+                used=True,
+                fallback_used=error_category is not None,
+                error_category=(str(error_category) if error_category else None),
+            ).model_dump(mode="json"),
+            "fallback_used": error_category is not None,
+            "privacy_redaction": {
+                "deterministic_categories": sorted(redaction_categories),
+                "semantic_categories": [],
+            },
+            "safety_boundary": (
+                "non_diagnostic_self_help_only; not a substitute for counseling"
+            ),
+        }
+
     def _fallback(
         self,
         *,
@@ -226,6 +408,7 @@ class SupportGenerationAgent:
         error_category: str | None = None,
         validation_issues: list[str] | None = None,
         application_constraints: PresentationConstraints | None = None,
+        json_mode_used: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         response, data = self.fallback_agent.respond(message, intent, safety_result)
         constraints = _resolve_presentation_constraints(
@@ -243,6 +426,7 @@ class SupportGenerationAgent:
                 error_category=error_category,
             ).model_dump(mode="json"),
             "presentation_constraints": constraints.model_dump(mode="json"),
+            "json_mode_used": json_mode_used,
         }
         if validation_issues:
             result["validation_issues"] = validation_issues
@@ -278,7 +462,11 @@ def _conversation_context_payload(
     """Serialize only the application-bounded continuity projection."""
     if conversation_context is None:
         return {}
-    return conversation_context.model_dump(mode="json", exclude_none=True)
+    return conversation_context.model_dump(
+        mode="json",
+        exclude={"stable_memory_context"},
+        exclude_none=True,
+    )
 
 
 class SupportGuardrailError(ValueError):
@@ -294,6 +482,7 @@ def _validate_support_generation(
     *,
     message: str,
     intent: Intent,
+    direct_wording_matcher: Callable[[str], bool] | None = None,
 ) -> None:
     """Reject medical, coercive, dependent, or fabricated-contact output."""
     text = " ".join(_proposal_text_values(proposal)).casefold()
@@ -308,18 +497,26 @@ def _validate_support_generation(
         r"(?<!\d)1[3-9]\d{9}(?!\d)",
     )
     if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in prohibited_patterns):
-        raise SupportGuardrailError("Support generation failed output guardrails.")
+        raise SupportGuardrailError(
+            "Support generation failed output guardrails.",
+            category="PROHIBITED_SUPPORT_CONTENT",
+        )
     if (
         proposal.automatic_thought is not None
         and proposal.automatic_thought.strip() not in message
     ):
         raise SupportGuardrailError(
-            "Automatic thought must be an explicit span from the user message."
+            "Automatic thought must be an explicit span from the user message.",
+            category="UNGROUNDED_AUTOMATIC_THOUGHT",
         )
     if proposal.needs_real_support and not proposal.real_support_note:
-        raise SupportGuardrailError("Real-support flag requires a bounded support note.")
+        raise SupportGuardrailError(
+            "Real-support flag requires a bounded support note.",
+            category="MISSING_REAL_SUPPORT_NOTE",
+        )
     if proposal.response_mode == "direct_practice":
-        if intent != Intent.EMOTIONAL_SUPPORT or not _requests_direct_wording(message):
+        matcher = direct_wording_matcher or _requests_direct_wording
+        if intent != Intent.EMOTIONAL_SUPPORT or not matcher(message):
             raise SupportGuardrailError(
                 "direct_practice requires an explicit request for directly usable wording.",
                 category="MODE_SELECTION_GUARDRAIL",
@@ -388,6 +585,21 @@ def _requests_direct_wording(message: str) -> bool:
         r"(?:开场白|回复模板|话术|措辞)",
         r"只(?:回复|回答|输出|给).{0,8}(?:一句|表达|话术|模板)",
         r"帮我(?:写|改|拆成|组织).{0,8}(?:一句|表达|话术|回复)",
+    )
+    return any(re.search(pattern, message, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def requests_direct_wording_v2(message: str) -> bool:
+    """Recognize additional explicit requests for short wording."""
+    if _requests_direct_wording(message):
+        return True
+    patterns = (
+        r"只(?:想|要|需要)?.{0,8}(?:准备|写|组织|得到|给).{0,8}"
+        r"(?:一|1)(?:句|句话).{0,8}(?:开场|表达|回复|拒绝|提问)",
+        r"请.{0,24}(?:给|写|组织).{0,12}(?:一句|一个.{0,8})"
+        r"(?:开场|表达|回复|拒绝|提问)",
+        r"请.{0,24}(?:给|写|组织).{0,20}(?:不超过|控制在).{0,8}"
+        r"(?:字|词).{0,8}(?:开场|表达|回复|拒绝|提问)",
     )
     return any(re.search(pattern, message, flags=re.IGNORECASE) for pattern in patterns)
 

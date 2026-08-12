@@ -1,5 +1,6 @@
 """Deterministic tests for the global Harness output policy layer."""
 
+from collections.abc import Callable
 import json
 
 import pytest
@@ -13,6 +14,7 @@ from app.guardrails.output import (
     SemanticCheckErrorType,
     SemanticSchemaErrorCode,
 )
+from app.guardrails.policy import OutputGuardrailMode
 from app.llm.prompts import build_output_guardrail_system_prompt
 from app.models import ChatRequest, Intent, RiskLevel
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
@@ -85,6 +87,37 @@ class UnsafeSupportSkill:
             structured_data={"agent": "unsafe_test_agent", "action": "unsafe_test"},
             selected_agent="unsafe_test_agent",
         )
+
+
+@pytest.mark.anyio
+async def test_deterministic_only_mode_skips_semantic_provider_but_keeps_rules() -> None:
+    client = FakeLLMClient('{"violations": []}')
+    guardrail = OutputGuardrail(client)
+
+    safe = await guardrail.evaluate(
+        user_message="小组讨论让我有点紧张。",
+        response="可以先准备一句简短开场。",
+        intent=Intent.EMOTIONAL_SUPPORT,
+        risk_level=RiskLevel.LOW,
+        selected_skill="general_support_skill",
+        selected_agent="support_generation_agent",
+        evaluation_mode=OutputGuardrailMode.DETERMINISTIC_ONLY,
+    )
+    unsafe = await guardrail.evaluate(
+        user_message="小组讨论让我有点紧张。",
+        response="你已经患有社交焦虑症。",
+        intent=Intent.EMOTIONAL_SUPPORT,
+        risk_level=RiskLevel.LOW,
+        selected_skill="general_support_skill",
+        selected_agent="support_generation_agent",
+        evaluation_mode=OutputGuardrailMode.DETERMINISTIC_ONLY,
+    )
+
+    assert safe.action is OutputGuardrailAction.ALLOW
+    assert safe.semantic_checked is False
+    assert client.call_count == 0
+    assert unsafe.action is OutputGuardrailAction.REPLACE
+    assert unsafe.evaluation_mode is OutputGuardrailMode.DETERMINISTIC_ONLY
 
 
 class InventedFactSupportSkill:
@@ -588,8 +621,10 @@ async def test_global_guardrail_allows_safe_roleplay_and_crisis_output(
 
 
 @pytest.mark.anyio
-async def test_harness_applies_global_output_guardrail_before_trace() -> None:
-    harness = AgentHarness(
+async def test_harness_applies_global_output_guardrail_before_trace(
+    isolated_harness_factory: Callable[..., AgentHarness],
+) -> None:
+    harness = isolated_harness_factory(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         safety_classifier=RuleBasedSafetyClassifier(),
         intent_router=RuleBasedIntentRouter(),
@@ -616,7 +651,9 @@ async def test_harness_applies_global_output_guardrail_before_trace() -> None:
 
 
 @pytest.mark.anyio
-async def test_harness_persists_successful_repair_and_recheck_trace() -> None:
+async def test_harness_persists_successful_repair_and_recheck_trace(
+    isolated_harness_factory: Callable[..., AgentHarness],
+) -> None:
     client = SequenceLLMClient(
         [
             _invented_fact_assessment("我上周被同学打伤了"),
@@ -627,7 +664,7 @@ async def test_harness_persists_successful_repair_and_recheck_trace() -> None:
             '{"violations":[]}',
         ]
     )
-    harness = AgentHarness(
+    harness = isolated_harness_factory(
         trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
         safety_classifier=RuleBasedSafetyClassifier(),
         intent_router=RuleBasedIntentRouter(),

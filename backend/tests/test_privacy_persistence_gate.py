@@ -13,6 +13,7 @@ from app.models_exposure import (
     ExposurePlanRequest,
 )
 from app.models_worksheet import WorksheetCreateRequest
+from app.memory.settings_store import InMemoryUserMemorySettingsRepository
 from app.privacy.persistence_gate import PersistenceGate
 from app.privacy.policy import PersistenceKind
 from app.privacy.redaction import (
@@ -26,20 +27,20 @@ TEST_AUTH_SECRET = "privacy-test-secret"
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
-
-
-@pytest.fixture
-async def client() -> httpx.AsyncClient:
+async def client(migrated_database: str) -> httpx.AsyncClient:
     """Create an async ASGI client for privacy persistence tests."""
+    del migrated_database
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport,
         base_url="http://testserver",
     ) as async_client:
         yield async_client
+
+
+def _in_memory_persistence_gate() -> PersistenceGate:
+    """Build a privacy gate without coupling policy tests to PostgreSQL."""
+    return PersistenceGate(repository=InMemoryUserMemorySettingsRepository())
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +84,7 @@ async def _send_general_conversation_turn(
 
 @pytest.mark.anyio
 async def test_persistence_gate_minimizes_raw_message_by_default() -> None:
-    gate = PersistenceGate()
+    gate = _in_memory_persistence_gate()
     decision = await gate.persist_text(
         user_id=f"privacy_gate_default_{uuid4().hex}",
         kind=PersistenceKind.WORKSHEET_SOURCE_MESSAGE,
@@ -98,7 +99,7 @@ async def test_persistence_gate_minimizes_raw_message_by_default() -> None:
 
 @pytest.mark.anyio
 async def test_persistence_gate_minimizes_exposure_target_scenario() -> None:
-    gate = PersistenceGate()
+    gate = _in_memory_persistence_gate()
     decision = await gate.persist_text(
         user_id=f"privacy_gate_exposure_target_{uuid4().hex}",
         kind=PersistenceKind.EXPOSURE_TARGET_SCENARIO,
@@ -113,7 +114,7 @@ async def test_persistence_gate_minimizes_exposure_target_scenario() -> None:
 
 @pytest.mark.anyio
 async def test_persistence_gate_redacts_session_review_next_step() -> None:
-    gate = PersistenceGate()
+    gate = _in_memory_persistence_gate()
     raw = "下次和姓名：张三 练习，电话 13912345678，邮箱 review@example.com。"
 
     decision = await gate.persist_text(
@@ -132,7 +133,7 @@ async def test_persistence_gate_redacts_session_review_next_step() -> None:
 
 @pytest.mark.anyio
 async def test_persistence_gate_redacts_derived_and_agent_messages() -> None:
-    gate = PersistenceGate()
+    gate = _in_memory_persistence_gate()
     worksheet_decision = await gate.persist_text(
         user_id=f"privacy_gate_worksheet_field_{uuid4().hex}",
         kind=PersistenceKind.WORKSHEET_FIELD,
@@ -157,7 +158,7 @@ async def test_persistence_gate_redacts_derived_and_agent_messages() -> None:
 
 @pytest.mark.anyio
 async def test_persistence_gate_redacts_memory_and_onboarding_fields() -> None:
-    gate = PersistenceGate()
+    gate = _in_memory_persistence_gate()
     memory_decision = await gate.persist_text(
         user_id=f"privacy_gate_memory_preference_{uuid4().hex}",
         kind=PersistenceKind.MEMORY_PREFERENCE,
@@ -243,7 +244,7 @@ def test_third_party_redactor_handles_explicit_name_introducer() -> None:
 
 @pytest.mark.anyio
 async def test_trace_output_redacts_chinese_sensitive_identifiers_without_minimizing() -> None:
-    gate = PersistenceGate()
+    gate = _in_memory_persistence_gate()
     decision = await gate.persist_text(
         user_id=f"privacy_gate_trace_output_{uuid4().hex}",
         kind=PersistenceKind.TRACE_OUTPUT,
@@ -272,7 +273,7 @@ async def test_trace_output_summary_only_in_production_by_default(
 ) -> None:
     monkeypatch.delenv("SOCIALEASE_TRACE_OUTPUT_MODE", raising=False)
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "production")
-    gate = PersistenceGate()
+    gate = _in_memory_persistence_gate()
     raw = "你的手机号 13912345678 和姓名：王五 不需要写入 trace，我们只保留练习摘要。"
 
     decision = await gate.persist_text(
@@ -295,7 +296,7 @@ async def test_trace_output_can_be_minimized_by_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SOCIALEASE_TRACE_OUTPUT_MODE", "minimized")
-    gate = PersistenceGate()
+    gate = _in_memory_persistence_gate()
 
     decision = await gate.persist_text(
         user_id=f"privacy_gate_trace_minimized_{uuid4().hex}",

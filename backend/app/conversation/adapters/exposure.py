@@ -4,6 +4,12 @@ from datetime import UTC, datetime
 import re
 
 from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
+from app.memory.completed_event_writer import CompletedPracticeMemoryWriter
+from app.memory.metadata_contract import (
+    MemoryOutcomeCode,
+    write_metadata_from_description,
+)
+from app.models_long_term_memory import MemoryEvidenceType, MemorySourceType
 from app.models_conversation import (
     ExposureMessageEventPayload,
     ExposureParameters,
@@ -26,8 +32,14 @@ from app.services.exposure_service import ExposureService, exposure_service
 class ExposureModuleAdapter:
     """Start an exposure plan after the user supplies an intensity level."""
 
-    def __init__(self, service: ExposureService | None = None) -> None:
+    def __init__(
+        self,
+        service: ExposureService | None = None,
+        *,
+        memory_writer: CompletedPracticeMemoryWriter | None = None,
+    ) -> None:
         self._service = service or exposure_service
+        self._memory_writer = memory_writer
 
     async def prepare_start(
         self,
@@ -42,7 +54,7 @@ class ExposureModuleAdapter:
                 user_id=run.user_id,
                 target_scenario=parameters.goal,
                 current_anxiety_level=parameters.starting_anxiety,
-                previous_attempts=context.selected_agent_memory[:3],
+                previous_attempts=[],
             )
         )
         if prepared.blocked:
@@ -110,7 +122,7 @@ class ExposureModuleAdapter:
         return await self._create_plan(
             run,
             anxiety,
-            previous_attempts=context.selected_agent_memory[:3],
+            previous_attempts=[],
         )
 
     async def build_overlay(
@@ -279,6 +291,27 @@ class ExposureModuleAdapter:
                 permission_to_increase=permission,
             )
         )
+        if (
+            not result.blocked
+            and status == ExposureFeedbackStatus.COMPLETED
+            and self._memory_writer is not None
+        ):
+            await self._memory_writer.record_completed_practice(
+                user_id=run.user_id,
+                source_id=(
+                    f"{run.domain_session_id}:{overlay.current_step_id}"[:128]
+                ),
+                safe_summary="已明确完成一次分级社交练习步骤。",
+                metadata=write_metadata_from_description(
+                    _parameters(run).goal,
+                    source_type=MemorySourceType.EXPOSURE,
+                    evidence_type=(
+                        MemoryEvidenceType.COMPLETED_PRODUCT_ACTION
+                    ),
+                    outcome_code=MemoryOutcomeCode.COMPLETED,
+                    practice_thread_id=run.domain_session_id,
+                ),
+            )
         next_title = result.next_task.title if result.next_task else None
         response = result.response
         if next_title:

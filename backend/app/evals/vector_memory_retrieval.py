@@ -7,10 +7,8 @@ import json
 from time import perf_counter
 from typing import Any
 
-from app.evals.dense_embedding import (
-    DenseEmbeddingProvider,
-    FastEmbedBgeSmallZh,
-)
+from app.memory.embedding import FastEmbedBgeSmallZh
+from app.memory.recall import DenseEmbeddingProvider
 from app.evals.memory_retrieval_dataset import (
     build_default_memory_retrieval_dataset,
 )

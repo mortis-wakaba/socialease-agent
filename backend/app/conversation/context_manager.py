@@ -110,7 +110,7 @@ class ConversationContextManager:
                 else None
             ),
             active_module_count=len(allocated.module_stack),
-            selected_memory_count=len(allocated.selected_memory),
+            selected_memory_count=int(bool(allocated.selected_stable_memory)),
             estimated_tokens=allocated.estimated_tokens,
             total_token_budget=budgets.total_tokens,
             budget_profile=profile,
@@ -125,7 +125,7 @@ class ConversationContextManager:
             recent_events=allocated.recent_events,
             compact_summary=allocated.compact_summary,
             active_module_stack=allocated.module_stack,
-            selected_agent_memory=allocated.selected_memory,
+            selected_stable_memory=allocated.selected_stable_memory,
             diagnostics=diagnostics,
         )
 

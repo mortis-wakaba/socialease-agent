@@ -14,6 +14,15 @@ from app.conversation.adapters import (
     RoleplayModuleAdapter,
     WorksheetModuleAdapter,
 )
+from app.conversation.module_catalog import (
+    build_module_parameters,
+    module_memory_request_context,
+    module_proposal_copy,
+    module_proposal_reason,
+    module_skill_name,
+    module_start_message,
+    module_type_for_intent,
+)
 from app.conversation.module_coordinator import ModuleCoordinator
 from app.conversation.module_policy import ConversationStateError, ModuleStackPolicy
 from app.conversation.repository import ConversationRepository, ModuleStartJob
@@ -21,15 +30,9 @@ from app.db.factory import repository_factory
 from app.llm.factory import create_llm_client
 from app.memory.token_estimator import ConservativeTokenEstimator
 from app.memory.active_memory_assembler import ActiveMemoryAssembler
+from app.memory.completed_event_writer import CompletedPracticeMemoryWriter
 from app.memory.context_orchestrator import MemoryContextOrchestrator
-from app.memory.retriever import EpisodicMemoryRetriever
-from app.models import (
-    ChatRequest,
-    Intent,
-    IntentResult,
-    RiskLevel,
-    SafetyResult,
-)
+from app.models import ChatRequest, IntentResult, RiskLevel, SafetyResult
 from app.models_conversation import (
     HISTORY_NOTICE_VERSION,
     Conversation,
@@ -40,16 +43,11 @@ from app.models_conversation import (
     ConversationEventType,
     ConversationStatus,
     CrisisEscalatedEventPayload,
-    ExposureParameters,
     ModuleParameters,
     ModuleProposal,
     ModuleProposalEventPayload,
-    ModuleProposalReason,
     ModuleProposalStatus,
     ModuleType,
-    ResourceParameters,
-    RoleplayParameters,
-    WorksheetParameters,
 )
 from app.models_conversation_api import ConversationMessageResponse
 from app.models_conversation_api import ModuleControlResponse
@@ -59,28 +57,14 @@ from app.models_conversation_api import (
     ConversationExportResponse,
 )
 from app.models_conversation_context import (
-    ConversationPromptContext,
-    ConversationPromptEvent,
     ConversationWorkingContext,
+    build_conversation_prompt_context,
 )
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
 from app.workflow.engine import AgentHarness
+from app.workflow.context import ResponseChunkSink
 from app.workflow.router import BaseIntentRouter, LlmIntentRouter, RuleBasedIntentRouter
-
-
-_MODULE_BY_INTENT = {
-    Intent.ROLEPLAY_PRACTICE: ModuleType.ROLEPLAY,
-    Intent.CBT_WORKSHEET: ModuleType.WORKSHEET,
-    Intent.EXPOSURE_PLANNING: ModuleType.EXPOSURE,
-    Intent.CAMPUS_RESOURCE_QUERY: ModuleType.RESOURCE,
-}
-
-_SKILL_BY_MODULE = {
-    ModuleType.ROLEPLAY: "roleplay_skill",
-    ModuleType.WORKSHEET: "worksheet_skill",
-    ModuleType.EXPOSURE: "exposure_planning_skill",
-}
 
 
 class ConversationNoticeError(ValueError):
@@ -131,10 +115,6 @@ class ConversationService:
             or MemoryContextOrchestrator(
                 user_profile_repository=factory.user_profile_repository(),
                 settings_repository=factory.user_memory_settings_repository(),
-                episodic_retriever=EpisodicMemoryRetriever(
-                    repository=factory.long_term_memory_repository(),
-                    settings_repository=factory.user_memory_settings_repository(),
-                ),
                 assembler=memory_assembler,
             )
         )
@@ -147,12 +127,22 @@ class ConversationService:
             token_estimator=estimator,
             provider=create_conversation_context_provider(self._repository),
         )
+        completed_memory_writer = CompletedPracticeMemoryWriter(
+            memory_repository=factory.long_term_memory_repository(),
+            settings_repository=factory.user_memory_settings_repository(),
+        )
         self._module_coordinator = module_coordinator or ModuleCoordinator(
             repository=self._repository,
             adapters={
-                ModuleType.ROLEPLAY: RoleplayModuleAdapter(),
-                ModuleType.WORKSHEET: WorksheetModuleAdapter(),
-                ModuleType.EXPOSURE: ExposureModuleAdapter(),
+                ModuleType.ROLEPLAY: RoleplayModuleAdapter(
+                    memory_writer=completed_memory_writer
+                ),
+                ModuleType.WORKSHEET: WorksheetModuleAdapter(
+                    memory_writer=completed_memory_writer
+                ),
+                ModuleType.EXPOSURE: ExposureModuleAdapter(
+                    memory_writer=completed_memory_writer
+                ),
                 ModuleType.RESOURCE: ResourceModuleAdapter(),
             },
         )
@@ -439,6 +429,8 @@ class ConversationService:
         user_id: str,
         message: str,
         idempotency_key: str,
+        streaming_requested: bool = False,
+        response_chunk_sink: ResponseChunkSink | None = None,
     ) -> ConversationMessageResponse:
         """Execute one logical turn once and durably replay its final result."""
         request_hash = sha256(
@@ -472,6 +464,8 @@ class ConversationService:
             user_id=user_id,
             message=message,
             idempotency_key=idempotency_key,
+            streaming_requested=streaming_requested,
+            response_chunk_sink=response_chunk_sink,
         )
         await self._repository.complete_command(
             conversation_id=conversation_id,
@@ -488,6 +482,8 @@ class ConversationService:
         user_id: str,
         message: str,
         idempotency_key: str,
+        streaming_requested: bool,
+        response_chunk_sink: ResponseChunkSink | None,
     ) -> ConversationMessageResponse:
         """Append the claimed user turn, with crisis and proposal preemption."""
         conversation = await self._repository.get_for_user(
@@ -570,11 +566,11 @@ class ConversationService:
             )
 
         intent_result = await self._intent_router.route(message, safety_result)
-        proposed_module = _MODULE_BY_INTENT.get(intent_result.intent)
+        proposed_module = module_type_for_intent(intent_result.intent)
         if (
             proposed_module is not None
             and safety_result.risk_level == RiskLevel.LOW
-            and _proposal_allowed_for_stack(stack, proposed_module)
+            and ModuleStackPolicy.can_push(stack, proposed_module)
         ):
             context = await self._context_manager.assemble(
                 conversation_id=conversation_id,
@@ -589,7 +585,7 @@ class ConversationService:
                 message=message,
                 module_type=proposed_module,
             )
-            proposal_copy = _proposal_copy(proposed_module)
+            proposal_copy = module_proposal_copy(proposed_module)
             proposal_event = await self._repository.get_event_by_idempotency(
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -633,10 +629,12 @@ class ConversationService:
                 module_type=active_run.module_type,
                 module_parameters=active_run.module_parameters,
                 current_event_id=user_event.event_id,
-                practice_thread_id=active_run.domain_session_id,
             )
-            context = await self._module_coordinator.project_context(context)
-            result, module_event = await self._module_coordinator.handle_message(
+            (
+                result,
+                module_event,
+                context,
+            ) = await self._module_coordinator.handle_message(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 message=message,
@@ -666,6 +664,16 @@ class ConversationService:
         )
         workflow_response = None
         if replay is None:
+            harness_kwargs = {
+                "trusted_safety_result": safety_result,
+                "trusted_intent_result": intent_result,
+                "trusted_conversation_context": build_conversation_prompt_context(
+                    context
+                ),
+                "streaming_requested": streaming_requested,
+            }
+            if response_chunk_sink is not None:
+                harness_kwargs["response_chunk_sink"] = response_chunk_sink
             workflow_response = await self._harness.run(
                 ChatRequest(
                     user_id=user_id,
@@ -675,9 +683,7 @@ class ConversationService:
                         source_event_id=user_event.event_id,
                     ),
                 ),
-                trusted_safety_result=safety_result,
-                trusted_intent_result=intent_result,
-                trusted_conversation_context=_prompt_context(context),
+                **harness_kwargs,
             )
             replay = await self._repository.append_event(
                 conversation_id=conversation_id,
@@ -744,10 +750,9 @@ class ConversationService:
         context = await self._assemble_module_context(
             conversation_id=conversation_id,
             user_id=user_id,
-            message=_module_start_message(proposal),
+            message=module_start_message(proposal),
             module_type=proposal.proposed_module,
             module_parameters=proposal.bounded_parameters,
-            retrieve_memory=proposal.proposed_module != ModuleType.ROLEPLAY,
             current_event_id=proposal.source_event_id,
         )
         if proposal.status == ModuleProposalStatus.ACCEPTED:
@@ -783,10 +788,9 @@ class ConversationService:
         context = await self._assemble_module_context(
             conversation_id=job.conversation_id,
             user_id=job.user_id,
-            message=_module_start_message(proposal),
+            message=module_start_message(proposal),
             module_type=proposal.proposed_module,
             module_parameters=proposal.bounded_parameters,
-            retrieve_memory=proposal.proposed_module != ModuleType.ROLEPLAY,
             current_event_id=proposal.source_event_id,
         )
         return await self._module_coordinator.reconcile_claimed(
@@ -835,24 +839,21 @@ class ConversationService:
         message: str,
         module_type: ModuleType,
         module_parameters: ModuleParameters | None = None,
-        retrieve_memory: bool = True,
         current_event_id: str | None = None,
-        practice_thread_id: str | None = None,
     ) -> ConversationWorkingContext:
-        """Retrieve and allocate memory only for modules that consume it."""
-        skill_name = _SKILL_BY_MODULE.get(module_type)
+        """Load stable memory and allocate the shared module context."""
+        skill_name = module_skill_name(module_type)
         active_memory = None
-        if skill_name is not None and retrieve_memory:
+        if skill_name is not None:
             active_memory = await self._memory_context_orchestrator.assemble(
                 user_id=user_id,
                 skill_name=skill_name,
                 current_request=message,
-                request_context=_module_memory_request_context(
+                request_context=module_memory_request_context(
                     module_type,
                     message,
                     module_parameters,
                 ),
-                practice_thread_id=practice_thread_id,
             )
         return await self._context_manager.assemble(
             conversation_id=conversation_id,
@@ -901,7 +902,7 @@ class ConversationService:
         message: str,
         module_type: ModuleType,
     ) -> ModuleProposal:
-        parameters = _module_parameters(module_type, message)
+        parameters = build_module_parameters(module_type, message)
         request_hash = _proposal_request_hash(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -915,7 +916,7 @@ class ConversationService:
             user_id=user_id,
             proposed_module=module_type,
             source_event_id=source_event.event_id,
-            reason_code=_proposal_reason(module_type),
+            reason_code=module_proposal_reason(module_type),
             bounded_parameters=parameters,
             request_hash=request_hash,
             expires_at=datetime.now(UTC) + self._proposal_ttl,
@@ -954,74 +955,6 @@ class ConversationService:
             context_diagnostics=context_diagnostics,
             workflow_response=workflow_response,
         )
-
-
-def _module_parameters(module_type: ModuleType, message: str):
-    if module_type == ModuleType.ROLEPLAY:
-        return RoleplayParameters(scenario_description=message)
-    if module_type == ModuleType.WORKSHEET:
-        return WorksheetParameters(situation=message)
-    if module_type == ModuleType.EXPOSURE:
-        return ExposureParameters(goal=message)
-    return ResourceParameters(query=message)
-
-
-def _module_start_message(proposal: ModuleProposal) -> str:
-    parameters = proposal.bounded_parameters
-    if isinstance(parameters, RoleplayParameters):
-        return parameters.scenario_description
-    if isinstance(parameters, WorksheetParameters):
-        return parameters.situation
-    if isinstance(parameters, ExposureParameters):
-        return parameters.goal
-    return parameters.query
-
-
-def _module_memory_request_context(
-    module_type: ModuleType,
-    message: str,
-    parameters: ModuleParameters | None = None,
-) -> dict[str, object]:
-    """Expose only validated selector fields used by the target module skill."""
-    if module_type == ModuleType.ROLEPLAY:
-        if isinstance(parameters, RoleplayParameters):
-            return {
-                "scenario": parameters.scenario_description,
-                "difficulty": parameters.difficulty,
-            }
-        return {"scenario": message}
-    if module_type == ModuleType.EXPOSURE:
-        if isinstance(parameters, ExposureParameters):
-            context: dict[str, object] = {"target_scenario": parameters.goal}
-            if parameters.starting_anxiety is not None:
-                context["current_anxiety_level"] = parameters.starting_anxiety
-            return context
-        return {"target_scenario": message}
-    return {}
-
-
-def _proposal_reason(module_type: ModuleType) -> ModuleProposalReason:
-    return {
-        ModuleType.ROLEPLAY: ModuleProposalReason.EXPLICIT_PRACTICE_REQUEST,
-        ModuleType.WORKSHEET: (
-            ModuleProposalReason.STRUCTURED_REFLECTION_MAY_HELP
-        ),
-        ModuleType.EXPOSURE: ModuleProposalReason.GRADED_PRACTICE_MAY_HELP,
-        ModuleType.RESOURCE: ModuleProposalReason.RESOURCE_LOOKUP_REQUESTED,
-    }[module_type]
-
-
-def _proposal_copy(module_type: ModuleType) -> str:
-    labels = {
-        ModuleType.ROLEPLAY: "角色扮演",
-        ModuleType.WORKSHEET: "结构化想法记录",
-        ModuleType.EXPOSURE: "分级社交练习",
-        ModuleType.RESOURCE: "支持资源查询",
-    }
-    return (
-        f"这个请求可能适合进入“{labels[module_type]}”模块。"
-        "你可以选择进入，也可以继续普通对话；在你确认前不会启动模块。"
-    )
 
 
 def _proposal_request_hash(
@@ -1067,36 +1000,3 @@ def _workflow_context(
             for run in context.active_module_stack
         ],
     }
-
-
-def _prompt_context(
-    context: ConversationWorkingContext,
-) -> ConversationPromptContext:
-    """Project only bounded continuity fields into trusted model context."""
-    return ConversationPromptContext(
-        recent_events=[
-            ConversationPromptEvent(
-                event_type=event.event_type,
-                role=event.role,
-                content=event.content,
-            )
-            for event in context.recent_events
-        ],
-        compact_summary=context.compact_summary,
-        active_module_overlay=context.active_module_overlay,
-        parent_resume_projections=context.parent_resume_projections,
-        retrieved_memories=context.selected_agent_memory[:3],
-    )
-
-
-def _proposal_allowed_for_stack(
-    stack,
-    module_type: ModuleType,
-) -> bool:
-    if stack and stack[-1].module_type == module_type:
-        return False
-    try:
-        ModuleStackPolicy.validate_push(stack, module_type)
-    except ConversationStateError:
-        return False
-    return True

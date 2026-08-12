@@ -8,9 +8,25 @@
       "fingerprint": "sha256:1c11610e09b4c3cc",
       "version": "intent-v3"
     },
+    "memory_correction_resolution": {
+      "fingerprint": "sha256:8a886ce29116ee48",
+      "version": "memory-correction-v2"
+    },
+    "memory_evidence_selector": {
+      "fingerprint": "sha256:da9a47069de84993",
+      "version": "memory-evidence-selector-v2"
+    },
     "memory_extraction": {
       "fingerprint": "sha256:b4007005553f3244",
       "version": "memory-extraction-v3"
+    },
+    "memory_grounding_generation": {
+      "fingerprint": "sha256:99d5c0cfa1885824",
+      "version": "memory-grounding-v1"
+    },
+    "memory_tool_decision": {
+      "fingerprint": "sha256:a93123a368146743",
+      "version": "memory-tool-v5"
     },
     "output_guardrail": {
       "fingerprint": "sha256:4ce10b055a55fd22",
@@ -25,20 +41,24 @@
       "version": "resource-loop-v2"
     },
     "roleplay": {
-      "fingerprint": "sha256:0376830cb461fc0d",
-      "version": "roleplay-v7"
+      "fingerprint": "sha256:97b51cd75cd7f1e3",
+      "version": "roleplay-v10"
     },
     "safety_classifier": {
       "fingerprint": "sha256:f435a6bfd261fa68",
       "version": "safety-v1"
     },
     "support_generation": {
-      "fingerprint": "sha256:89bca8c723dd7309",
-      "version": "support-v5"
+      "fingerprint": "sha256:1b4dd866ef2f3e50",
+      "version": "support-v8"
+    },
+    "support_stream_generation": {
+      "fingerprint": "sha256:d92478fddc026212",
+      "version": "support-stream-v1"
     },
     "worksheet_extraction": {
       "fingerprint": "sha256:df5a65d4df060c09",
-      "version": "worksheet-v4"
+      "version": "worksheet-v5"
     }
   },
   "schema_version": 1

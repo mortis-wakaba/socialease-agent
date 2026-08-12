@@ -13,6 +13,7 @@ from app.memory.identity import (
 from app.memory.long_term_repository import MemoryConflictError
 from app.memory.text_semantics import (
     conflict_overlap,
+    fts_query_terms,
     lexical_terms,
     memories_conflict,
 )
@@ -98,6 +99,14 @@ def test_shared_conflict_semantics_exposes_overlap_and_decision() -> None:
 
 def test_demo_governance_marker_is_not_a_retrieval_feature() -> None:
     assert "demo" not in lexical_terms("demo：课堂发言前先写三个关键词")
+
+
+def test_fts_terms_are_ordered_and_aligned_with_cjk_bigrams() -> None:
+    terms = fts_query_terms("课堂发言开场", "PostgreSQL 数据库")
+
+    assert terms[:5] == ("课堂", "堂发", "发言", "言开", "开场")
+    assert "课堂发言开场" not in terms
+    assert "postgresql" in terms
 
 
 @pytest.mark.anyio

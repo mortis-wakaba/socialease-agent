@@ -5,6 +5,8 @@ from uuid import uuid4
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.db.factory import repository_factory
 from app.memory.long_term_repository import MemoryConflictError
 from app.memory.thread_checkpoint_service import ThreadCheckpointService

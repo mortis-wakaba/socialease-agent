@@ -94,7 +94,3 @@ class BM25Retriever:
             "不知道", "不知", "知道", "先做", "比较", "合适", "练习",
         }
         return [term for term in terms if term not in stop_terms]
-
-
-# Backwards-compatible alias for older imports/tests.
-KeywordRetriever = BM25Retriever

@@ -26,7 +26,7 @@ class AllocatedConversationContext:
     recent_events: list[ConversationEvent]
     compact_summary: ConversationCompactSummary | None
     module_stack: list[ModuleRun]
-    selected_memory: list[str]
+    selected_stable_memory: dict[str, object]
     estimated_tokens: int
     dropped_sections: list[str]
 
@@ -95,23 +95,23 @@ class UnifiedContextTokenAllocator:
         if len(selected_stack) < len(module_stack):
             dropped.append("suspended_module_frames")
 
-        selected_memory = _select_agent_memory(
+        selected_stable_memory = _select_stable_memory(
             active_memory,
             token_budget=budgets.active_memory_tokens,
             token_estimator=self._token_estimator,
         )
-        available_memory_count = (
-            len(active_memory.episodic_memories) if active_memory else 0
+        stable_memory_available = bool(
+            active_memory and active_memory.stable_memory.values
         )
-        if len(selected_memory) < available_memory_count:
-            dropped.append("agent_memory")
+        if stable_memory_available and not selected_stable_memory:
+            dropped.append("stable_memory")
 
         estimated_tokens = _context_token_count(
             current_message=current_message,
             events=recent_events,
             summary=selected_summary,
             module_stack=selected_stack,
-            selected_memory=selected_memory,
+            selected_stable_memory=selected_stable_memory,
             token_estimator=self._token_estimator,
         )
         while estimated_tokens > budgets.total_tokens and recent_events:
@@ -123,19 +123,19 @@ class UnifiedContextTokenAllocator:
                 events=recent_events,
                 summary=selected_summary,
                 module_stack=selected_stack,
-                selected_memory=selected_memory,
+                selected_stable_memory=selected_stable_memory,
                 token_estimator=self._token_estimator,
             )
         if estimated_tokens > budgets.total_tokens:
-            selected_memory = []
-            if "agent_memory" not in dropped:
-                dropped.append("agent_memory")
+            selected_stable_memory = {}
+            if stable_memory_available and "stable_memory" not in dropped:
+                dropped.append("stable_memory")
             estimated_tokens = _context_token_count(
                 current_message=current_message,
                 events=recent_events,
                 summary=selected_summary,
                 module_stack=selected_stack,
-                selected_memory=selected_memory,
+                selected_stable_memory=selected_stable_memory,
                 token_estimator=self._token_estimator,
             )
         if estimated_tokens > budgets.total_tokens:
@@ -147,7 +147,7 @@ class UnifiedContextTokenAllocator:
                 events=recent_events,
                 summary=selected_summary,
                 module_stack=selected_stack,
-                selected_memory=selected_memory,
+                selected_stable_memory=selected_stable_memory,
                 token_estimator=self._token_estimator,
             )
 
@@ -156,7 +156,7 @@ class UnifiedContextTokenAllocator:
             recent_events=recent_events,
             compact_summary=selected_summary,
             module_stack=selected_stack,
-            selected_memory=selected_memory,
+            selected_stable_memory=selected_stable_memory,
             estimated_tokens=estimated_tokens,
             dropped_sections=dropped,
         )
@@ -279,32 +279,23 @@ def _fit_module_stack(
     return list(reversed(selected))
 
 
-def _select_agent_memory(
+def _select_stable_memory(
     packet: ActiveMemoryPacket | None,
     *,
     token_budget: int,
     token_estimator: TokenEstimator,
-) -> list[str]:
+) -> dict[str, object]:
     if packet is None or token_budget <= 0:
-        return []
-    candidates = [
-        json.dumps(
-            packet.stable_memory.values,
-            ensure_ascii=False,
-            default=str,
-        ),
-        *packet.episodic_memories,
-    ]
-    selected: list[str] = []
-    used = 0
-    for value in candidates:
-        if not value or value == "{}":
-            continue
-        cost = token_estimator.count(value)
-        if used + cost <= token_budget:
-            selected.append(value)
-            used += cost
-    return selected
+        return {}
+    stable_memory = dict(packet.stable_memory.values)
+    stable_payload = json.dumps(
+        stable_memory,
+        ensure_ascii=False,
+        default=str,
+    )
+    if stable_memory and token_estimator.count(stable_payload) <= token_budget:
+        return stable_memory
+    return {}
 
 
 def _truncate_to_budget(
@@ -330,7 +321,7 @@ def _context_token_count(
     events: list[ConversationEvent],
     summary: ConversationCompactSummary | None,
     module_stack: list[ModuleRun],
-    selected_memory: list[str],
+    selected_stable_memory: dict[str, object],
     token_estimator: TokenEstimator,
 ) -> int:
     payload = {
@@ -359,6 +350,6 @@ def _context_token_count(
             }
             for run in module_stack
         ],
-        "selected_agent_memory": selected_memory,
+        "selected_stable_memory": selected_stable_memory,
     }
     return token_estimator.count(json.dumps(payload, ensure_ascii=False))

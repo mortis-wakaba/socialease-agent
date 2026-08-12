@@ -120,7 +120,10 @@ class ConversationWorkingContext(StrictConversationModel):
         default_factory=list,
         max_length=2,
     )
-    selected_agent_memory: list[str] = Field(default_factory=list, max_length=8)
+    selected_stable_memory: dict[str, object] = Field(
+        default_factory=dict,
+        description="Application-owned stable context, separate from episodic slots.",
+    )
     diagnostics: ConversationContextDiagnostics
 
 
@@ -145,7 +148,30 @@ class ConversationPromptContext(StrictConversationModel):
         default_factory=list,
         max_length=2,
     )
-    retrieved_memories: list[str] = Field(default_factory=list, max_length=3)
+    stable_memory_context: dict[str, object] = Field(
+        default_factory=dict,
+        description="Application-owned stable context, never historical evidence.",
+    )
+
+
+def build_conversation_prompt_context(
+    context: ConversationWorkingContext,
+) -> ConversationPromptContext:
+    """Project bounded working state into the trusted generation contract."""
+    return ConversationPromptContext(
+        recent_events=[
+            ConversationPromptEvent(
+                event_type=event.event_type,
+                role=event.role,
+                content=event.content,
+            )
+            for event in context.recent_events
+        ],
+        compact_summary=context.compact_summary,
+        active_module_overlay=context.active_module_overlay,
+        parent_resume_projections=context.parent_resume_projections,
+        stable_memory_context=context.selected_stable_memory,
+    )
 
 
 def conversation_id_hash(conversation_id: str) -> str:

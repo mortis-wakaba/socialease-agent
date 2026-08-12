@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum
 from time import monotonic
@@ -131,8 +132,15 @@ class ProviderConcurrencyLimiter:
 
     async def run(self, operation: Callable[[], Awaitable[T]]) -> T:
         """Run an operation after acquiring provider capacity."""
-        if self._semaphore is None:
+        async with self.slot():
             return await operation()
+
+    @asynccontextmanager
+    async def slot(self):
+        """Hold one provider slot across an incremental streaming response."""
+        if self._semaphore is None:
+            yield
+            return
         try:
             await asyncio.wait_for(
                 self._semaphore.acquire(),
@@ -148,7 +156,7 @@ class ProviderConcurrencyLimiter:
                 "LLM provider concurrency limit reached."
             ) from exc
         try:
-            return await operation()
+            yield
         finally:
             self._semaphore.release()
 

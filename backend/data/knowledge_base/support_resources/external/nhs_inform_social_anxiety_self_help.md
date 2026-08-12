@@ -7,7 +7,7 @@ doc_type: guide
 kb_type: support_resources
 audience: user_facing
 review_status: reviewed
-last_reviewed: 2026-05-18
+last_reviewed: 2026-08-12
 ---
 
 # NHS Inform Social Anxiety Self-help Guide

@@ -54,7 +54,7 @@ class FastEmbedBgeReranker:
             from fastembed.rerank.cross_encoder import TextCrossEncoder
         except ImportError as error:
             raise RuntimeError(
-                "Cross-Encoder eval requires requirements-vector-eval.txt"
+                "Cross-Encoder eval requires the standard backend runtime dependencies"
             ) from error
         self._model = TextCrossEncoder(
             model_name=self.model_name,

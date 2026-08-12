@@ -38,7 +38,11 @@ def run_memory_retrieval_benchmark(
     cases = load_memory_retrieval_cases()
     strategy_reports: dict[str, MemoryRetrievalStrategyReport] = {}
     selected_outcomes: list[dict[str, Any]] = []
-    for strategy in MemoryRetrievalStrategy:
+    for strategy in (
+        MemoryRetrievalStrategy.RECENT,
+        MemoryRetrievalStrategy.METADATA,
+        MemoryRetrievalStrategy.SQL_TEXT,
+    ):
         report, outcomes = evaluate_classical_strategy(
             cases,
             strategy=strategy,

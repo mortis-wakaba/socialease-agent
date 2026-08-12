@@ -10,6 +10,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.llm.base import BaseLLMClient
+from app.guardrails.policy import OutputGuardrailMode
 from app.llm.factory import create_llm_client
 from app.llm.prompts import (
     build_output_guardrail_system_prompt,
@@ -129,6 +130,7 @@ class OutputGuardrailResult(BaseModel):
         default_factory=list,
         exclude=True,
     )
+    evaluation_mode: OutputGuardrailMode = OutputGuardrailMode.FULL
 
 
 _DETERMINISTIC_PATTERNS: tuple[
@@ -192,6 +194,7 @@ class OutputGuardrail:
         grounding_metadata: GroundingMetadata | None = None,
         memory_evidence: list[str] | None = None,
         historical_user_messages: list[str] | None = None,
+        evaluation_mode: OutputGuardrailMode = OutputGuardrailMode.FULL,
         _allow_repair: bool = True,
     ) -> OutputGuardrailResult:
         """Return a bounded output decision without exposing raw evidence in traces."""
@@ -203,11 +206,18 @@ class OutputGuardrail:
         ) and OutputViolationCategory.FABRICATED_CONTACT not in deterministic:
             deterministic.append(OutputViolationCategory.FABRICATED_CONTACT)
         if deterministic:
-            return _replacement_result(
+            result = _replacement_result(
                 categories=deterministic,
                 sources=["deterministic"],
                 risk_level=risk_level,
                 semantic_checked=False,
+            )
+            return result.model_copy(update={"evaluation_mode": evaluation_mode})
+        if evaluation_mode is OutputGuardrailMode.DETERMINISTIC_ONLY:
+            return OutputGuardrailResult(
+                action=OutputGuardrailAction.ALLOW,
+                response=response,
+                evaluation_mode=evaluation_mode,
             )
         if self.llm_client is None:
             return OutputGuardrailResult(
@@ -393,6 +403,7 @@ class OutputGuardrail:
             grounding_metadata=grounding_metadata,
             memory_evidence=memory_evidence,
             historical_user_messages=historical_user_messages,
+            evaluation_mode=OutputGuardrailMode.FULL,
             _allow_repair=False,
         )
         if (

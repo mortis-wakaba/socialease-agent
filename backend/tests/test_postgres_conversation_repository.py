@@ -5,8 +5,6 @@ from datetime import UTC, datetime, timedelta
 import os
 from uuid import uuid4
 
-from alembic import command
-from alembic.config import Config
 import pytest
 
 from app.conversation.content_protector import LocalPlaintextContentProtector
@@ -31,23 +29,9 @@ from app.models_worksheet import WORKSHEET_DISCLAIMER, WorksheetFields, Workshee
 TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
 
 pytestmark = [
-    pytest.mark.skipif(
-        not TEST_DATABASE_URL,
-        reason=(
-            "SOCIALEASE_TEST_DATABASE_URL is required for "
-            "PostgreSQL integration tests."
-        ),
-    ),
+    pytest.mark.usefixtures("migrated_database"),
     pytest.mark.anyio,
 ]
-
-
-@pytest.fixture(scope="module", autouse=True)
-def migrated_database() -> None:
-    """Apply all migrations to the configured integration database."""
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL or "")
-    command.upgrade(config, "head")
 
 
 @pytest.fixture

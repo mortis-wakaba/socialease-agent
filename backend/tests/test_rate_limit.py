@@ -5,6 +5,7 @@ import logging
 
 import httpx
 import pytest
+
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -22,15 +23,22 @@ from app.rate_limit import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolated_runtime_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep middleware unit tests independent from the metrics database."""
+
+    async def no_op_record_rate_limit_hit() -> None:
+        return None
+
+    monkeypatch.setattr(
+        "app.rate_limit.record_rate_limit_hit",
+        no_op_record_rate_limit_hit,
+    )
+
+
 async def _ok_endpoint(request) -> JSONResponse:
     """Return a small successful response for middleware tests."""
     return JSONResponse({"ok": True})
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
 
 
 def test_sliding_window_rate_limiter_blocks_after_limit() -> None:

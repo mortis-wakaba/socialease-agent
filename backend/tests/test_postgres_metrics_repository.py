@@ -4,8 +4,6 @@ from datetime import datetime, timezone
 import os
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import text
 
 from app.db.postgres.metrics_repository import PostgresMetricsRepository
@@ -14,18 +12,7 @@ from app.models import Intent, IntentResult, RiskLevel, SafetyResult, TraceRecor
 
 TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
 
-pytestmark = pytest.mark.skipif(
-    not TEST_DATABASE_URL,
-    reason="SOCIALEASE_TEST_DATABASE_URL is required for PostgreSQL integration tests.",
-)
-
-
-@pytest.fixture(scope="module", autouse=True)
-def migrated_database() -> None:
-    """Apply Alembic migrations to the configured test database."""
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL or "")
-    command.upgrade(config, "head")
+pytestmark = pytest.mark.usefixtures("migrated_database")
 
 
 @pytest.fixture
@@ -82,6 +69,11 @@ async def test_postgres_metrics_records_aggregate_safe_fields(
     )
     await repository.record_runtime_event("rate_limit_hit")
     await repository.record_runtime_event("llm_concurrency_saturation", count=2)
+    await repository.record_runtime_event("slow_request")
+    await repository.record_runtime_event("memory_export", count=2)
+    await repository.record_runtime_event("memory_delete")
+    await repository.record_runtime_event("memory_preferences_saved")
+    await repository.record_runtime_event("memory_preferences_disabled")
 
     snapshot = await repository.snapshot()
 
@@ -94,6 +86,14 @@ async def test_postgres_metrics_records_aggregate_safe_fields(
     assert snapshot.product_boundary_eval_counts["crisis_escalated"] == 1
     assert snapshot.rate_limit_hits == 1
     assert snapshot.llm_concurrency_saturation == 2
+    assert snapshot.latency_p50_ms == 10.0
+    assert snapshot.latency_p95_ms == 30.0
+    assert snapshot.slow_request_count == 1
+    assert snapshot.memory_export_count == 2
+    assert snapshot.memory_delete_count == 1
+    assert snapshot.memory_preferences_saved_count == 1
+    assert snapshot.memory_preferences_disabled_count == 1
+    assert snapshot.runtime_event_counts["rate_limit_hit"] == 1
 
     async with repository.engine.connect() as connection:
         row = (await connection.execute(

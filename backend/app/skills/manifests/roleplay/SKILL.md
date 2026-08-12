@@ -2,23 +2,19 @@
 
 ## When to use
 
-Use this skill when the user wants to simulate or rehearse a social scenario, such as classroom speech, group discussion, dorm conflict, club icebreaking, asking a teacher a question, refusing a request, or expressing disagreement.
+This manifest describes the legacy `SkillRegistry` boundary for role-play intent. It redirects the user to the unified Conversation workflow; it does not execute a role-play turn or persist a session. After the user accepts a typed Module Proposal, the Conversation Role-play Adapter owns execution.
 
 ## Inputs
 
 - `user_id`
-- `scenario`
-- `difficulty`
 - current user message
-- session history
-- retrieved social-skills guidance
 
 ## Output contract
 
-- Next role-play turn.
-- Session state persisted through the repository contract in PostgreSQL.
-- Structured feedback with clarity, naturalness, assertiveness, and empathy dimensions.
-- Citations from social-skills or product-rubric knowledge.
+- `use_unified_conversation` navigation result.
+- No Domain Session, transcript, feedback, or memory mutation.
+
+The Conversation Role-play Adapter, not this skill entrypoint, consumes confirmed scenario and difficulty, writes lifecycle events to the unified timeline, and invokes the domain service for turns and feedback.
 
 ## Safety boundaries
 
@@ -29,4 +25,4 @@ Use this skill when the user wants to simulate or rehearse a social scenario, su
 
 ## Fallback behavior
 
-Use deterministic scenario prompts and feedback if LLM generation fails or is disabled.
+Return the deterministic unified-conversation navigation result; this boundary does not invoke an LLM.

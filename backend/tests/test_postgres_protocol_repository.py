@@ -6,8 +6,6 @@ import os
 from uuid import uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 
 from app.db.postgres.protocol_repository import PostgresProtocolRepository
 from app.models_protocols import ProtocolStatus, ProtocolType
@@ -16,23 +14,9 @@ from app.models_protocols import ProtocolStatus, ProtocolType
 TEST_DATABASE_URL = os.getenv("SOCIALEASE_TEST_DATABASE_URL")
 
 pytestmark = [
-    pytest.mark.skipif(
-        not TEST_DATABASE_URL,
-        reason=(
-            "SOCIALEASE_TEST_DATABASE_URL is required for "
-            "PostgreSQL integration tests."
-        ),
-    ),
+    pytest.mark.usefixtures("migrated_database"),
     pytest.mark.anyio,
 ]
-
-
-@pytest.fixture(scope="module", autouse=True)
-def migrated_database() -> None:
-    """Apply Alembic migrations to the configured test database."""
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL or "")
-    command.upgrade(config, "head")
 
 
 @pytest.fixture

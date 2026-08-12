@@ -1,5 +1,6 @@
 """Tests for trace privacy sanitization and observability failure isolation."""
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 import pytest
@@ -107,8 +108,10 @@ async def test_trace_logger_sanitizes_before_repository_write() -> None:
 
 
 @pytest.mark.anyio
-async def test_trace_repository_failure_does_not_block_crisis_response() -> None:
-    harness = AgentHarness(
+async def test_trace_repository_failure_does_not_block_crisis_response(
+    isolated_harness_factory: Callable[..., AgentHarness],
+) -> None:
+    harness = isolated_harness_factory(
         trace_logger=TraceLogger(repository=FailingTraceRepository()),
     )
 
@@ -128,9 +131,11 @@ async def test_trace_repository_failure_does_not_block_crisis_response() -> None
 
 
 @pytest.mark.anyio
-async def test_after_trace_hook_failure_is_isolated_from_business_response() -> None:
+async def test_after_trace_hook_failure_is_isolated_from_business_response(
+    isolated_harness_factory: Callable[..., AgentHarness],
+) -> None:
     repository = InMemoryTraceRepository()
-    harness = AgentHarness(
+    harness = isolated_harness_factory(
         trace_logger=TraceLogger(repository=repository),
         hooks=(FailingAfterTraceHook(),),
     )

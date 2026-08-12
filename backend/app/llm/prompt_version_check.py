@@ -57,6 +57,56 @@ PROMPT_SOURCES: dict[str, tuple[PromptSource, ...]] = {
             ),
         ),
     ),
+    "support_stream_generation": (
+        PromptSource(
+            "app/llm/prompts.py",
+            (
+                "COMMON_SAFETY_INSTRUCTIONS",
+                "build_support_stream_system_prompt",
+                "build_support_user_prompt",
+            ),
+        ),
+    ),
+    "memory_tool_decision": (
+        PromptSource(
+            "app/llm/prompts.py",
+            (
+                "COMMON_SAFETY_INSTRUCTIONS",
+                "build_memory_tool_native_system_prompt",
+                "build_memory_tool_decision_user_prompt",
+            ),
+        ),
+    ),
+    "memory_evidence_selector": (
+        PromptSource(
+            "app/llm/prompts.py",
+            (
+                "COMMON_SAFETY_INSTRUCTIONS",
+                "build_memory_evidence_selector_system_prompt",
+                "build_memory_evidence_selector_user_prompt",
+            ),
+        ),
+    ),
+    "memory_grounding_generation": (
+        PromptSource(
+            "app/llm/prompts.py",
+            (
+                "COMMON_SAFETY_INSTRUCTIONS",
+                "build_memory_grounding_system_prompt",
+                "build_memory_grounding_user_prompt",
+            ),
+        ),
+    ),
+    "memory_correction_resolution": (
+        PromptSource(
+            "app/llm/prompts.py",
+            (
+                "COMMON_SAFETY_INSTRUCTIONS",
+                "build_memory_correction_system_prompt",
+                "build_memory_correction_user_prompt",
+            ),
+        ),
+    ),
     "roleplay": (
         PromptSource(
             "app/llm/prompts.py",

@@ -1,6 +1,7 @@
 """API contracts for unified conversation and module control endpoints."""
 
 from datetime import datetime
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -58,6 +59,35 @@ class ConversationMessageResponse(StrictConversationModel):
     safety_result: SafetyResult
     context_diagnostics: ConversationContextDiagnostics
     workflow_response: ChatResponse | None = None
+
+
+class ConversationStreamChunkEvent(StrictConversationModel):
+    """One policy-approved sentence buffer delivered over SSE."""
+
+    type: Literal["response_chunk"] = "response_chunk"
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class ConversationStreamCompletedEvent(StrictConversationModel):
+    """Final durable response delivered after all writes complete."""
+
+    type: Literal["response_completed"] = "response_completed"
+    result: ConversationMessageResponse
+
+
+class ConversationStreamErrorEvent(StrictConversationModel):
+    """Content-free stream failure safe for an authenticated client."""
+
+    type: Literal["response_error"] = "response_error"
+    detail: str = Field(min_length=1, max_length=240)
+
+
+ConversationStreamEvent = Annotated[
+    ConversationStreamChunkEvent
+    | ConversationStreamCompletedEvent
+    | ConversationStreamErrorEvent,
+    Field(discriminator="type"),
+]
 
 
 class ConversationDetailResponse(StrictConversationModel):

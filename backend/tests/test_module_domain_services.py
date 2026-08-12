@@ -5,6 +5,16 @@ from datetime import UTC, datetime
 import pytest
 
 from app.conversation.adapters.exposure import ExposureModuleAdapter
+from app.db.repositories import (
+    InMemoryExposureRepository,
+    InMemorySessionReviewRepository,
+    InMemoryWorksheetRepository,
+)
+from app.memory.exposure_store import ExposureStore
+from app.memory.intervention_plan_store import InMemoryInterventionPlanRepository
+from app.memory.settings_store import InMemoryUserMemorySettingsRepository
+from app.memory.task_state_store import InMemoryTaskStateStore
+from app.memory.worksheet_store import WorksheetStore
 from app.models_exposure import (
     ExposureCompleteRequest,
     ExposureFeedbackStatus,
@@ -17,17 +27,17 @@ from app.models_conversation_context import (
 )
 from app.models_support import SupportQueryRequest
 from app.models_worksheet import (
+    WorksheetDraftContext,
     WorksheetCreateRequest,
     WorksheetSupplementRequest,
 )
+from app.privacy.persistence_gate import PersistenceGate
+import app.services.exposure_service as exposure_service_module
 from app.services.exposure_service import ExposureService
+from app.services.intervention_plan_service import InterventionPlanService
 from app.services.support_resource_service import SupportResourceService
+import app.services.worksheet_service as worksheet_service_module
 from app.services.worksheet_service import WorksheetService
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
 
 
 @pytest.fixture(autouse=True)
@@ -36,11 +46,34 @@ def isolated_database(
 ) -> None:
     monkeypatch.delenv("SOCIALEASE_REDIS_URL", raising=False)
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
+    gate = PersistenceGate(repository=InMemoryUserMemorySettingsRepository())
+    monkeypatch.setattr(worksheet_service_module, "persistence_gate", gate)
+    monkeypatch.setattr(exposure_service_module, "persistence_gate", gate)
+
+
+def _worksheet_service() -> WorksheetService:
+    """Build a database-independent worksheet domain service."""
+    drafts: InMemoryTaskStateStore[WorksheetDraftContext] = InMemoryTaskStateStore()
+    return WorksheetService(
+        store=WorksheetStore(repository=InMemoryWorksheetRepository()),
+        draft_store=drafts,
+    )
+
+
+def _exposure_service() -> ExposureService:
+    """Build a database-independent exposure domain service."""
+    return ExposureService(
+        store=ExposureStore(repository=InMemoryExposureRepository()),
+        session_review_repository=InMemorySessionReviewRepository(),
+        intervention_service=InterventionPlanService(
+            store=InMemoryInterventionPlanRepository()
+        ),
+    )
 
 
 @pytest.mark.anyio
 async def test_worksheet_service_creates_and_supplements_one_record() -> None:
-    service = WorksheetService()
+    service = _worksheet_service()
     created = await service.create_worksheet(
         WorksheetCreateRequest(
             user_id="owner",
@@ -84,7 +117,7 @@ async def test_resource_service_returns_grounded_results_and_safe_unknown() -> N
 
 @pytest.mark.anyio
 async def test_exposure_service_requires_permission_before_increasing() -> None:
-    service = ExposureService()
+    service = _exposure_service()
     created = await service.create_plan(
         ExposurePlanRequest(
             user_id="owner",
@@ -113,7 +146,7 @@ async def test_exposure_service_requires_permission_before_increasing() -> None:
 
 @pytest.mark.anyio
 async def test_exposure_adapter_records_feedback_inside_unified_context() -> None:
-    service = ExposureService()
+    service = _exposure_service()
     adapter = ExposureModuleAdapter(service)
     run = ModuleRun(
         module_run_id="exposure-run",
@@ -163,10 +196,10 @@ async def test_exposure_adapter_records_feedback_inside_unified_context() -> Non
 
 @pytest.mark.anyio
 async def test_domain_services_keep_crisis_out_of_ordinary_module_actions() -> None:
-    worksheet = await WorksheetService().create_worksheet(
+    worksheet = await _worksheet_service().create_worksheet(
         WorksheetCreateRequest(user_id="owner", message="我不想活了，想伤害自己。")
     )
-    exposure = await ExposureService().create_plan(
+    exposure = await _exposure_service().create_plan(
         ExposurePlanRequest(
             user_id="owner",
             target_scenario="我不想活了，想伤害自己。",

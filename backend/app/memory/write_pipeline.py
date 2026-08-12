@@ -12,6 +12,12 @@ from app.memory.long_term_repository import (
     LongTermMemoryRepository,
     MemoryConflictError,
 )
+from app.memory.metadata_contract import (
+    MemoryOutcomeCode,
+    outcome_context_tags,
+    write_metadata_from_description,
+    write_metadata_from_scenario,
+)
 from app.memory.policy_engine import MemoryPolicyEngine
 from app.memory.proposal_extractor import (
     MemoryExtractionError,
@@ -34,7 +40,6 @@ from app.models_long_term_memory import (
     PendingMemoryProposalRecord,
 )
 from app.models_scenario import ScenarioSpec
-from app.services.scenario_interpreter import ScenarioInterpreter
 
 
 logger = logging.getLogger(__name__)
@@ -398,15 +403,35 @@ def _enrich_proposal(
     practice_thread_id: str | None,
 ) -> MemoryProposal:
     """Attach application-owned continuity and transferable skill metadata."""
-    facets = scenario_spec or ScenarioInterpreter().interpret(
-        description=proposal.summary
+    outcome = (
+        MemoryOutcomeCode.COMPLETED
+        if proposal.evidence_type.value == "completed_product_action"
+        else MemoryOutcomeCode.NEUTRAL
+    )
+    metadata = (
+        write_metadata_from_scenario(
+            scenario_spec,
+            source_type=proposal.source_type,
+            evidence_type=proposal.evidence_type,
+            outcome_code=outcome,
+            practice_thread_id=practice_thread_id,
+        )
+        if scenario_spec is not None
+        else write_metadata_from_description(
+            proposal.summary,
+            source_type=proposal.source_type,
+            evidence_type=proposal.evidence_type,
+            outcome_code=outcome,
+            practice_thread_id=practice_thread_id,
+        )
     )
     return proposal.model_copy(
         update={
-            "scenario_id": scenario_spec.scenario_id if scenario_spec else None,
-            "practice_thread_id": practice_thread_id,
-            "skill_codes": facets.skill_codes,
-            "context_tags": facets.context_tags,
+            "scenario_type": metadata.scenario_type,
+            "scenario_id": metadata.scenario_id,
+            "practice_thread_id": metadata.practice_thread_id,
+            "skill_codes": metadata.skill_codes,
+            "context_tags": outcome_context_tags(metadata),
         }
     )
 

@@ -17,6 +17,7 @@ from app.guardrails.output import (
     OutputGuardrailResult,
     create_output_guardrail,
 )
+from app.guardrails.policy import OutputGuardrailPolicy
 from app.db.factory import repository_factory
 from app.db.repositories import UserProfileRepository
 from app.memory.settings_store import UserMemorySettingsRepository
@@ -25,7 +26,6 @@ from app.memory.context_orchestrator import MemoryContextOrchestrator
 from app.memory.policy_engine import MemoryPolicyEngine
 from app.memory.proposal_extractor import MemoryProposalExtractor
 from app.memory.write_pipeline import MemoryWritePipeline
-from app.memory.retriever import EpisodicMemoryRetriever
 from app.models_long_term_memory import MemorySourceType
 from app.models_scenario import ScenarioSpec
 from app.models import (
@@ -54,7 +54,7 @@ from app.privacy.persistence_gate import persistence_gate
 from app.privacy.policy import PersistenceKind
 from app.request_context import get_request_id
 from app.services.intervention_plan_service import intervention_plan_service
-from app.workflow.context import RunContext
+from app.workflow.context import ResponseChunkSink, RunContext
 from app.workflow.events import (
     WorkflowEventSink,
     WorkflowProgressEvent,
@@ -92,6 +92,7 @@ class AgentHarness:
         memory_write_pipeline: MemoryWritePipeline | None = None,
         active_memory_assembler: ActiveMemoryAssembler | None = None,
         memory_context_orchestrator: MemoryContextOrchestrator | None = None,
+        output_guardrail_policy: OutputGuardrailPolicy | None = None,
     ) -> None:
         self.trace_logger = trace_logger
         self.safety_classifier = safety_classifier or create_safety_classifier()
@@ -99,6 +100,7 @@ class AgentHarness:
         self.skill_registry = skill_registry or SkillRegistry()
         self.permission_gate = permission_gate or SafetyPermissionGate()
         self.output_guardrail = output_guardrail or create_output_guardrail()
+        self.output_guardrail_policy = output_guardrail_policy or OutputGuardrailPolicy()
         self.hooks = tuple(hooks or ())
         factory = repository_factory()
         self.user_profile_repository = user_profile_repository or factory.user_profile_repository()
@@ -113,10 +115,6 @@ class AgentHarness:
             or MemoryContextOrchestrator(
                 user_profile_repository=self.user_profile_repository,
                 settings_repository=self.memory_settings_repository,
-                episodic_retriever=EpisodicMemoryRetriever(
-                    repository=factory.long_term_memory_repository(),
-                    settings_repository=self.memory_settings_repository,
-                ),
                 assembler=self.active_memory_assembler,
             )
         )
@@ -136,6 +134,8 @@ class AgentHarness:
         trusted_safety_result: SafetyResult | None = None,
         trusted_intent_result: IntentResult | None = None,
         trusted_conversation_context: ConversationPromptContext | None = None,
+        streaming_requested: bool = False,
+        response_chunk_sink: ResponseChunkSink | None = None,
     ) -> ChatResponse:
         """Execute one run, optionally reusing application-owned routing results."""
         started = perf_counter()
@@ -159,6 +159,9 @@ class AgentHarness:
             request_context=request.context,
             conversation_context=trusted_conversation_context,
             response_constraints=extract_response_constraints(request.message),
+            response_chunk_sink=(
+                response_chunk_sink if streaming_requested else None
+            ),
         )
 
         for hook in self.hooks:
@@ -326,6 +329,13 @@ class AgentHarness:
         )
         stage_started = perf_counter()
 
+        output_policy = self.output_guardrail_policy.decide(
+            streaming_requested=streaming_requested,
+            risk_level=safety_result.risk_level,
+            intent=intent_result.intent,
+            selected_skill=skill.descriptor.name,
+            memory_evidence=skill_result.memory_evidence,
+        )
         output_guardrail_result = await self.output_guardrail.evaluate(
             user_message=request.message,
             response=skill_result.response,
@@ -334,11 +344,7 @@ class AgentHarness:
             selected_skill=skill.descriptor.name,
             selected_agent=skill_result.selected_agent,
             grounding_metadata=_grounding_metadata(skill_result.structured_data),
-            memory_evidence=(
-                run_context.active_memory.episodic_memories
-                if run_context.active_memory is not None
-                else []
-            ),
+            memory_evidence=skill_result.memory_evidence,
             historical_user_messages=(
                 [
                     event.content
@@ -348,6 +354,7 @@ class AgentHarness:
                 if run_context.conversation_context is not None
                 else None
             ),
+            evaluation_mode=output_policy.mode,
         )
         skill_result = _apply_output_guardrail_result(
             skill_result=skill_result,
@@ -509,7 +516,7 @@ class AgentHarness:
                 memory_pipeline_result = await self.memory_write_pipeline.process_messages(
                     user_id=request.user_id,
                     messages=[{"role": "user", "content": request.message}],
-                    source_type=MemorySourceType.CHAT,
+                    source_type=_memory_source_for_intent(intent_result.intent),
                     source_id=(request_id or run_id)[:128],
                     occurred_at=datetime.now(timezone.utc),
                     risk_level=safety_result.risk_level,
@@ -518,7 +525,12 @@ class AgentHarness:
                     ),
                     practice_thread_id=(
                         session_id
-                        if intent_result.intent == Intent.ROLEPLAY_PRACTICE
+                        if intent_result.intent
+                        in {
+                            Intent.ROLEPLAY_PRACTICE,
+                            Intent.CBT_WORKSHEET,
+                            Intent.EXPOSURE_PLANNING,
+                        }
                         else None
                     ),
                 )
@@ -656,6 +668,9 @@ class AgentHarness:
             ),
             agent_loop_steps=_agent_loop_steps(skill_result.structured_data),
             output_guardrail_action=output_guardrail_result.action.value,
+            output_guardrail_evaluation_mode=(
+                output_guardrail_result.evaluation_mode.value
+            ),
             output_guardrail_categories=[
                 category.value for category in output_guardrail_result.categories
             ],
@@ -815,6 +830,15 @@ def _optional_string(value: object) -> str | None:
     return None
 
 
+def _memory_source_for_intent(intent: Intent) -> MemorySourceType:
+    """Map application routing to a trusted durable-memory source."""
+    return {
+        Intent.ROLEPLAY_PRACTICE: MemorySourceType.ROLEPLAY,
+        Intent.CBT_WORKSHEET: MemorySourceType.WORKSHEET,
+        Intent.EXPOSURE_PLANNING: MemorySourceType.EXPOSURE,
+    }.get(intent, MemorySourceType.CHAT)
+
+
 def _scenario_spec_from_skill_result(
     structured_data: dict[str, object],
 ) -> ScenarioSpec | None:
@@ -880,6 +904,7 @@ def _apply_output_guardrail_result(
             "categories": [category.value for category in result.categories],
             "sources": result.sources,
             "semantic_checked": result.semantic_checked,
+            "evaluation_mode": result.evaluation_mode.value,
             "semantic_check_failed": result.semantic_check_failed,
             "semantic_error_type": (
                 result.semantic_error_type.value
@@ -1302,7 +1327,3 @@ async def _record_observability_event_safely(event: str) -> None:
             await record_observability_hook_failure()
     except Exception:
         return
-
-
-# Backwards-compatible name used by older imports and tests.
-AgentWorkflow = AgentHarness

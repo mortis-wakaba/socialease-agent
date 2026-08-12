@@ -52,6 +52,28 @@ def lexical_terms(text: str, scenario_type: str | None = None) -> set[str]:
     }
 
 
+def fts_query_terms(*texts: str, limit: int = 100) -> tuple[str, ...]:
+    """Return deterministic terms aligned with the CJK-bigram FTS index."""
+    ordered: list[str] = []
+    for text in texts:
+        normalized = text.casefold()
+        candidates: list[str] = re.findall(r"[a-z0-9]+", normalized)
+        for run in re.findall(r"[\u4e00-\u9fff]{2,}", normalized):
+            candidates.extend(
+                run[index : index + 2] for index in range(len(run) - 1)
+            )
+        for term in candidates:
+            if (
+                2 <= len(term) <= 48
+                and term not in _STOP_TERMS
+                and term not in ordered
+            ):
+                ordered.append(term)
+                if len(ordered) >= max(1, min(limit, 100)):
+                    return tuple(ordered)
+    return tuple(ordered)
+
+
 def is_negative(text: str) -> bool:
     """Return whether text carries one of the bounded negation markers."""
     normalized = text.casefold()

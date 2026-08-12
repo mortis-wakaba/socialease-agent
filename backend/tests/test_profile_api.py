@@ -7,6 +7,8 @@ from uuid import uuid4
 import httpx
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.main import app
 from app.models_exposure import (
     ExposureCompleteRequest,
@@ -17,12 +19,6 @@ from app.models_roleplay import RoleplayStartRequest
 from app.services.exposure_service import exposure_service
 from app.services.roleplay_service import roleplay_service
 from tests.postgres_test_support import execute_sql
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async API tests on asyncio only."""
-    return "asyncio"
 
 
 @pytest.fixture

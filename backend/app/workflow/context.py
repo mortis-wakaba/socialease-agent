@@ -1,6 +1,7 @@
 """Per-run context loaded and passed through the lead agent harness."""
 
 from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.models import IntentResult, SafetyResult
@@ -9,6 +10,9 @@ from app.models_conversation_context import ConversationPromptContext
 from app.models_context import SkillContextProjection
 from app.models_intervention import InterventionPlan
 from app.models_support_generation import PresentationConstraints
+
+
+ResponseChunkSink = Callable[[str], Awaitable[None]]
 
 
 @dataclass
@@ -29,3 +33,4 @@ class RunContext:
     response_constraints: PresentationConstraints = field(
         default_factory=PresentationConstraints
     )
+    response_chunk_sink: ResponseChunkSink | None = None

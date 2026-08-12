@@ -1,11 +1,11 @@
 """Tests for bounded shared conversation context and compaction."""
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
 from app.conversation.compactor import ConversationCompactor
+from app.conversation.context_allocator import UnifiedContextTokenAllocator
 from app.conversation.context_manager import ConversationContextManager
 from app.db.postgres.conversation_repository import PostgresConversationRepository
 from app.memory.token_estimator import ConservativeTokenEstimator
@@ -35,16 +35,10 @@ class UnsafeSummaryLLM:
 @pytest.fixture
 def repository(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    migrated_database: str,
 ) -> PostgresConversationRepository:
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "demo")
-    return PostgresConversationRepository()
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async conversation tests on the supported asyncio backend."""
-    return "asyncio"
+    return PostgresConversationRepository(database_url=migrated_database)
 
 
 @pytest.mark.anyio
@@ -87,7 +81,7 @@ async def test_context_is_bounded_compacted_and_restored_across_instances(
     assert context.diagnostics.estimated_tokens <= 700
     assert context.recent_events[-1].sequence_no == 18
 
-    restored_repository = PostgresConversationRepository()
+    restored_repository = PostgresConversationRepository(engine=repository.engine)
     restored = await restored_repository.get_compact_summary(
         conversation_id=conversation.conversation_id,
         user_id="owner",
@@ -154,6 +148,45 @@ async def test_context_profiles_share_one_contract_with_module_specific_budgets(
     assert ordinary.total_tokens == 6000
     assert roleplay.total_tokens == 10_000
     assert worksheet.total_tokens == 7000
+
+
+def test_allocator_includes_stable_context_and_ignores_episodic_items() -> None:
+    """Unified context reserves its memory budget for stable context only."""
+
+    class StableProjection:
+        values = {"preferred_style": "gentle_specific"}
+
+    class ActiveMemory:
+        stable_memory = StableProjection()
+        episodic_memories = [
+            "helpful_strategy: 先准备一句开场",
+            "practice_experience: 上次先写关键词后更容易开口",
+            "practice_milestone: 已完成一次小组表达练习",
+        ]
+
+    allocated = UnifiedContextTokenAllocator(
+        ConservativeTokenEstimator()
+    ).allocate(
+        current_user_message="继续练习",
+        current_event_id=None,
+        recent_source=[],
+        compact_summary=None,
+        module_stack=[],
+        active_memory=ActiveMemory(),  # type: ignore[arg-type]
+        budgets=ConversationContextBudgets(
+            total_tokens=1000,
+            current_request_tokens=128,
+            recent_events_tokens=128,
+            summary_tokens=128,
+            module_stack_tokens=64,
+            active_memory_tokens=512,
+        ),
+    )
+
+    assert allocated.selected_stable_memory == {
+        "preferred_style": "gentle_specific"
+    }
+    assert "agent_memory" not in allocated.dropped_sections
 
 
 @pytest.mark.anyio

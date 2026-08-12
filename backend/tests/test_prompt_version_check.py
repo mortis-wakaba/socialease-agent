@@ -88,7 +88,7 @@ def test_changed_fingerprint_requires_changed_version() -> None:
 
     assert errors == [
         "support_generation: Prompt fingerprint changed but version stayed at "
-        "'support-v4'."
+        "'support-v8'."
     ]
 
 
@@ -97,7 +97,7 @@ def test_changed_fingerprint_passes_after_version_bump() -> None:
     current = deepcopy(previous)
     current["prompts"]["support_generation"] = {
         "fingerprint": "sha256:changed",
-        "version": "support-v5",
+        "version": "support-v9",
     }
 
     assert validate_version_bumps(current=current, previous=previous) == []

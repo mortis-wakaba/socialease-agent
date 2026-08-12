@@ -16,10 +16,9 @@ from app.services.support_resource_service import support_resource_service
 from app.services.worksheet_service import worksheet_service
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async readiness tests on asyncio."""
-    return "asyncio"
+async def _healthy_base_readiness() -> tuple[int, dict[str, object]]:
+    """Return a healthy non-task-state snapshot for focused readiness tests."""
+    return 200, {"status": "ready", "checks": {}}
 
 
 def test_demo_runtime_allows_explicitly_disabled_task_state(
@@ -67,6 +66,11 @@ async def test_readiness_fails_when_any_required_task_state_probe_fails(
     monkeypatch.setenv("SOCIALEASE_AUTH_MODE", "production")
     monkeypatch.delenv("SOCIALEASE_REQUIRE_REDIS", raising=False)
     monkeypatch.setenv("SOCIALEASE_REDIS_URL", "redis://configured-but-probed/0")
+    monkeypatch.setattr(
+        main_module,
+        "readiness_snapshot",
+        _healthy_base_readiness,
+    )
 
     async def healthy() -> bool:
         return True
@@ -107,6 +111,11 @@ async def test_readiness_accepts_all_required_task_state_probes(
     monkeypatch.setenv(
         "SOCIALEASE_CALENDAR_MCP_URL",
         "https://calendar-mcp.example/mcp",
+    )
+    monkeypatch.setattr(
+        main_module,
+        "readiness_snapshot",
+        _healthy_base_readiness,
     )
 
     async def healthy() -> bool:

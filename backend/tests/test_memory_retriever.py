@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("migrated_database")
+
 from app.db.factory import repository_factory
 from app.memory.retriever import EpisodicMemoryRetriever
 from app.models_long_term_memory import (

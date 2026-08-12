@@ -1,6 +1,7 @@
 """Tests for optional LLM configuration and OpenAI-compatible clients."""
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -47,7 +48,28 @@ def test_factory_builds_openai_compatible_client() -> None:
     assert client.base_url == "https://api.deepseek.com"
     assert client.model == "deepseek-chat"
     assert client.timeout_seconds == 12
+    assert client.json_mode_enabled is False
     assert client.concurrency_limiter.max_concurrency == 2
+
+
+@pytest.mark.anyio
+async def test_factory_reuses_an_injected_http_client() -> None:
+    config = LLMConfig(
+        enabled=True,
+        provider="openai_compatible",
+        base_url="https://api.deepseek.com",
+        api_key="demo-key",
+        model="deepseek-chat",
+        timeout_seconds=12,
+    )
+    http_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200))
+    )
+
+    async with http_client:
+        client = create_llm_client(config, http_client=http_client)
+        assert isinstance(client, OpenAICompatibleLLMClient)
+        assert client.http_client is http_client
 
 
 def test_llm_config_keeps_legacy_concurrency_env_alias(
@@ -64,6 +86,16 @@ def test_llm_config_keeps_legacy_concurrency_env_alias(
     config = LLMConfig.from_env()
 
     assert config.max_concurrency == 3
+
+
+def test_llm_config_enables_json_mode_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_JSON_MODE_ENABLED", "true")
+
+    config = LLMConfig.from_env()
+
+    assert config.json_mode_enabled is True
 
 
 def test_factory_rejects_incomplete_enabled_config() -> None:
@@ -87,6 +119,7 @@ async def test_openai_compatible_client_generates_text() -> None:
         assert request.headers["authorization"] == "Bearer demo-key"
         payload = request.read().decode()
         assert '"model":"demo-model"' in payload
+        assert '"response_format"' not in payload
         return httpx.Response(
             200,
             json={"choices": [{"message": {"content": "  hello from llm  "}}]},
@@ -106,6 +139,156 @@ async def test_openai_compatible_client_generates_text() -> None:
         )
 
     assert result == "hello from llm"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_client_streams_text_deltas() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.read())
+        assert payload["stream"] is True
+        assert payload["messages"][1]["content"] == "user"
+        body = (
+            'data: {"choices":[{"delta":{"content":"第一句。"}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"第二句。"}}]}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(
+            200,
+            content=body.encode("utf-8"),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = OpenAICompatibleLLMClient(
+            base_url="https://api.example.com",
+            api_key="demo-key",
+            model="demo-model",
+            http_client=http_client,
+        )
+        chunks = [
+            chunk
+            async for chunk in client.stream_text(
+                system_prompt="system",
+                user_prompt="user",
+            )
+        ]
+
+    assert chunks == ["第一句。", "第二句。"]
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_client_generates_json_mode_text() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.read())
+        assert payload["response_format"] == {"type": "json_object"}
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok":true}'}}]},
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = OpenAICompatibleLLMClient(
+            base_url="https://api.deepseek.com",
+            api_key="demo-key",
+            model="deepseek-chat",
+            json_mode_enabled=True,
+            http_client=http_client,
+        )
+        result = await client.generate_json_text(
+            system_prompt="Return JSON only.",
+            user_prompt="Return one JSON object.",
+        )
+
+    assert result == '{"ok":true}'
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_client_rejects_disabled_json_mode() -> None:
+    client = OpenAICompatibleLLMClient(
+        base_url="https://api.example.com",
+        api_key="demo-key",
+        model="demo-model",
+    )
+
+    with pytest.raises(ValueError, match="JSON mode is not enabled"):
+        await client.generate_json_text(
+            system_prompt="Return JSON only.",
+            user_prompt="Return one JSON object.",
+        )
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_client_sends_tools_and_parses_tool_calls() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.read())
+        assert payload["tool_choice"] == "auto"
+        assert payload["parallel_tool_calls"] is False
+        assert payload["tools"][0]["function"]["strict"] is True
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-memory-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "search_practice_memory",
+                                        "arguments": json.dumps(
+                                            {"query": "过去课堂发言练习"}
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_practice_memory",
+                "description": "Search memory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+                "strict": True,
+            },
+        }
+    ]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = OpenAICompatibleLLMClient(
+            base_url="https://api.example.com",
+            api_key="demo-key",
+            model="demo-model",
+            http_client=http_client,
+        )
+        response = await client.complete_with_tools(
+            messages=[{"role": "user", "content": "以前练过什么？"}],
+            tools=tools,
+        )
+
+    assert response.content is None
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].call_id == "call-memory-1"
+    assert response.tool_calls[0].arguments == {
+        "query": "过去课堂发言练习"
+    }
 
 
 @pytest.mark.anyio

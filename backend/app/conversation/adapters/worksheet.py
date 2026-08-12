@@ -3,15 +3,20 @@
 from datetime import UTC, datetime
 
 from app.conversation.adapters.base import ModuleAdapterResult, PreparedModuleStart
+from app.memory.completed_event_writer import CompletedPracticeMemoryWriter
+from app.memory.metadata_contract import (
+    MemoryOutcomeCode,
+    write_metadata_from_description,
+)
+from app.models_long_term_memory import MemoryEvidenceType, MemorySourceType
 from app.models_conversation import (
     ModuleRun,
     WorksheetMessageEventPayload,
     WorksheetParameters,
 )
 from app.models_conversation_context import (
-    ConversationPromptContext,
-    ConversationPromptEvent,
     ConversationWorkingContext,
+    build_conversation_prompt_context,
 )
 from app.models_module_overlay import (
     ModuleOverlay,
@@ -25,8 +30,14 @@ from app.services.worksheet_service import WorksheetService, worksheet_service
 class WorksheetModuleAdapter:
     """Map a worksheet draft to a conversation module frame."""
 
-    def __init__(self, service: WorksheetService | None = None) -> None:
+    def __init__(
+        self,
+        service: WorksheetService | None = None,
+        *,
+        memory_writer: CompletedPracticeMemoryWriter | None = None,
+    ) -> None:
         self._service = service or worksheet_service
+        self._memory_writer = memory_writer
 
     async def prepare_start(
         self,
@@ -40,7 +51,7 @@ class WorksheetModuleAdapter:
                 message=parameters.situation,
                 source_event_id=run.source_event_id,
             ),
-            conversation_context=_prompt_context(context),
+            conversation_context=build_conversation_prompt_context(context),
         )
         if prepared.blocked:
             raise ValueError("worksheet could not be started safely")
@@ -86,6 +97,7 @@ class WorksheetModuleAdapter:
         if worksheet is None:
             raise LookupError("worksheet not found after commit")
         await self._service.after_worksheet_commit(worksheet)
+        await self._record_completed(run, worksheet.completed, worksheet_id)
 
     async def handle_message(
         self,
@@ -103,11 +115,12 @@ class WorksheetModuleAdapter:
                 user_id=run.user_id,
                 message=message,
             ),
-            conversation_context=_prompt_context(context),
+            conversation_context=build_conversation_prompt_context(context),
         )
         worksheet = result.worksheet
         if worksheet is None:
             raise ValueError("worksheet update was blocked")
+        await self._record_completed(run, worksheet.completed, worksheet_id)
         return ModuleAdapterResult(
             response=result.response,
             domain_session_id=worksheet_id,
@@ -189,6 +202,29 @@ class WorksheetModuleAdapter:
                 task_id=run.domain_session_id,
             )
 
+    async def _record_completed(
+        self,
+        run: ModuleRun,
+        completed: bool,
+        worksheet_id: str,
+    ) -> None:
+        """Write only the structured fact that the worksheet was completed."""
+        if not completed or self._memory_writer is None:
+            return
+        situation = _parameters(run).situation
+        await self._memory_writer.record_completed_practice(
+            user_id=run.user_id,
+            source_id=worksheet_id,
+            safe_summary="已完成一次结构化自助反思练习。",
+            metadata=write_metadata_from_description(
+                situation,
+                source_type=MemorySourceType.WORKSHEET,
+                evidence_type=MemoryEvidenceType.COMPLETED_PRODUCT_ACTION,
+                outcome_code=MemoryOutcomeCode.COMPLETED,
+                practice_thread_id=worksheet_id,
+            ),
+        )
+
 
 def _parameters(run: ModuleRun) -> WorksheetParameters:
     if not isinstance(run.module_parameters, WorksheetParameters):
@@ -200,22 +236,3 @@ def _worksheet_id(run: ModuleRun) -> str:
     if not run.domain_session_id:
         raise ValueError("worksheet domain session is unavailable")
     return run.domain_session_id
-
-
-def _prompt_context(
-    context: ConversationWorkingContext,
-) -> ConversationPromptContext:
-    return ConversationPromptContext(
-        recent_events=[
-            ConversationPromptEvent(
-                event_type=event.event_type,
-                role=event.role,
-                content=event.content,
-            )
-            for event in context.recent_events
-        ],
-        compact_summary=context.compact_summary,
-        active_module_overlay=context.active_module_overlay,
-        parent_resume_projections=context.parent_resume_projections,
-        retrieved_memories=context.selected_agent_memory[:3],
-    )

@@ -123,8 +123,12 @@ class RepositoryFactory:
             from app.db.postgres.long_term_memory_repository import (
                 PostgresLongTermMemoryRepository,
             )
+            from app.memory.embedding import create_memory_embedding_provider
 
-            return PostgresLongTermMemoryRepository(database_url=self.database_url)
+            return PostgresLongTermMemoryRepository(
+                database_url=self.database_url,
+                embedding_provider=create_memory_embedding_provider(),
+            )
         raise self._not_implemented("long-term memory")
 
     def memory_proposal_repository(self) -> MemoryProposalRepository:

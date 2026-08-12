@@ -2,22 +2,19 @@
 
 ## When to use
 
-Use this skill when the user wants to organize a stressful social situation into a CBT-style self-reflection worksheet or thought record.
+This manifest describes the legacy `SkillRegistry` boundary for worksheet intent. It redirects the user to the unified Conversation workflow; it does not extract or persist worksheet fields. After the user accepts a typed Module Proposal, the Conversation Worksheet Adapter owns execution.
 
 ## Inputs
 
 - `user_id`
-- natural-language worksheet message
-- optional LLM extractor
-- CBT reflection guidance retrieved from knowledge base
+- current user message
 
 ## Output contract
 
-- Structured worksheet fields.
-- Missing-field list when the user did not provide enough information.
-- Gentle follow-up questions.
-- Disclaimer that this is self-help reflection, not medical diagnosis or treatment.
-- Citations where grounding is used.
+- `use_unified_conversation` navigation result.
+- No worksheet record, protocol, or memory mutation.
+
+The Conversation Worksheet Adapter, not this skill entrypoint, invokes the domain service for structured fields, missing-field prompts, persistence, and grounding after module confirmation.
 
 ## Safety boundaries
 
@@ -28,4 +25,4 @@ Use this skill when the user wants to organize a stressful social situation into
 
 ## Fallback behavior
 
-Use rule-based extraction when LLM output is invalid, unavailable, or disabled.
+Return the deterministic unified-conversation navigation result; this boundary does not invoke an LLM.
