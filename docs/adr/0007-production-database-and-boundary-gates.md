@@ -2,7 +2,8 @@
 
 ## 状态
 
-已接受，作为 production-hardening 基线。
+已由 [ADR 0010](0010-production-transaction-and-async-migration.md) 取代。本文保留迁移前的
+历史背景；当前运行时为 PostgreSQL-only，不再提供 SQLite adapter/factory 分支。
 
 ## 背景
 
@@ -47,14 +48,14 @@ SQLite 只作为本地开发后端。生产化目标是 PostgreSQL，并使用�
 - protocol lifecycle：`session_id`、`harness_action`、`request_hash`、`expires_at`、`approved_at`、`consumed_at`、`rejected_at`；
 - trace safety/observability：`product_safe`、`created_at`、可选 privacy summary JSON。
 
-## 影响
+## 当时的影响
 
 - SQLite repository 仍适合本地开发和测试；
 - CI 覆盖 backend tests、eval gates、frontend typecheck/lint/build；
 - PostgreSQL 已成为 production 配置下的 RepositoryFactory 分支，SQLite 继续服务本地开发；
 - 单实例聚合 metrics 已可用，真实多实例部署仍应导出到 Prometheus/OpenTelemetry 或托管 metrics backend。
 
-## 当前实现检查点
+## 当时的实现检查点
 
 - Alembic 配置位于 `backend/alembic.ini` 和 `backend/migrations/`；
 - migration 已创建当前产品表；
@@ -62,3 +63,9 @@ SQLite 只作为本地开发后端。生产化目标是 PostgreSQL，并使用�
 - repository factory 可按配置选择 SQLite 或 PostgreSQL；
 - cleanup scheduler 在 PostgreSQL 下使用 advisory lock 协调多副本；
 - 后续重点是托管数据库运维、共享限流/并发协调、托管身份和部署级监控。
+
+## 当前状态
+
+ADR 0010 后，PostgreSQL 是开发、测试和部署的唯一持久化运行时。SQLite repository 与按配置
+切换后端的兼容逻辑已移除；迁移、事务、command inbox 和 outbox/reconciliation 以当前架构
+文档和 ADR 0010 为准。

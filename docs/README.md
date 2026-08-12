@@ -39,7 +39,9 @@ ADR 保存在 [`adr/`](adr/)：
 - product-boundary eval；
 - production database and boundary gates；
 - unified conversation timeline and consent-gated module stack；
-- legacy role-play read-only import。
+- legacy role-play read-only import（未交付，已由当前统一时间线状态取代）；
+- PostgreSQL-only transaction、command inbox 与 outbox reconciliation。
 
 ADR 记录当时的背景和决策，不会因后续架构演进而删除。若旧 ADR 的入口描述与当前
-产品不同，以后续 ADR 及当前架构文档为准。
+产品不同，以后续 ADR 及当前架构文档为准。ADR 0007 和 0009 的当前状态分别在文件内
+标记为被 ADR 0010 或最终实现取代。

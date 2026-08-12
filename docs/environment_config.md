@@ -62,14 +62,14 @@ Production cookie 模式还会设置非 HttpOnly 的 `socialease_csrf_token`，�
 | `SOCIALEASE_OUTBOX_INTERVAL_SECONDS` | `2` | module/Calendar reconciliation worker 轮询间隔 |
 | `SOCIALEASE_OUTBOX_BATCH_SIZE` | `20` | 每次租约领取上限，最大 100 |
 | `SOCIALEASE_OUTBOX_LEASE_SECONDS` | `60` | worker 崩溃后可被其他副本重新领取的租约时长 |
+| `SOCIALEASE_CALENDAR_MCP_HOST` | local MCP server | 独立 MCP Server 监听地址，默认仅本机 `127.0.0.1` |
+| `SOCIALEASE_CALENDAR_MCP_PORT` | local MCP server | 独立 MCP Server 端口，默认 `8010` |
+| `SOCIALEASE_CALENDAR_MCP_SERVER_TRANSPORT` | local MCP server | `streamable-http` 或 `stdio`；默认使用官方推荐的 Streamable HTTP |
 
 Calendar create/update/delete 不再在 API 请求内直接消费协议后裸调用 MCP。批准协议的消费与
 `calendar_action_outbox` 入队位于同一 PostgreSQL 事务；API 会尝试一次低延迟执行，失败则由
 reconciliation worker 按指数退避重放。`/ready` 的 `checks.outbox` 仅暴露 pending、
 processing、dead-letter 数量和最老待处理时间，不包含用户或事件内容。
-| `SOCIALEASE_CALENDAR_MCP_HOST` | local MCP server | 独立 MCP Server 监听地址，默认仅本机 `127.0.0.1` |
-| `SOCIALEASE_CALENDAR_MCP_PORT` | local MCP server | 独立 MCP Server 端口，默认 `8010` |
-| `SOCIALEASE_CALENDAR_MCP_SERVER_TRANSPORT` | local MCP server | `streamable-http` 或 `stdio`；默认使用官方推荐的 Streamable HTTP |
 
 本地真实 MCP 协议演示需要分别启动 Calendar MCP Server 和 Backend：
 
@@ -92,6 +92,71 @@ OAuth Token 管理；不能把共享 Token、用户日程正文或凭据写入 T
 | `SOCIALEASE_TEST_DATABASE_URL` | integration tests | 集成测试使用的 PostgreSQL URL |
 | `SOCIALEASE_BACKUP_DIR` | staging/production | `scripts/backup_database.sh` 的备份输出目录 |
 
+### Memory candidate recall
+
+| 变量 | 推荐值 | 含义 |
+|---|---|---|
+| `SOCIALEASE_MEMORY_RETRIEVAL_MODE` | `dense_only` | `dense_only` 以 pgvector 为主路、异常时降级 PostgreSQL FTS；`hybrid` 并行双路并用 RRF 融合；`postgres_fts` 只启用词法索引；`sql_text` 是旧的最近窗口兼容模式 |
+| `SOCIALEASE_MEMORY_VECTOR_MIN_SIMILARITY` | `0.45` | pgvector cosine similarity 的候选下限 |
+| `SOCIALEASE_MEMORY_EMBEDDING_CACHE_DIR` | `/data/model-cache` | FastEmbed 模型缓存；Compose 使用持久 volume |
+| `SOCIALEASE_MEMORY_EMBEDDING_MODEL_PATH` | 部署时固定路径 | 可选的只读、预置模型目录；受控试点推荐使用它固定模型 artifact |
+| `SOCIALEASE_MEMORY_EMBEDDING_MODEL_HOST_PATH` | production Compose | 宿主机上的完整、版本冻结模型目录，以只读方式挂载到 backend |
+| `SOCIALEASE_MEMORY_EMBEDDING_LOCAL_ONLY` | production: `true` | 禁止运行时下载模型；启用前必须预置完整模型文件 |
+| `SOCIALEASE_MEMORY_EMBEDDING_THREADS` | `2` | 单进程 ONNX CPU 线程数 |
+| `SOCIALEASE_MEMORY_EMBEDDING_CONCURRENCY` | `2` | 单后端进程允许并行执行的 embedding 任务数，最大 8 |
+| `SOCIALEASE_MEMORY_EMBEDDING_TIMEOUT_SECONDS` | `30` | 单次 query/write embedding 超时；超时后 query 降级到 FTS，write 保留 lexical-only 记录 |
+| `SOCIALEASE_MEMORY_EVIDENCE_SELECTOR_ENABLED` | `true` | 启用 Memory Tool 的 0–3 集合级证据 selector；所有环境默认采用 v2b，设为 `false` 可作为 operational kill switch |
+
+迁移 `0021_add_memory_vector_index` 会安装 `vector` extension，增加 512 维版本化向量列和
+HNSW index。已有记录不会在迁移内执行耗时模型推理；部署时应先运行
+`make backfill-memory-embeddings`，确认回填完成，再启用 `dense_only` 流量。新写入和摘要更新会
+同步生成 embedding；模型暂时不可用时写入仍成功，并保留 FTS 可召回能力。
+
+托管 PostgreSQL 必须预先允许安装 `vector` extension；若应用 migration role 没有该权限，
+应由数据库管理员先执行 extension 安装，再运行 Alembic。Production Compose 强制挂载本地
+模型目录且启用 local-only，避免第一个真实请求临时联网下载模型。
+
+正常请求不再读取最近 100 条作为候选：pgvector 最多取 100 条，再执行应用层 hard filter、
+固定排序、token budget 和 top-3。向量路线异常时降级到 PostgreSQL FTS；两条索引路线都异常
+时才使用最近窗口作为可用性降级。diagnostics 会记录实际采用的 `dense_only`、`postgres_fts`
+或 `sql_text` 策略。
+
+Episodic retrieval 不再是每个请求的自动上下文步骤。General Support 的模型先基于当前请求、
+近期完整轮次、compact summary、Stable Memory 和精确模块状态做一次严格的 skip/search 决策；
+只有用户明确询问跨会话的既往练习经历且当前上下文不足时，才执行一次只读 Memory Search
+Tool。对于明确说明旧记忆错误或过期、同时给出新值的请求，原生 Tool Loop 还可以调用无参数
+`update_practice_memory`。服务端固定 owner scope、允许的 memory type、consent、风险与
+memory-control gate；检索模型只能提供 query，更新模型不能提供 target ID、owner 或 version。
+
+Memory Tool 不再提供文本 JSON router fallback：LLM Provider 必须实现 OpenAI-compatible
+`tools/tool_calls`。不支持原生 Tool Calling 的 client 会在构造阶段被拒绝；LLM 未启用时本轮
+Memory Tool 直接跳过。系统不会尝试从普通文本中解析 Tool 决策。Support Generation 等其他
+节点的 JSON mode 不受此变化影响。
+
+当 `SOCIALEASE_MEMORY_EVIDENCE_SELECTOR_ENABLED=true` 时，Memory Tool 会在同一个 top-3
+candidate snapshot 上追加一次集合级判断，返回 0–3 条互补证据，不固定为 top-1，也不凑满
+top-3；selector 解析或 provider 失败时返回空集。`memory-evidence-selector-v2` 会先输出 bounded
+`question_direction`（helped、failed、exact_recall、neutral_history 或 correction），再选择方向
+一致的证据；该枚举可以进入 content-free trace，但请求和 memory 正文不能记录。出现 provider
+稳定性或质量回归时，可用同一开关立即关闭 selector。
+
+Memory Tool 返回 evidence 后使用 `memory-grounding-v1` typed schema 直接回答显式历史问题，
+不再套用通用 CBT/support 输出结构；模型必须声明使用的 1-based evidence number，且只能引用
+服务端已选中的最多 3 条证据。没有 evidence 的普通支持请求仍走 `support-v8`。typed schema
+解析失败、引用越界、内容边界失败或 provider 异常时返回确定性的“证据不足”结果，之后仍经过
+统一 output guardrail；content boundary 与 schema failure 使用不同的 content-free error category，
+不记录被拒绝的模型正文。
+
+自然语言记忆纠正仍保留两步 Memory Center 控制流程：客户端先调用
+`POST /api/users/{user_id}/memory-corrections/resolve`。`memory-correction-v2` 只能解析
+`target_query` 和 `replacement_summary`，不能输出 owner、memory ID、status 或 version；服务端
+使用 owner-scoped PostgreSQL FTS 返回最多 3 个 active 候选和当前 version，本步骤不修改记忆。
+用户明确选择候选后，再调用既有 `/memories/{memory_id}/supersede`；服务端重新执行 policy、
+optimistic lock 和原子 supersession。聊天原生 Tool Loop 另外注册保守的
+`update_practice_memory`：它不接受参数，只读取当前用户请求，并且只有 Top-3 中恰好一条候选
+达到固定 lexical support（至少 2 个目标词项、query coverage 至少 0.5）时才自动 supersede；
+多目标、弱目标、高风险或并发变化均不写入。两步 API 继续作为歧义处理和人工恢复入口。
+
 PostgreSQL 是唯一持久化运行时。Demo auth 未配置内容密钥时会明确使用本地明文保护器，
 Production auth 不允许这一内容保护降级。PostgreSQL repository adapters 已覆盖当前运行路径，
 但真实试点前仍需在 secret manager 中生成和保管内容密钥，并完成托管备份、恢复演练、
@@ -108,6 +173,11 @@ Production auth 不允许这一内容保护降级。PostgreSQL repository adapte
 | `LLM_API_KEY` | LLM enabled | Provider API key |
 | `LLM_MODEL` | optional | 模型名称 |
 | `LLM_TIMEOUT_SECONDS` | optional | Provider timeout |
+| `LLM_JSON_MODE_ENABLED` | DeepSeek structured output | `true` 时 Support Generation 使用 `response_format={"type":"json_object"}`；其他调用不变 |
+| `LLM_RETRY_MAX_ATTEMPTS` | optional | 非流式 provider 请求的最大尝试次数，默认 3 |
+| `LLM_RETRY_INITIAL_BACKOFF_SECONDS` | optional | 非流式 provider 重试的初始退避秒数，默认 0.25 |
+| `LLM_CIRCUIT_FAILURE_THRESHOLD` | optional | Circuit breaker 打开的连续失败阈值，默认 3 |
+| `LLM_CIRCUIT_RECOVERY_SECONDS` | optional | Circuit breaker 进入 half-open 前的恢复秒数，默认 30 |
 | `LLM_MAX_CONCURRENCY` | pilot | 进程内全局 LLM 并发上限；`0` 表示禁用 |
 | `LLM_CONCURRENCY_WAIT_SECONDS` | pilot | 等待 LLM capacity 的时间，超时后 fallback |
 
@@ -131,7 +201,6 @@ Provider 失败或关闭时，系统仍必须保持安全。
 | `WORKSHEET_DRAFT_TTL_SECONDS` | worksheet | Worksheet 当前字段引用和草稿状态 TTL，默认 3600 秒；不复制统一 Timeline 原文 |
 | `SUPPORT_SEARCH_TTL_SECONDS` | resource | Resource Citation ID 指代状态 TTL，默认 1800 秒；不缓存任意网页正文 |
 | `SOCIALEASE_RATE_LIMIT_BACKEND` | pilot | `local` 进程内限流；`gateway` 表示网关限流；`redis` 目前 fail fast |
-| `SOCIALEASE_LLM_CONCURRENCY_BACKEND` | future multi-instance | `local` 进程内 semaphore；`redis` 为未来共享 provider semaphore |
 
 Redis 保存加密、版本化的统一 Conversation Context Projection 和 Module Overlay，以及
 Worksheet 当前字段引用、Resource Citation ID 等允许过期的任务状态。Role-play 消息不再
@@ -139,7 +208,8 @@ Worksheet 当前字段引用、Resource Citation ID 等允许过期的任务状�
 重建，不能改变用户历史或冒充数据库事实。production 模式默认要求 Redis：未配置 URL 时
 拒绝启动，探针失败时 `/ready` 返回 503；请求正确性仍不以缓存命中为前提。当前限流仍是
 进程内实现，多实例试点时只有部署网关真正执行请求预算，才设置
-`SOCIALEASE_RATE_LIMIT_BACKEND=gateway`。
+`SOCIALEASE_RATE_LIMIT_BACKEND=gateway`。LLM concurrency 目前固定为进程内 semaphore；
+共享 provider semaphore 尚未实现，因此不提供运行时 backend 选择变量。
 
 ## Operational Alerts
 

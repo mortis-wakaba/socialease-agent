@@ -242,7 +242,7 @@ python scripts/deployment_smoke_check.py
 ```bash
 SOCIALEASE_REDIS_URL=rediss://...
 SOCIALEASE_RATE_LIMIT_BACKEND=gateway
-SOCIALEASE_LLM_CONCURRENCY_BACKEND=local
 ```
 
-这些标记用于说明部署策略。当前代码在没有外部 gateway 或 Redis adapter 时仍使用本地 limiter。
+当前代码在没有外部 gateway 或 Redis adapter 时仍使用本地 rate limiter；LLM concurrency
+目前固定使用进程内 semaphore，跨实例共享 limiter 尚未实现。

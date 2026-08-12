@@ -4,10 +4,10 @@ SocialEase 是一个**产品化 Agent 原型**，不是医疗产品，也不是�
 
 ## 当前基线
 
-2026-07-27 本地与 CI 检查点：
+当前可复现检查点：
 
 ```text
-backend pytest: 507 passed, 45 skipped
+backend pytest: 以当前 CI 为准
 eval suite: all metrics passed
 eval gate: passed
 frontend typecheck: passed
@@ -17,7 +17,7 @@ PostgreSQL migration/runtime CI: passed
 Redis-backed task state CI: passed
 ```
 
-精确数字是带日期的验证快照，不是永久能力声明；最新结果以当前提交的 CI 为准。
+最新结果以当前提交的 CI 为准；本文不固化随测试集演进的 pytest 数量。
 
 ## 已实现的生产化控制
 
@@ -57,13 +57,16 @@ Redis-backed task state CI: passed
 - PostgreSQL protocol 与 intervention-plan 的事务边界；
 - 前端覆盖 `consent_required`、roleplay、worksheet、exposure-plan、support-resource、blocked、failed、crisis；
 - harness-managed run 自动创建 intervention plan；
-- Calendar Planning Skill 只生成提醒提案，Calendar API 的 create/update/delete 经过 owner-bound Consent；
-- Calendar MCP 链路具备 Tool Schema、幂等 create、创建后回读和低敏 Tool Trace，当前 Provider 明确为 Demo。
+- Calendar Planning Skill 只生成提醒提案；Calendar API 的 create/update/delete 经过
+  owner-bound Consent，并原子写入持久化 outbox；
+- Calendar MCP 链路具备 lease/retry/dead-letter reconciliation、Tool Schema、持久化幂等绑定、
+  创建后回读和低敏 Tool Trace，当前 Provider 明确为 Demo。
 
 真实试点前仍需：
 
 - 使用 OIDC 或托管身份服务替换自建 HS256 JWT/session；
-- 完成旧 `/api/chat`、`/api/chat/stream` 和领域写 API 的消费者盘点及移除窗口；
+- 完成旧领域写 API 的消费者盘点及移除窗口；`/api/chat` 和 `/api/chat/stream`
+  已从当前路由移除；
 - 根据产品政策扩展高风险 support/practice 的策略组合；
 - 为直接写状态 API 补更深的 HTTP-level eval；
 - 为 Google/Outlook 等真实 Calendar Provider 实现用户级 OAuth、Token 生命周期和撤销流程。
@@ -141,7 +144,6 @@ Redis-backed task state CI: passed
 - production 会话正文使用 AES-256-GCM，缺少内容密钥时 fail closed；
 - 单个/全部 Conversation 的导出和事务化级联删除，覆盖领域 Session、Redis Context、
   Pending Memory Proposal 和来源于该会话的长期 Memory；
-- 旧 Role-play Session 可幂等导入只读归档时间线，不进行新旧双写；
 - repository interfaces for storage replacement;
 - PostgreSQL-only repository factory and adapters for trace, roleplay, worksheet, exposure, user profile, memory settings, protocol, intervention plan, metrics, account, and session records;
 - Redis typed state for unified Conversation Context、Module Overlay、Worksheet Draft 和
@@ -178,7 +180,7 @@ Redis-backed task state CI: passed
 - eval suite 覆盖 safety、routing、citation、unknown handling、roleplay feedback、worksheet extraction、retrieval metrics、E2E workflow；
 - product-boundary eval gate with 210 bundled Chinese boundary cases;
 - unified conversation state machine、Proposal confirmation、module nesting、crisis
-  preemption、ownership、encryption、deletion cascade 和 legacy import 回归；
+  preemption、ownership、encryption 和 deletion cascade 回归；
 - heavier local load regression tests for 50-user requests、Consent 原子消费、Calendar 幂等副作用和 migration readiness;
 
 ## Dependency and worker operations

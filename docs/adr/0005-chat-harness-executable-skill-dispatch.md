@@ -49,8 +49,9 @@
 
 上面的“专业页面和领域写 API 继续可用”仅记录当时的迁移决策，现已结束。当前产品消息
 只通过 Conversation Gateway 写入；公开领域写 API 已移除，旧专业页面重定向到
-`/chat`。deprecated `/api/chat` 中的 roleplay、worksheet、exposure 和 resource skills
-均只返回 `use_unified_conversation`，不创建 Domain Session 或执行脱离时间线的模块。
+`/chat`。过渡期 `/api/chat` 中的 roleplay、worksheet、exposure 和 resource skills 曾只返回
+`use_unified_conversation`；该兼容路由现已移除。保留在 SkillRegistry 中的 legacy boundary
+skills 仍只负责引导统一会话，不创建 Domain Session 或执行脱离时间线的模块。
 
 ## 备选方案
 

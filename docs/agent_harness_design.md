@@ -24,7 +24,7 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 
 - `/chat` 是唯一主对话界面，写入统一的 Conversation Timeline；
 - `/api/conversations/{conversation_id}/messages` 是当前产品消息入口；旧 `/api/chat`
-  和 `/api/chat/stream` 只保留为已标记 deprecated 的迁移兼容接口；
+  和 `/api/chat/stream` 已移除，不再出现在当前路由和 OpenAPI；
 - Conversation Service 在 Harness 之外负责 owner scope、事件顺序、幂等键、有界上下文、
   模块 Proposal 和模块栈生命周期；
 - Safety classification 在 routing 和 skill execution 前执行；
@@ -34,7 +34,7 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
   最大深度三层，当前顶层模块接收下一条消息；
 - 主动练习通过 `SafetyPermissionGate` 和 consent protocol；
 - hooks 提供 metrics、privacy guard 和未来审计扩展点；
-- memory export/delete、practice preference consent 已实现；
+- memory export/delete、practice preference consent、Memory Search Tool 和保守纠正流程已实现；
 - LLM provider 支持 retry、circuit breaker、timeout、deterministic fallback；
 - protocol 支持 request hash、session binding、过期、同意/拒绝、一次性消费、replay resistance；
 - intervention plan 可视化为 timeline，记录当前步骤、进度、protocol 绑定、stop condition 和结果摘要；
@@ -45,7 +45,8 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 - Conversation 正文在 production 使用 AES-256-GCM；缺少内容密钥时持久化层拒绝启动；
 - 统一 Conversation Context、Module Overlay、Worksheet Draft 和 Resource Citation
   指代使用加密或最小化的类型化 Redis 状态；production 默认要求 Redis；
-- Calendar Planning Skill 只生成受限提醒提案，外部写操作通过 owner-bound Consent、幂等键和 MCP Tool Contract 执行；
+- Calendar Planning Skill 只生成受限提醒提案；外部写操作通过 owner-bound Consent、事务
+  outbox、持久化幂等、reconciliation worker 和 MCP Tool Contract 执行；
 - 所有 Skill 输出在写 Memory、记录 Trace 和返回 API 前统一经过 Output Guardrail，并支持一次 Repair 与二次复检。
 
 验证不在设计文档中固化易过期的测试数字。当前可复现基线以
@@ -71,6 +72,7 @@ User Input
   -> before_safety hooks
   -> load RunContext: auth, profile, memory context, request context
   -> IntentRouter, unless crisis requires escalation
+  -> optional native Memory Tool: search episodic evidence or conservatively correct one memory
   -> ordinary support response OR validated ModuleProposal
   -> user accepts/rejects proposal
   -> on accept: policy check + push ModuleRun
@@ -282,15 +284,27 @@ Eval 是 harness contract 的一部分。Crisis 拦截、隐私最小化、conse
 - intervention plans；
 - user profile summaries；
 - memory settings and practice preferences；
-- 每次 harness run 注入的 privacy-safe `MemoryContext`；
+- 按策略注入的 privacy-safe Stable `MemoryContext`；
+- 仅在原生 Tool Call 选择后检索的 episodic evidence；
 - memory export/delete endpoints；
 - practice preferences 写入前的 explicit consent。
 
 完整 Conversation Timeline 是用户可见的历史事实来源，默认长期保留到用户主动删除。
 模型输入由 `ContextAssembler` 从 Timeline 和 Compact Summary 构建，并受 Token Budget
-限制；它不是第二份历史记录。`MemoryContext` 则包含近期安全场景摘要、偏好难度、
-最近焦虑等级、active exposure plan、推荐下一步任务和 context notes，不等同于
-Conversation History。
+限制；它不是第二份历史记录。`MemoryContext` 包含低敏 Stable Memory、active exposure
+plan、推荐下一步任务和 context notes，不等同于 Conversation History。跨会话 episodic
+history 不再在每轮自动注入；模型只有在当前上下文不足且用户明确询问既往练习时，才可通过
+native Memory Search Tool 提交 query。
+
+Memory Search 的 owner、Consent、risk、type、status、expiry 和 supersession 约束由服务端
+独立执行。候选由 pgvector dense recall 生成，异常时降级 PostgreSQL FTS，再经过 hard filter、
+固定排序、token budget、Top-3、集合级 evidence selector 和 typed grounding。selector、schema、
+引用边界或 Provider 失败时 fail closed；未经选择的候选不会直接进入 Prompt。最终回答仍经过
+全局 Output Guardrail，这一纵深校验不能因前置 selector 存在而删除。
+
+聊天中的 `update_practice_memory` 是无参数、保守的服务端纠正 Tool：模型不能提供 owner、
+memory ID 或 version，只有唯一强匹配时才原子 supersede。歧义情况继续通过 Memory Center 的
+`memory-corrections/resolve` 预览、用户选择和 supersede 两步流程处理。
 
 Role-play、Worksheet、Exposure 和 Resource 都从同一个 Conversation Working Context
 读取近期 Timeline、Compact Summary、模块栈和受策略筛选的 Memory。Role-play 不再有

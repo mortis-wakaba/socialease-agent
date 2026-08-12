@@ -1,8 +1,8 @@
 # SocialEase Agent Benchmark Report
 
-> 2026-07-27 统一上下文完成基线：backend pytest `507 passed, 45 skipped`；311 条确定性
-> Eval 全部通过；eval gate `passed`；PostgreSQL migration/runtime 与 Redis-backed
-> task state 由 CI 服务容器验证。
+> 当前可复现基线：311 条确定性 Eval 全部通过；eval gate `passed`；PostgreSQL
+> migration/runtime 与 Redis-backed task state 由 CI 服务容器验证。pytest 精确数量随测试集
+> 演进，不作为长期能力声明，以当前 CI 为准。
 
 本报告记录 SocialEase Agent 的确定性评测集，用于防止安全边界、产品边界和 agent workflow 在迭代中回退。它不是临床效果评估，不证明系统可以诊断、治疗或改善心理健康问题。
 
@@ -80,10 +80,10 @@ make check
 
 ## 3. 当前结果
 
-2026-07-27 本地与 CI 基线：
+当前基线：
 
 ```text
-backend pytest: 531 passed, 6 skipped
+backend pytest: 以当前 CI 为准
 eval suite: all metrics passed
 eval gate: passed
 deterministic eval trace cases: 311 / 311 passed
@@ -91,7 +91,7 @@ PostgreSQL migration/runtime CI: passed
 Redis-backed task state CI: passed
 ```
 
-精确数字是该提交附近的快照；最新结果以当前 CI 和生成的 `latest.json` 为准。
+最新结果以当前 CI 和生成的 `latest.json` 为准。
 
 核心 Eval 指标：
 
@@ -210,68 +210,3 @@ Role-play feedback 和 worksheet extraction 测试保证输出保持 schema 和�
 - 将 Prompt 版本提升从人工命名进一步演进为自动发布版本；
 - 对比 deterministic fallback 与 LLM-enabled 运行；
 - 为 role-play feedback 加入小规模人工质量 rubric。
-
-## 8. Memory Vector/Hybrid 阶段四实验
-
-该实验是引入 pgvector 前的离线门槛，不代表生产链路已经使用向量数据库。运行：
-
-```bash
-pip install -r backend/requirements-vector-eval.txt
-make eval-memory-vector
-```
-
-固定配置：
-
-- 数据：59 条中文 synthetic demo query。新增部分来自 12 组人工编写语义种子，
-  每组扩展 3 个查询改写，共 36 条规模化查询；
-- 规模：每个查询加入 2,048 条确定性安全 demo 干扰记忆，单查询最多 2,053 个
-  候选；共 2,135 条去重索引文本；
-- Classical 策略按生产 Repository 行为使用 owner/status/type/expiry 硬过滤后的
-  100 条 recent candidate window；Vector/Hybrid 在相同硬过滤后评估完整候选集；
-- Embedder：FastEmbed `0.8.0`；
-- Model：`BAAI/bge-small-zh-v1.5`，512 维，revision
-  `46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59`；
-- 模型体积：约 90MB；
-- Vector threshold：`0.50`，高于固定 no-memory hard-negative 的最高分
-  `0.4791`；
-- Hybrid：先通过 semantic threshold，再按 `0.75 semantic + 0.25 lexical`
-  融合，遵循 Mem0“先语义门槛、再融合”的方向；
-- 所有策略先执行用户、Consent、状态、类型、过期、安全内容和当前冲突过滤；
-  场景是排序信号而不是硬过滤，Vector 不能先跨用户搜索再在应用层过滤。
-
-2026-07-26 的 15 条小样本结果保留为历史基线：
-
-| Strategy | Recall@3 | False Recall Avoidance | No-memory Abstention | Case Pass | Query P95 |
-|---|---:|---:|---:|---:|---:|
-| Recent | 0.5556 | 0.6000 | 0.0000 | 0.5333 | ~0.6ms |
-| Metadata | 0.5556 | 0.8000 | 0.5000 | 0.6667 | ~0.2ms |
-| SQL Text | 0.4444 | 0.9000 | 0.5000 | 0.6000 | ~0.3ms |
-| Vector | 0.6667 | 0.8000 | 1.0000 | 0.8000 | ~4ms |
-| Hybrid | 0.5556 | 0.8000 | 1.0000 | 0.7333 | ~6ms |
-
-2026-07-29 规模扩展后的本地 CPU 结果：
-
-| Strategy | Recall@3 | False Recall Avoidance | No-memory Abstention | Case Pass | Query P95 |
-|---|---:|---:|---:|---:|---:|
-| Recent | 0.0392 | 0.2778 | 0.0000 | 0.0169 | ~4ms |
-| Metadata | 0.0392 | 0.2778 | 0.0000 | 0.0169 | ~3ms |
-| SQL Text | 0.0392 | 0.6296 | 0.6667 | 0.1017 | ~2ms |
-| Vector | 0.2745 | 0.8519 | 0.3333 | 0.2203 | ~85ms |
-| Hybrid | 0.3529 | 0.7778 | 0.3333 | 0.2373 | ~77ms |
-
-2,135 条 512 维 float32 向量的原始数据约 4.17 MiB；文档批量编码约 3.8 秒。
-查询延迟包含本地 query embedding 和 Python 精确向量扫描，只用于方案间和数量级
-比较，不等同于 pgvector ANN 的生产延迟。
-
-结论：
-
-- 规模扩大后，Vector/Hybrid 相比固定 100 条 SQL candidate window 的召回优势更加
-  明显，说明语义候选生成在长历史中有工程价值。
-- 但 Vector/Hybrid 的绝对 Recall、False Recall、No-memory Abstention 和 Case Pass
-  均未达到生产安全门槛；Hybrid 提高召回的同时进一步降低 False Recall Avoidance。
-- 当前 SQL Text 在超过 candidate window 的长历史中同样明显退化。继续使用它表示
-  保持现有低复杂度、安全优先的生产基线，不表示其规模化质量已经达标。
-- `vector_gate_met=false`，生产继续使用 SQL Text；阶段五 pgvector 暂缓。
-- 后续若重开阶段五，应先实现安全的 lexical/scenario candidate union、
-  polarity/conflict reranker，并补充独立人工标注集；不能通过降低语义阈值或只更换
-  更大 embedding 模型绕过门槛。

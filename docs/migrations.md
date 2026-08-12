@@ -65,11 +65,19 @@ CI 应在 backend tests 前，对临时 PostgreSQL service 运行 migration。�
 
 Live migration check 只证明 schema 可以升级到 head。当前独立 PostgreSQL Runtime 测试已覆盖主要 Repository、事务边界、ownership 和 fresh-process 持久化；真实部署仍需在目标基础设施上验证连接池配置、备份恢复与 migration/rollback 流程。
 
-当前 head 是 `0014_conversation_deletion`。统一会话相关 schema 分布在：
+当前 head 是 `0021_add_memory_vector_index`。`0012` 之后的统一会话、异步副作用与
+Memory 检索 schema 分布在：
 
 - `0012_unified_conversations`：Conversation、Event、Module Proposal/Run；
 - `0013_conversation_context`：有界上下文 Compact Summary；
-- `0014_conversation_deletion`：幂等删除回执与级联删除支持。
+- `0014_conversation_deletion_receipts`：幂等删除回执与级联删除支持；
+- `0015_conversation_command_inbox`：状态写命令幂等与结果重放；
+- `0016_module_start_outbox`：模块启动事务 outbox；
+- `0017_module_outbox_leases`：worker 租约与失败恢复；
+- `0018_calendar_action_outbox`：Calendar 外部副作用 outbox；
+- `0019_calendar_demo_idempotency`：Demo Calendar Provider 持久化幂等绑定；
+- `0020_add_memory_fts_index`：Memory PostgreSQL FTS；
+- `0021_add_memory_vector_index`：pgvector、版本化 512 维 embedding 与 HNSW index。
 
 不要依赖这里的编号判断部署状态；发布时仍必须以 `alembic heads` 和
 `python -m app.db.migration_check` 的实际结果为准。

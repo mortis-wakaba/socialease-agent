@@ -1,6 +1,6 @@
 # ADR 0009：旧角色扮演记录只读导入统一时间线
 
-- 状态：Accepted
+- 状态：Superseded / not delivered
 - 日期：2026-07-27
 
 ## 决策
@@ -18,6 +18,12 @@
 旧 `/api/chat` 与 `/api/chat/stream` 在 OpenAPI 和响应头中标记 deprecated，
 并指向 `/api/conversations`。旧领域读取接口继续用于详情和迁移期兼容；新产品入口只使用
 Conversation API。
+
+## 当前状态
+
+该导入端点最终没有进入当前生产代码，旧 `/api/chat`、`/api/chat/stream` 及旧领域公开路由也已
+移除。现有 Conversation Timeline 不会自动导入旧 Role-play Session。本文仅保留当时对“只读
+投影而非双写”的决策记录，不能作为当前 API 或数据迁移能力说明。
 
 ## 原因
 

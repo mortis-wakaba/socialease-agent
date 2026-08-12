@@ -18,11 +18,11 @@ SocialEase Agent 的知识库不是单一的大杂烩，而是按用途拆分的
 | `safety_policy` | 项目安全策略、危机升级规则、数字心理健康边界、隐私与安全原则 | 决定系统边界与输出约束 | 主要用于内部约束，也可解释边界 |
 | `product_rubrics` | roleplay 反馈标准、worksheet 抽取规则、exposure ladder 设计规范、eval rubric | 约束产品内部行为与评测 | 默认不作为普通用户问答知识 |
 
-## 外部来源规划
+## 外部来源与用途
 
 ### `social_skills`
 
-建议纳入：
+当前包含：
 
 - **NIMH**：社交焦虑科普、CBT、暴露练习；
 - **NHS / NHS Inform**：CBT 自助技巧、社交焦虑自助指南；
@@ -36,7 +36,7 @@ SocialEase Agent 的知识库不是单一的大杂烩，而是按用途拆分的
 
 ### `safety_policy`
 
-建议纳入：
+当前包含：
 
 - **WHO**：数字心理健康、心理健康促进、现实支持衔接等边界；
 - **American Psychiatric Association / APA**：心理健康 app、AI 工具的安全、隐私、透明度与证据要求；
@@ -50,7 +50,7 @@ SocialEase Agent 的知识库不是单一的大杂烩，而是按用途拆分的
 
 ### `support_resources`
 
-建议纳入：
+当前包含：
 
 - 真实、公开、可验证的支持资源说明；
 - 适合长期保留的官方页面摘要；
@@ -62,7 +62,7 @@ SocialEase Agent 的知识库不是单一的大杂烩，而是按用途拆分的
 - unknown 时明确返回当前资源库没有足够信息；
 - 未来如果部署到具体学校，再扩展 campus-specific 数据。
 
-## 项目自有内容规划
+## 项目自有内容
 
 ### 放入 `social_skills`
 
@@ -123,7 +123,7 @@ doc_type: "guide"
 kb_type: "social_skills"
 audience: "user_facing"
 review_status: "reviewed"
-last_reviewed: "2026-05-18"
+last_reviewed: "YYYY-MM-DD"
 ---
 ```
 
@@ -165,12 +165,12 @@ last_reviewed: "2026-05-18"
 - `Project policy`
 - `Project-authored practice content`
 
-## 当前实现顺序建议
+## 当前状态与后续维护
 
-1. 先把现有 `social_skills` 与 `safety_policy` 迁移到新的 frontmatter 规范；
-2. 新增 `support_resources`，只放真实可核验的公开内容；
-3. 再新增 `product_rubrics`，把当前散落在代码中的 rubric 文本整理出来；
-4. 学校专属资源保持未实现状态，直到有经过审核的真实导入来源与更新流程。
+- `social_skills`、`safety_policy`、`support_resources` 和 `product_rubrics` 已按用途分层；
+- `support_resources` 只收录可核验的公开来源，并保留来源 URL、review 日期和用途边界；
+- 后续重点是定期 freshness review、reviewer/owner metadata 和过期策略，不再新增平行知识层；
+- 学校专属资源保持未实现状态，直到有经过审核的真实导入来源与更新流程。
 
 ## 明确不做的事
 

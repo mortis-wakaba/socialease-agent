@@ -262,23 +262,15 @@ make eval-llm
 make eval-output-guardrail
 ```
 
-Memory Vector/Hybrid Benchmark 使用固定的本地中文 ONNX Embedding，不调用外部
-LLM API，但首次运行会下载约 90MB 模型，因此也与默认 CI 分离：
+Memory 检索使用标准 Backend runtime 中固定的本地中文 ONNX Embedding。发布模板默认
+`dense_only`：先由 pgvector 召回，异常时降级 PostgreSQL FTS，两条索引路线都异常时才使用
+recent-window SQL。
 
-```bash
-cd backend
-pip install -r requirements-vector-eval.txt
-cd ..
-make eval-memory-vector
-```
-
-当前实验固定 `FastEmbed 0.8.0`、`BAAI/bge-small-zh-v1.5` 512 维模型及模型
-revision；Vector/Hybrid 在应用用户、Consent、状态、类型、过期和安全硬过滤之后运行，
-不能替代权限过滤。具体场景不再是硬过滤枚举：开放场景通过 `scenario_id` /
-`practice_thread_id` 保持连续性，通过受控技能标签和语义相关性支持跨场景迁移。
-当前规模化基准包含 59 个中文查询和 2,135 条去重记忆文本；Vector/Hybrid 虽提高
-长历史召回，但 False Recall 与无记忆 abstention 未达到安全门槛，因此生产仍未启用
-pgvector。完整数据与决策见 `docs/benchmark_report.md`。
+当前链路固定执行 owner、Consent、risk、status、type、expiry 和 supersession hard filter，
+向量相似度不能替代权限或安全判断。候选随后经过固定排序、384-token budget、Top-3、
+集合级 evidence selector 和 typed grounding；selector 或 provider 失败时返回空证据。
+生产设计和运行配置见 [Agent Harness 设计](docs/agent_harness_design.md) 与
+[环境配置](docs/environment_config.md)。
 
 Memory Center 位于前端 `/memory`，明确区分稳定设置、Active Thread、情节记忆、
 待确认候选和普通聊天历史。用户可以查看来源与保存原因，安全编辑摘要，使用乐观锁
@@ -289,12 +281,14 @@ Memory Center 位于前端 `/memory`，明确区分稳定设置、Active Thread�
 ```text
 GET    /api/users/{user_id}/memories
 PATCH  /api/users/{user_id}/memories/{memory_id}
+POST   /api/users/{user_id}/memories/{memory_id}/supersede
 POST   /api/users/{user_id}/memories/{memory_id}/archive
 POST   /api/users/{user_id}/memories/{memory_id}/restore
 DELETE /api/users/{user_id}/memories/{memory_id}
 GET    /api/users/{user_id}/memory-proposals
 POST   /api/users/{user_id}/memory-proposals/{proposal_id}/confirm
 POST   /api/users/{user_id}/memory-proposals/{proposal_id}/reject
+POST   /api/users/{user_id}/memory-corrections/resolve
 PUT    /api/users/{user_id}/memory/personalization/{memory_type}
 GET    /api/users/{user_id}/memory-doctor
 ```
@@ -302,8 +296,8 @@ GET    /api/users/{user_id}/memory-doctor
 Memory Doctor 是用户作用域的只读质量检查：检测重复/冲突记忆、长期未使用项、
 授权或类别设置不一致、缺失来源、异常时间、Active Memory 预算、过期练习线程和
 久未确认候选。报告只返回稳定问题码、数量及哈希化对象标识，不返回记忆正文，也
-不会自动修复。当前生产向量索引未启用，因此孤立 embedding 检查会明确返回
-`not_applicable`，而不是误报为通过。
+不会自动修复。Memory Doctor 默认未接入 embedding integrity inspector，因此孤立 embedding
+检查明确返回 `not_applicable`，不能把该状态解释为向量索引关闭或检查通过。
 
 Eval 的设计、指标和局限见 [Benchmark Report](docs/benchmark_report.md) 与 [Human Review Rubric](docs/human_review_rubric.md)。
 
