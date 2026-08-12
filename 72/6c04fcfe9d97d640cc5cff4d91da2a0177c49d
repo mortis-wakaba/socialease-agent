@@ -1,0 +1,82 @@
+.env.example
+  s_70b334910b4f4b::t_5342645a764095 107
+  s_8702c99cac8ed0::t_eb153bab70d268 106
+  s_ef6954d802d82a::t_065425a20796cd 69-70
+  s_70b334910b4f4b::t_99cb499c79618b 15
+  s_8702c99cac8ed0::t_fdb890d19e0d1f 100-104
+  s_70b334910b4f4b::t_bc413e909d3106 97-99
+  s_8702c99cac8ed0::t_32bceea53d6c84 105
+docker-compose.prod.yml
+  s_ef6954d802d82a::t_2007fc8ad6abaa 57,64
+  s_8702c99cac8ed0::t_a86dfdcd1b1df0 51-55,69-70
+  s_70b334910b4f4b::t_bc413e909d3106 50
+  s_8702c99cac8ed0::t_eb153bab70d268 56
+docker-compose.yml
+  s_8702c99cac8ed0::t_eb153bab70d268 67
+  s_70b334910b4f4b::t_bc413e909d3106 60
+  s_8702c99cac8ed0::t_fdb890d19e0d1f 23,61-62,64-65,71-72,111
+  s_8702c99cac8ed0::t_a86dfdcd1b1df0 63
+  s_8702c99cac8ed0::t_32bceea53d6c84 66
+  s_ef6954d802d82a::t_2007fc8ad6abaa 50,68
+.env.production.example
+  s_70b334910b4f4b::t_99cb499c79618b 52
+  s_8702c99cac8ed0::t_fdb890d19e0d1f 92,97
+  s_8702c99cac8ed0::t_a86dfdcd1b1df0 93-96
+  s_70b334910b4f4b::t_8e2e84097fea48 100
+  s_70b334910b4f4b::t_bc413e909d3106 89-91
+  s_8702c99cac8ed0::t_eb153bab70d268 99
+  s_8702c99cac8ed0::t_32bceea53d6c84 98
+.gitignore
+  s_70b334910b4f4b::t_4397c75be63c12 61-63,65
+  s_70b334910b4f4b::t_3e1f3dd88c7e49 64
+  s_ef6954d802d82a::t_7c00a6d300af59 60
+.env.staging.example
+  s_70b334910b4f4b::t_8e2e84097fea48 78
+  s_ef6954d802d82a::t_2007fc8ad6abaa 67-76
+  s_ef6954d802d82a::t_9db8bf29835ef0 77
+  s_70b334910b4f4b::t_99cb499c79618b 45
+Makefile
+  s_ef6954d802d82a::t_2007fc8ad6abaa 27
+  s_ef6954d802d82a::t_9db8bf29835ef0 1
+  s_8702c99cac8ed0::t_fdb890d19e0d1f 26
+  s_ef6954d802d82a::t_157a5836ea037a 28
+Dockerfile.backend
+  s_ef6954d802d82a::t_065425a20796cd 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "726c04fcfe9d97d640cc5cff4d91da2a0177c49d",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_70b334910b4f4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe53e-c050-7d80-bcd6-bf30a00019da",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_8702c99cac8ed0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fd0c4-a410-75e1-9007-4d04fff3b50c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    },
+    "s_ef6954d802d82a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff4bd-55fb-79d2-98c6-fad3a0ca646d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
