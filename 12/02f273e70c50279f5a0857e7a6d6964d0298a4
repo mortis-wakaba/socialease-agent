@@ -1,0 +1,81 @@
+README.md
+  s_5c398affac80db::t_f449a18caba4ed 186-193
+  s_5c398affac80db::t_242edf6c90d4f2 147,198-199
+  s_5c398affac80db::t_8c8cacbe0f40c1 133-138
+  s_5c398affac80db::t_d662d069a4763b 200-201
+backend/app/workflow/router.py
+  s_5c398affac80db::t_6506f2d05a5354 43-44,50-52,55-59
+  s_5c398affac80db::t_feb68a8b48e1de 8,45-49,53-54
+  s_5c398affac80db::t_31763ea73e7af4 66,95-109
+  s_5c398affac80db::t_38f568e6fe07b6 110-111
+backend/app/services/conversation_runtime.py
+  s_5c398affac80db::t_0c9eae3cfb8485 7,15,21-26,31-34
+backend/tests/test_llm_intent_router.py
+  s_5c398affac80db::t_10713e90a2d6f2 30-48,70-83
+  s_5c398affac80db::t_28d8db2078db80 84-85
+backend/app/workflow/engine.py
+  s_5c398affac80db::t_d2d07547dc0f58 785
+  s_5c398affac80db::t_f980c44b68324c 12
+backend/app/llm/__init__.py
+  s_5c398affac80db::t_4c8d0b4ac16c4f 4,12
+backend/app/services/conversation_service.py
+  s_5c398affac80db::t_d2d07547dc0f58 30-31,96,105,108-109,126
+docker-compose.yml
+  s_5c398affac80db::t_0c9eae3cfb8485 51-61,82-83
+backend/app/llm/factory.py
+  s_5c398affac80db::t_f1a33e2278c842 27,49,118
+  s_5c398affac80db::t_4c8d0b4ac16c4f 67-96,135-143
+  s_5c398affac80db::t_1078c2f6bbf38f 97
+  s_5c398affac80db::t_2789996715cb1f 144-146
+.env.example
+  s_5c398affac80db::t_f449a18caba4ed 19-22,28-33
+  s_5c398affac80db::t_f1a33e2278c842 16-17
+  s_5c398affac80db::t_a330e4f2840be8 23,26-27
+  s_5c398affac80db::t_0c9eae3cfb8485 24-25
+  s_5c398affac80db::t_cc0b3cac63cd07 18
+backend/tests/test_conversation_runtime.py
+  s_5c398affac80db::t_36d93bee862d69 1-2,4-17,19-56
+  s_5c398affac80db::t_41ce193f565b59 3,18
+backend/tests/test_llm.py
+  s_5c398affac80db::t_10713e90a2d6f2 9,101-129
+  s_5c398affac80db::t_f1a33e2278c842 217,231,242-249
+  s_5c398affac80db::t_9e6d813572aa78 130-131
+  s_5c398affac80db::t_d3ec01a8b56941 250-251
+backend/.env.example
+  s_5c398affac80db::t_f449a18caba4ed 12-15,19-24
+  s_5c398affac80db::t_a330e4f2840be8 9-11,16-18
+backend/app/conversation/compactor.py
+  s_5c398affac80db::t_6506f2d05a5354 92-93,99-101,104-108
+  s_5c398affac80db::t_feb68a8b48e1de 11,94-98,102-103
+backend/app/llm/openai_compatible.py
+  s_5c398affac80db::t_f1a33e2278c842 34,45-47,150-151
+docs/environment_config.md
+  s_5c398affac80db::t_0c9eae3cfb8485 186
+  s_5c398affac80db::t_f449a18caba4ed 183-185,187-193
+backend/tests/test_conversation_context.py
+  s_5c398affac80db::t_4d5d2a156645dd 35-58,269-292
+  s_5c398affac80db::t_121b357760789e 293-294
+Makefile
+  s_5c398affac80db::t_58b842eb4bfcee 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "1202f273e70c50279f5a0857e7a6d6964d0298a4",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_5c398affac80db": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff5eb-24ae-7e40-be3f-18ac2ae70dab",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
