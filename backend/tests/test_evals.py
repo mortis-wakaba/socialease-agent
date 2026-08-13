@@ -111,7 +111,7 @@ def test_eval_trace_report_contains_case_artifacts(tmp_path) -> None:
     assert trace_report.summary["failed"] == 0
     assert trace_report.execution_version.eval_dataset_version is not None
     assert trace_report.execution_version.eval_dataset_version.startswith("sha256:")
-    assert trace_report.execution_version.trace_schema_version == "trace-v2"
+    assert trace_report.execution_version.trace_schema_version == "trace-v3"
     assert trace_report.cases
     assert any(case.suite == "e2e_workflow" for case in trace_report.cases)
     assert any(case.suite == "memory_retrieval" for case in trace_report.cases)

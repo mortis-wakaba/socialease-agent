@@ -7,13 +7,14 @@ from uuid import uuid4
 import pytest
 
 from app.models import ChatRequest, Intent, RiskLevel, SafetyResult, TraceRecord
-from app.models_long_term_memory import MemoryPipelineResult
+from app.models_long_term_memory import MemoryPipelineResult, MemoryType
 from app.models_memory import (
     PracticePreferences,
     UserConsentState,
     UserMemorySettings,
     UserPracticeSummary,
 )
+from app.models_memory_tool import MemoryToolEvidence, MemoryToolRunResult
 from app.memory.context_builder import build_memory_context
 from app.memory.settings_store import InMemoryUserMemorySettingsRepository
 from app.protocols.service import ProtocolService
@@ -73,6 +74,48 @@ class ContextInspectingSupportSkill:
         return SkillResult(
             response="ok",
             structured_data={"agent": "support_agent", "action": "general_support"},
+            selected_agent="support_agent",
+        )
+
+
+class MemoryToolTracingSupportSkill:
+    """Return trusted Memory Tool metadata for Harness trace integration tests."""
+
+    descriptor = SkillDescriptor(
+        name="general_support_skill",
+        description="Test Memory Tool trace skill",
+        supported_intents=(Intent.EMOTIONAL_SUPPORT,),
+        entrypoint="tests.MemoryToolTracingSupportSkill",
+        safety_notes="test only",
+    )
+
+    def __init__(self, *, include_unapproved_field: bool = False) -> None:
+        self.include_unapproved_field = include_unapproved_field
+
+    async def run(self, context: SkillContext) -> SkillResult:
+        del context
+        metadata = MemoryToolRunResult(
+            decision_action="search_practice_memory",
+            decision_reason="explicit_cross_session_history",
+            outcome="returned",
+            evidence=[
+                MemoryToolEvidence(
+                    evidence_id="mem_ev_0123456789abcdef",
+                    memory_type=MemoryType.HELPFUL_STRATEGY,
+                    safe_summary="PRIVATE_MEMORY_BODY",
+                    relevance_score=0.9,
+                )
+            ],
+        ).trace_metadata()
+        if self.include_unapproved_field:
+            metadata["query"] = "PRIVATE_MEMORY_QUERY"
+        return SkillResult(
+            response="ok",
+            structured_data={
+                "agent": "support_agent",
+                "action": "general_support",
+                "memory_tool": metadata,
+            },
             selected_agent="support_agent",
         )
 
@@ -331,6 +374,53 @@ async def test_agent_harness_loads_run_context_for_skill(
     assert response.trace.action == "general_support"
     assert response.trace.permission_action == "allow"
     assert "context_selection" in response.structured_data
+
+
+@pytest.mark.anyio
+async def test_agent_harness_persists_only_content_free_memory_tool_trace(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
+    repository = InMemoryTraceRepository()
+    harness = create_test_harness(
+        trace_logger=TraceLogger(repository=repository),
+        skill_registry=SkillRegistry(
+            executable_skills=(MemoryToolTracingSupportSkill(),)
+        ),
+    )
+
+    response = await harness.run(
+        ChatRequest(user_id="memory_trace_user", message="回顾以前的方法")
+    )
+    persisted = await repository.get(response.run_id)
+
+    assert persisted is not None
+    assert persisted.memory_tool is not None
+    assert persisted.memory_tool.decision_action == "search_practice_memory"
+    assert persisted.memory_tool.outcome == "returned"
+    assert persisted.memory_tool.evidence_count == 1
+    serialized = persisted.memory_tool.model_dump_json()
+    assert "PRIVATE_MEMORY_BODY" not in serialized
+    assert "mem_ev_0123456789abcdef" not in serialized
+
+
+@pytest.mark.anyio
+async def test_agent_harness_drops_memory_tool_trace_with_unapproved_fields(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
+    harness = create_test_harness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
+        skill_registry=SkillRegistry(
+            executable_skills=(
+                MemoryToolTracingSupportSkill(include_unapproved_field=True),
+            )
+        ),
+    )
+
+    response = await harness.run(
+        ChatRequest(user_id="memory_trace_user", message="回顾以前的方法")
+    )
+
+    assert response.trace.memory_tool is None
 
 
 @pytest.mark.anyio

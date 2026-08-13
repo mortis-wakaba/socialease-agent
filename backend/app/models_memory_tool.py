@@ -105,6 +105,49 @@ class MemoryGroundingGeneration(BaseModel):
         return self
 
 
+class MemoryToolTraceMetadata(BaseModel):
+    """Strict content-free metadata persisted for one Memory Tool decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision_action: Literal[
+        "skip",
+        "search_practice_memory",
+        "update_practice_memory",
+    ]
+    decision_reason: MemoryToolDecisionReason
+    outcome: Literal[
+        "skipped",
+        "returned",
+        "abstained",
+        "blocked_control_intent",
+        "blocked_risk",
+        "invalid_model_output",
+        "provider_error",
+        "tool_error",
+        "updated",
+        "no_match",
+        "ambiguous_target",
+        "weak_target",
+        "rejected",
+        "concurrent_change",
+    ]
+    evidence_count: int = Field(ge=0, le=3)
+    output_parser_version: Literal["memory-tool-native-v1"]
+    selector_outcome: Literal[
+        "not_run",
+        "selected",
+        "abstained",
+        "invalid_model_output",
+        "provider_error",
+    ]
+    selector_candidate_count: int = Field(ge=0, le=3)
+    selector_question_direction: MemoryEvidenceQuestionDirection | None = None
+    selector_output_parser_version: Literal["memory-evidence-selector-json-v2"]
+    call_protocol: Literal["native_tools_v1"]
+    native_call_protocol_version: Literal["native-tools-v1"]
+
+
 class MemoryToolRunResult(BaseModel):
     """Content plus content-free diagnostics for one bounded tool decision."""
 
@@ -156,24 +199,18 @@ class MemoryToolRunResult(BaseModel):
 
     def trace_metadata(self) -> dict[str, object]:
         """Return content-free fields safe for response metadata and traces."""
-        return {
-            "decision_action": self.decision_action,
-            "decision_reason": self.decision_reason.value,
-            "outcome": self.outcome,
-            "evidence_count": len(self.evidence),
-            "output_parser_version": MEMORY_TOOL_OUTPUT_PARSER_VERSION,
-            "selector_outcome": self.selector_outcome,
-            "selector_candidate_count": self.selector_candidate_count,
-            "selector_question_direction": (
-                self.selector_question_direction.value
-                if self.selector_question_direction is not None
-                else None
-            ),
-            "selector_output_parser_version": (
+        return MemoryToolTraceMetadata(
+            decision_action=self.decision_action,
+            decision_reason=self.decision_reason,
+            outcome=self.outcome,
+            evidence_count=len(self.evidence),
+            output_parser_version=MEMORY_TOOL_OUTPUT_PARSER_VERSION,
+            selector_outcome=self.selector_outcome,
+            selector_candidate_count=self.selector_candidate_count,
+            selector_question_direction=self.selector_question_direction,
+            selector_output_parser_version=(
                 MEMORY_EVIDENCE_SELECTOR_OUTPUT_PARSER_VERSION
             ),
-            "call_protocol": self.call_protocol,
-            "native_call_protocol_version": (
-                MEMORY_TOOL_NATIVE_CALL_PROTOCOL_VERSION
-            ),
-        }
+            call_protocol=self.call_protocol,
+            native_call_protocol_version=MEMORY_TOOL_NATIVE_CALL_PROTOCOL_VERSION,
+        ).model_dump(mode="json")

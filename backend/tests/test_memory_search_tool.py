@@ -577,6 +577,12 @@ async def test_support_skill_passes_only_tool_evidence_to_generation() -> None:
             "call_protocol": "native_tools_v1",
             "native_call_protocol_version": "native-tools-v1",
         }
+    serialized_trace_metadata = json.dumps(
+        result.structured_data["memory_tool"],
+        ensure_ascii=False,
+    )
+    assert "过去练习" not in serialized_trace_metadata
+    assert "mem_ev_0123456789abcdef" not in serialized_trace_metadata
 
 
 @pytest.mark.anyio

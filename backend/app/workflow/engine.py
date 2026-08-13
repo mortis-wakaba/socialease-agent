@@ -27,6 +27,7 @@ from app.memory.policy_engine import MemoryPolicyEngine
 from app.memory.proposal_extractor import MemoryProposalExtractor
 from app.memory.write_pipeline import MemoryWritePipeline
 from app.models_long_term_memory import MemorySourceType
+from app.models_memory_tool import MemoryToolTraceMetadata
 from app.models_scenario import ScenarioSpec
 from app.models import (
     ChatRequest,
@@ -667,6 +668,7 @@ class AgentHarness:
                 skill_result.structured_data.get("agent_loop_stop_reason")
             ),
             agent_loop_steps=_agent_loop_steps(skill_result.structured_data),
+            memory_tool=_memory_tool_trace_metadata(skill_result.structured_data),
             output_guardrail_action=output_guardrail_result.action.value,
             output_guardrail_evaluation_mode=(
                 output_guardrail_result.evaluation_mode.value
@@ -964,6 +966,19 @@ def _agent_loop_steps(structured_data: dict[str, object]) -> list[dict[str, obje
     if not isinstance(value, list):
         return []
     return [dict(item) for item in value[:3] if isinstance(item, dict)]
+
+
+def _memory_tool_trace_metadata(
+    structured_data: dict[str, object],
+) -> MemoryToolTraceMetadata | None:
+    """Whitelist strict content-free Memory Tool metadata for persistence."""
+    value = structured_data.get("memory_tool")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return MemoryToolTraceMetadata.model_validate(value)
+    except ValueError:
+        return None
 
 
 def _error_categories(errors: list[str]) -> list[str]:

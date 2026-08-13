@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.models_llm import LLMUsage
+from app.models_memory_tool import MemoryToolTraceMetadata
 from app.models_trace import ExecutionVersionInfo
 
 
@@ -110,6 +111,7 @@ class TraceRecord(BaseModel):
     agent_loop_used: bool = False
     agent_loop_stop_reason: str | None = None
     agent_loop_steps: list[dict[str, Any]] = Field(default_factory=list)
+    memory_tool: MemoryToolTraceMetadata | None = None
     output_guardrail_action: str | None = None
     output_guardrail_evaluation_mode: str | None = None
     output_guardrail_categories: list[str] = Field(default_factory=list)

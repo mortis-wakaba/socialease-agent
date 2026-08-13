@@ -11,7 +11,7 @@ from app.llm.factory import LLMConfig
 from app.models_trace import ExecutionVersionInfo
 
 
-TRACE_SCHEMA_VERSION = "trace-v2"
+TRACE_SCHEMA_VERSION = "trace-v3"
 GUARDRAIL_POLICY_VERSION = "output-guardrail-2026-07-31"
 SKILL_REGISTRY_VERSION = "bounded-skills-2026-07-19"
 

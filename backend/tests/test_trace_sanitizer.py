@@ -148,7 +148,7 @@ async def test_after_trace_hook_failure_is_isolated_from_business_response(
     assert response.structured_data["trace_persisted"] is True
     assert response.structured_data["observability_hook_failed"] is True
     assert response.trace.errors[-1] == "OBSERVABILITY_HOOK_FAILURE:RuntimeError"
-    assert response.trace.execution_version.trace_schema_version == "trace-v2"
+    assert response.trace.execution_version.trace_schema_version == "trace-v3"
     assert response.trace.execution_version.prompt_versions == {}
     assert "trace-hook@example.com" not in response.model_dump_json()
     assert await repository.get(response.run_id) is not None

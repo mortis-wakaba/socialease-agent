@@ -34,6 +34,7 @@ def test_execution_version_records_component_ids_without_secrets() -> None:
 
     assert version.llm_provider == "openai_compatible"
     assert version.llm_model == "demo-model-v2"
+    assert version.trace_schema_version == "trace-v3"
     assert version.model_config_version.startswith("sha256:")
     assert version.prompt_versions == {
         "safety_classifier": "safety-v1",

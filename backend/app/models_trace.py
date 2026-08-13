@@ -7,7 +7,7 @@ class ExecutionVersionInfo(BaseModel):
     """Non-secret component versions needed to reproduce one trace or eval."""
 
     app_version: str = "dev"
-    trace_schema_version: str = "trace-v2"
+    trace_schema_version: str = "trace-v3"
     llm_provider: str | None = None
     llm_model: str | None = None
     model_config_version: str = "llm-disabled"
