@@ -1,4 +1,4 @@
-.PHONY: dev-backend dev-calendar-mcp dev-frontend test-backend test-calendar-mcp test-postgres-runtime test-redis-context backfill-memory-embeddings eval eval-gate eval-memory-vector eval-memory-ablation eval-llm eval-output-guardrail prompt-version-check update-prompt-versions privacy-check lock-python typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
+.PHONY: dev-backend dev-calendar-mcp dev-frontend test-backend test-calendar-mcp test-postgres-runtime test-redis-context backfill-memory-embeddings eval eval-gate eval-memory-vector eval-memory-ablation eval-llm eval-local-intent eval-output-guardrail prompt-version-check update-prompt-versions privacy-check lock-python typecheck-frontend lint-frontend build-frontend test-e2e test-e2e-production-auth e2e-smoke migration-check ready backup-db restore-drill monitor-alerts smoke-check prod-config-check docker-up docker-down docker-reset docker-prod-config check
 
 dev-backend:
 	cd backend && uvicorn app.main:app --reload --env-file ../.env
@@ -40,6 +40,9 @@ eval-memory-ablation:
 
 eval-llm:
 	cd backend && RUN_LLM_EVALS=true pytest -m llm_eval tests/test_deepeval_quality.py tests/test_output_guardrail_quality.py
+
+eval-local-intent:
+	cd backend && python -m app.evals.llm_intent --output /tmp/socialease-local-intent-report.json
 
 eval-output-guardrail:
 	cd backend && RUN_LLM_EVALS=true pytest -m llm_eval -s tests/test_output_guardrail_quality.py

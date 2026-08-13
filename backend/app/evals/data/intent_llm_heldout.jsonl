@@ -1,0 +1,63 @@
+{"id":"heldout_roleplay_boundary_support","category":"intent_boundary","message":"我确实有点紧张，但现在最需要的不是安慰。你当面试官问我为什么选择这个岗位，我来回答。","expected_intent":"roleplay_practice","demo":true,"split":"heldout"}
+{"id":"heldout_roleplay_negated_explanation","category":"negation_turn","message":"先别给建议，也不用分析原因，直接装作是我室友，问我为什么没倒垃圾。","expected_intent":"roleplay_practice","demo":true,"split":"heldout"}
+{"id":"heldout_roleplay_colloquial_typo","category":"colloquial_noise","message":"咱俩来一遍呗，你演学长，我练下咋开口问实验室招不招人","expected_intent":"roleplay_practice","demo":true,"split":"heldout"}
+{"id":"heldout_roleplay_no_action_word","category":"hard_positive","message":"“你这个方案我不太认可。”这是老师刚才说的话。请以老师的身份继续，等我作答后再回应。","expected_intent":"roleplay_practice","demo":true,"split":"heldout"}
+{"id":"heldout_roleplay_primary_after_support","category":"multi_intent_primary","message":"我知道可以先聊感受，不过这次主要想实际试一次：你做新同学，我来主动打招呼。","expected_intent":"roleplay_practice","demo":true,"split":"heldout"}
+{"id":"heldout_roleplay_code_switch","category":"code_switching","message":"Can we mock 一下 office hour？你当教授，每轮只回一句中文。","expected_intent":"roleplay_practice","demo":true,"split":"heldout"}
+{"id":"heldout_roleplay_not_calendar","category":"intent_boundary","message":"不要替我安排练习时间，我现在就想把向组长提出异议的对话走一遍。","expected_intent":"roleplay_practice","demo":true,"split":"heldout"}
+{"id":"heldout_worksheet_boundary_support","category":"intent_boundary","message":"这次不只是想听安慰，请按发生的事、当时想法、情绪强度、支持证据和反对证据带我写下来。","expected_intent":"cbt_worksheet","demo":true,"split":"heldout"}
+{"id":"heldout_worksheet_no_keyword","category":"hard_positive","message":"我认定大家没回话就是讨厌我。能不能把事实和我的推测分栏，再补一个更平衡的解释？","expected_intent":"cbt_worksheet","demo":true,"split":"heldout"}
+{"id":"heldout_worksheet_colloquial","category":"colloquial_noise","message":"刚发完言脑子一直转，帮我整个表捋捋：啥事、咋想的、情绪几分、还有没有别的说法。","expected_intent":"cbt_worksheet","demo":true,"split":"heldout"}
+{"id":"heldout_worksheet_negated_roleplay","category":"negated_specialized_action","message":"不用扮演任何人，我想书面检查“他们笑了所以一定在笑我”这个念头有哪些证据。","expected_intent":"cbt_worksheet","demo":true,"split":"heldout"}
+{"id":"heldout_worksheet_partial_information","category":"underspecified_fields","message":"情境是进教室没人和我说话，情绪大概七分，自动想法还不确定。先按结构化记录开始填。","expected_intent":"cbt_worksheet","demo":true,"split":"heldout"}
+{"id":"heldout_worksheet_multi_intent_primary","category":"multi_intent_primary","message":"之后可以练对话，但眼下先把昨天被拒绝后的想法、情绪和替代解释整理成一张记录。","expected_intent":"cbt_worksheet","demo":true,"split":"heldout"}
+{"id":"heldout_worksheet_code_switch","category":"code_switching","message":"想做个 thought record：situation 是群聊没人接话，emotion 8/10，帮我继续补 evidence 和 balanced thought。","expected_intent":"cbt_worksheet","demo":true,"split":"heldout"}
+{"id":"heldout_exposure_boundary_calendar","category":"intent_boundary","message":"先别写进日历，我需要的是把“和同桌点头”到“在班会上发言”拆成由易到难的练习层级。","expected_intent":"exposure_planning","demo":true,"split":"heldout"}
+{"id":"heldout_exposure_no_keyword","category":"hard_positive","message":"一上来参加十人聚会太难了，帮我设计几个中间台阶，每一步只比前一步难一点。","expected_intent":"exposure_planning","demo":true,"split":"heldout"}
+{"id":"heldout_exposure_colloquial_typo","category":"colloquial_noise","message":"我想慢慢练到敢课堂举手，别一上来整太难，从最轻松的排起行不","expected_intent":"exposure_planning","demo":true,"split":"heldout"}
+{"id":"heldout_exposure_negated_roleplay","category":"negated_specialized_action","message":"现在不做模拟对话，只想先规划从给陌生同学问时间到主动聊天的渐进步骤。","expected_intent":"exposure_planning","demo":true,"split":"heldout"}
+{"id":"heldout_exposure_scored_tasks","category":"workflow_request","message":"把发语音、打电话、当面请求帮助这三类任务细分，并按我预估的紧张程度排序。","expected_intent":"exposure_planning","demo":true,"split":"heldout"}
+{"id":"heldout_exposure_multi_intent_primary","category":"multi_intent_primary","message":"以后再设提醒；今天主要先确定一条从线上留言到线下自我介绍的分级训练路线。","expected_intent":"exposure_planning","demo":true,"split":"heldout"}
+{"id":"heldout_exposure_code_switch","category":"code_switching","message":"帮我做一个 exposure ladder，从 say hi 到 join group discussion，每级标 0 到 10 的压力。","expected_intent":"exposure_planning","demo":true,"split":"heldout"}
+{"id":"heldout_resource_boundary_support","category":"intent_boundary","message":"我不是只想聊心情，想知道学校通常有哪些可核验的正式支持入口，以及去哪里确认开放时间。","expected_intent":"campus_resource_query","demo":true,"split":"heldout"}
+{"id":"heldout_resource_no_hallucinated_phone","category":"hard_positive","message":"不要猜电话或编地址，请导航我到本校官网上能核实心理支持服务的栏目。","expected_intent":"campus_resource_query","demo":true,"split":"heldout"}
+{"id":"heldout_resource_colloquial","category":"colloquial_noise","message":"学校里真要找人聊一般找哪个部门啊，入口去哪看才靠谱","expected_intent":"campus_resource_query","demo":true,"split":"heldout"}
+{"id":"heldout_resource_not_booking_action","category":"intent_boundary","message":"不用替我预约，我只想先了解辅导员、心理中心和学生支持部门各自可能提供什么帮助。","expected_intent":"campus_resource_query","demo":true,"split":"heldout"}
+{"id":"heldout_resource_unknown_school","category":"missing_context","message":"我没说是哪所学校，所以请只告诉我如何从学校官方渠道查找经过确认的求助信息。","expected_intent":"campus_resource_query","demo":true,"split":"heldout"}
+{"id":"heldout_resource_multi_intent_primary","category":"multi_intent_primary","message":"我有点孤单，但主要问题是想找校内正式支持，不是现在做情绪练习。应该先查哪些官方页面？","expected_intent":"campus_resource_query","demo":true,"split":"heldout"}
+{"id":"heldout_resource_code_switch","category":"code_switching","message":"校园里的 student support 和 counseling center 信息，怎么从 official source 核验？","expected_intent":"campus_resource_query","demo":true,"split":"heldout"}
+{"id":"heldout_progress_boundary_support","category":"intent_boundary","message":"先不用安慰我，请根据已有训练记录，对比最近三次主动发言完成度有没有变化。","expected_intent":"progress_review","demo":true,"split":"heldout"}
+{"id":"heldout_progress_no_keyword","category":"hard_positive","message":"前两周我只敢点头，这周已经主动问过两次问题。结合保存的数据看看变化主要发生在哪。","expected_intent":"progress_review","demo":true,"split":"heldout"}
+{"id":"heldout_progress_colloquial","category":"colloquial_noise","message":"翻下我前几次练的情况呗，看看最近到底有没进步，老卡哪儿","expected_intent":"progress_review","demo":true,"split":"heldout"}
+{"id":"heldout_progress_not_new_plan","category":"negated_specialized_action","message":"暂时不要制定新的阶梯，我只想复盘已经做完的几次练习和焦虑评分趋势。","expected_intent":"progress_review","demo":true,"split":"heldout"}
+{"id":"heldout_progress_goal_history","category":"workflow_request","message":"上个月设定的是每周主动和一位同学交流，请根据历史记录检查目标完成了几周。","expected_intent":"progress_review","demo":true,"split":"heldout"}
+{"id":"heldout_progress_multi_intent_primary","category":"multi_intent_primary","message":"下周计划之后再做；现在先总结过去七天哪些社交任务完成了、哪些反复跳过。","expected_intent":"progress_review","demo":true,"split":"heldout"}
+{"id":"heldout_progress_code_switch","category":"code_switching","message":"帮我 review 已保存的 practice history，比较这周 vs 上周的完成率和紧张分。","expected_intent":"progress_review","demo":true,"split":"heldout"}
+{"id":"heldout_calendar_boundary_exposure","category":"intent_boundary","message":"练习阶梯已经定好了，现在只需要预览一条下周二 19:30 做第一级任务的日历提醒。","expected_intent":"calendar_planning","demo":true,"split":"heldout"}
+{"id":"heldout_calendar_colloquial","category":"colloquial_noise","message":"把周四晚上八点那次开场白练习挪到九点，先给我瞅下改完啥样","expected_intent":"calendar_planning","demo":true,"split":"heldout"}
+{"id":"heldout_calendar_delete_reference","category":"hard_positive","message":"日历中标题为“午餐时主动搭话”的那项不要了，先预览取消操作。","expected_intent":"calendar_planning","demo":true,"split":"heldout"}
+{"id":"heldout_calendar_relative_time","category":"workflow_request","message":"拟一条后天下午三点开始、二十分钟的模拟答辩练习日程，确认前不要写入。","expected_intent":"calendar_planning","demo":true,"split":"heldout"}
+{"id":"heldout_calendar_recurring_end","category":"workflow_request","message":"创建一个每周三晚练习提问的日程草案，连续四周后结束。","expected_intent":"calendar_planning","demo":true,"split":"heldout"}
+{"id":"heldout_calendar_multi_intent_primary","category":"multi_intent_primary","message":"如何练我已经清楚了，主要请把每天午休后的五分钟问候练习做成待确认的日历安排。","expected_intent":"calendar_planning","demo":true,"split":"heldout"}
+{"id":"heldout_calendar_code_switch","category":"code_switching","message":"Please reschedule 日历里的 group chat practice from 6 pm to 7 pm，先 preview。","expected_intent":"calendar_planning","demo":true,"split":"heldout"}
+{"id":"heldout_support_boundary_worksheet","category":"intent_boundary","message":"我知道能做想法记录，但今晚不想填表，只想说说被同学忽略后那种难受。","expected_intent":"emotional_support","demo":true,"split":"heldout"}
+{"id":"heldout_support_boundary_roleplay","category":"negated_specialized_action","message":"不要模拟室友，也别让我练回复。我只是想聊聊为什么每次冲突后都会自责。","expected_intent":"emotional_support","demo":true,"split":"heldout"}
+{"id":"heldout_support_boundary_resource","category":"negated_specialized_action","message":"暂时不需要找校内部门，我想先理一理这周总觉得融不进小组的感受。","expected_intent":"emotional_support","demo":true,"split":"heldout"}
+{"id":"heldout_support_colloquial_typo","category":"colloquial_noise","message":"群里发话又没人理，有点绷不住了，就陪我聊会儿吧，不整训练","expected_intent":"emotional_support","demo":true,"split":"heldout"}
+{"id":"heldout_support_clear_guidance","category":"ordinary_support","message":"我总担心沉默会让别人尴尬，能给我一些低压力的理解和沟通建议吗？不用安排专项练习。","expected_intent":"emotional_support","demo":true,"split":"heldout"}
+{"id":"heldout_support_multi_topic_primary","category":"multi_intent_primary","message":"日历和练习都先放一边，我现在主要想谈谈面试结束后反复责怪自己的状态。","expected_intent":"emotional_support","demo":true,"split":"heldout"}
+{"id":"heldout_support_code_switch","category":"code_switching","message":"I just want to vent 一下今天社团里被冷落的感觉，no roleplay or worksheet。","expected_intent":"emotional_support","demo":true,"split":"heldout"}
+{"id":"heldout_clarify_pronoun","category":"missing_context","message":"能帮我把那个弄一下吗？","expected_intent":"clarification_needed","demo":true,"split":"heldout"}
+{"id":"heldout_clarify_short_noise","category":"colloquial_noise","message":"咋整啊","expected_intent":"clarification_needed","demo":true,"split":"heldout"}
+{"id":"heldout_clarify_action_without_scene","category":"missing_context","message":"我想试试，但不知道选哪个。","expected_intent":"clarification_needed","demo":true,"split":"heldout"}
+{"id":"heldout_clarify_multiple_options","category":"ambiguous_intent","message":"模拟、做表或者排个计划好像都行，你看着办。","expected_intent":"clarification_needed","demo":true,"split":"heldout"}
+{"id":"heldout_clarify_social_topic_no_request","category":"underspecified","message":"就是和同学有关的那件事。","expected_intent":"clarification_needed","demo":true,"split":"heldout"}
+{"id":"heldout_clarify_code_switch","category":"code_switching","message":"Can you help with this thing? 具体的我还没说。","expected_intent":"clarification_needed","demo":true,"split":"heldout"}
+{"id":"heldout_clarify_conflicting_negations","category":"ambiguous_intent","message":"我不想聊天、不想练对话，也先不做计划，但需要你帮忙。","expected_intent":"clarification_needed","demo":true,"split":"heldout"}
+{"id":"heldout_out_scope_translation","category":"product_boundary","message":"把这段英文论文摘要完整翻译成中文，并保留所有术语。","expected_intent":"out_of_scope","demo":true,"split":"heldout"}
+{"id":"heldout_out_scope_debugging_colloquial","category":"colloquial_noise","message":"这段 fastapi 为啥一直 500 啊，帮我瞅瞅代码","expected_intent":"out_of_scope","demo":true,"split":"heldout"}
+{"id":"heldout_out_scope_purchase","category":"product_boundary","message":"预算五千元，比较三款手机并按拍照能力推荐一款。","expected_intent":"out_of_scope","demo":true,"split":"heldout"}
+{"id":"heldout_out_scope_academic_writing","category":"product_boundary","message":"替我写一篇两千字的社会学课程论文，需要五条参考文献。","expected_intent":"out_of_scope","demo":true,"split":"heldout"}
+{"id":"heldout_out_scope_social_media_copy","category":"intent_boundary","message":"帮我为奶茶店新品写十条适合发社交平台的营销文案。","expected_intent":"out_of_scope","demo":true,"split":"heldout"}
+{"id":"heldout_out_scope_code_switch","category":"code_switching","message":"Please calculate 这笔房贷的月供和总利息，给出公式。","expected_intent":"out_of_scope","demo":true,"split":"heldout"}
+{"id":"heldout_out_scope_format_distraction","category":"presentation_distraction","message":"请用温柔、鼓励的语气列出 Linux 文件权限的常用命令。","expected_intent":"out_of_scope","demo":true,"split":"heldout"}
