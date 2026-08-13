@@ -32,6 +32,30 @@ class UnsafeSummaryLLM:
         )
 
 
+class JSONSummaryLLM:
+    """Return a safe compact payload and record JSON-mode selection."""
+
+    json_mode_enabled = True
+
+    def __init__(self) -> None:
+        self.json_calls = 0
+        self.text_calls = 0
+
+    async def generate_text(self, **kwargs: object) -> str:
+        del kwargs
+        self.text_calls += 1
+        raise AssertionError("JSON-capable compaction must not use plain text mode")
+
+    async def generate_json_text(self, **kwargs: object) -> str:
+        del kwargs
+        self.json_calls += 1
+        return (
+            '{"user_stated_goals":["练习在小组讨论中开口"],'
+            '"current_topics":["小组讨论"],"open_questions":[],'
+            '"module_outcomes":[]}'
+        )
+
+
 @pytest.fixture
 def repository(
     monkeypatch: pytest.MonkeyPatch,
@@ -240,6 +264,32 @@ async def test_compactor_excludes_crisis_injection_and_model_inference() -> None
     assert "危机用户原文" not in rendered
     assert "确诊" not in rendered
     assert summary.compacted_through_sequence == 4
+
+
+@pytest.mark.anyio
+async def test_compactor_uses_local_json_mode_when_available() -> None:
+    now = datetime.now(UTC)
+    client = JSONSummaryLLM()
+    compactor = ConversationCompactor(llm_client=client)  # type: ignore[arg-type]
+
+    summary = await compactor.compact(
+        conversation_id="conversation-json",
+        user_id="owner",
+        previous=None,
+        events=[
+            _event(
+                sequence=1,
+                content="我想练习在小组讨论里开口",
+                event_type=ConversationEventType.USER_MESSAGE,
+                role=ConversationEventRole.USER,
+                now=now,
+            )
+        ],
+    )
+
+    assert summary.user_stated_goals == ["练习在小组讨论中开口"]
+    assert client.json_calls == 1
+    assert client.text_calls == 0
 
 
 @pytest.mark.anyio

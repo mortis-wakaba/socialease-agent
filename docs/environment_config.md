@@ -180,6 +180,17 @@ Production auth 不允许这一内容保护降级。PostgreSQL repository adapte
 | `LLM_CIRCUIT_RECOVERY_SECONDS` | optional | Circuit breaker 进入 half-open 前的恢复秒数，默认 30 |
 | `LLM_MAX_CONCURRENCY` | pilot | 进程内全局 LLM 并发上限；`0` 表示禁用 |
 | `LLM_CONCURRENCY_WAIT_SECONDS` | pilot | 等待 LLM capacity 的时间，超时后 fallback |
+| `LOCAL_LLM_ENABLED` | local routing/summary | `true` 时由本地轻量模型执行意图路由和 Conversation Summary；关闭或调用失败时使用各自的确定性 fallback |
+| `LOCAL_LLM_PROVIDER` | optional | 当前值：`openai_compatible` |
+| `LOCAL_LLM_BASE_URL` | local routing/summary | 本地 OpenAI-compatible 地址，例如 Ollama 的 `http://127.0.0.1:11434/v1` |
+| `LOCAL_LLM_DOCKER_BASE_URL` | optional | Docker backend 访问宿主机模型服务的地址；默认 `http://host.docker.internal:11434/v1` |
+| `LOCAL_LLM_API_KEY` | local model enabled | 本地服务要求的占位或真实 API key |
+| `LOCAL_LLM_MODEL` | local model enabled | 本地模型名称，例如 `qwen3.5:4b` |
+| `LOCAL_LLM_TIMEOUT_SECONDS` | optional | 本地路由和摘要请求的超时，默认 10 秒 |
+| `LOCAL_LLM_JSON_MODE_ENABLED` | optional | 默认 `true`，为路由和摘要请求 JSON Object 输出 |
+| `LOCAL_LLM_REASONING_EFFORT` | optional | 默认 `none`，关闭轻量任务的思考输出 |
+| `LOCAL_LLM_RETRY_MAX_ATTEMPTS` | optional | 默认 1，避免本地服务故障放大请求延迟 |
+| `LOCAL_LLM_MAX_CONCURRENCY` | optional | 本地轻量模型的进程内并发上限，默认 2 |
 
 Provider 失败或关闭时，系统仍必须保持安全。
 

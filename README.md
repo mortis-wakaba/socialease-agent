@@ -130,6 +130,12 @@ docker compose down
 docker compose up -d postgres redis
 ```
 
+复制本地配置模板：
+
+```bash
+cp .env.example .env
+```
+
 后端：
 
 ```bash
@@ -138,7 +144,7 @@ pip install -r requirements.txt
 export SOCIALEASE_DATABASE_URL='postgresql+psycopg://socialease:socialease@localhost:5432/socialease'
 export SOCIALEASE_REDIS_URL='redis://localhost:6379/0'
 alembic upgrade head
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --env-file ../.env
 ```
 
 前端：
@@ -147,12 +153,6 @@ uvicorn app.main:app --reload
 cd frontend
 npm install
 npm run dev
-```
-
-复制本地配置模板：
-
-```bash
-cp .env.example .env
 ```
 
 `.env`、密钥、个人数据和面试准备材料不应提交到 Git。
@@ -183,9 +183,21 @@ LLM_BASE_URL=https://your-provider.example/v1
 LLM_API_KEY=replace-with-your-key
 LLM_MODEL=replace-with-model-name
 
+# 可选：用本地轻量模型执行意图路由与长会话摘要；失败时分别回退到
+# 规则路由和确定性摘要，不影响主模型生成。
+LOCAL_LLM_ENABLED=true
+LOCAL_LLM_PROVIDER=openai_compatible
+LOCAL_LLM_BASE_URL=http://127.0.0.1:11434/v1
+LOCAL_LLM_API_KEY=ollama
+LOCAL_LLM_MODEL=qwen3.5:4b
+
 # 可选：启用全局语义 Output Guardrail
 OUTPUT_GUARDRAIL_LLM_ENABLED=true
 ```
+
+上面的开发命令会读取仓库根目录的 `.env`；使用 Docker Compose 时，Compose
+也会读取它。若模型服务运行在宿主机，可另设
+`LOCAL_LLM_DOCKER_BASE_URL=http://host.docker.internal:11434/v1`。
 
 完整变量与生产建议见 [环境配置说明](docs/environment_config.md)。
 

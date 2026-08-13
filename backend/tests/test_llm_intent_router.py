@@ -27,6 +27,25 @@ class FakeLLMClient:
         return self.response
 
 
+class FakeJSONModeLLMClient(FakeLLMClient):
+    """Record that production routing prefers provider JSON mode."""
+
+    json_mode_enabled = True
+
+    def __init__(self, response: str) -> None:
+        super().__init__(response)
+        self.text_calls = 0
+        self.json_calls = 0
+
+    async def generate_text(self, **kwargs: object) -> str:
+        self.text_calls += 1
+        return await super().generate_text(**kwargs)  # type: ignore[arg-type]
+
+    async def generate_json_text(self, **kwargs: object) -> str:
+        self.json_calls += 1
+        return await super().generate_text(**kwargs)  # type: ignore[arg-type]
+
+
 @pytest.fixture
 def low_safety() -> SafetyResult:
     """Return a reusable low-risk safety fixture."""
@@ -46,6 +65,22 @@ async def test_llm_router_is_default_when_available(low_safety: SafetyResult) ->
     assert result.intent == Intent.EXPOSURE_PLANNING
     assert result.llm_usage.used is True
     assert result.llm_usage.fallback_used is False
+
+
+@pytest.mark.anyio
+async def test_llm_router_uses_json_mode_for_local_structured_output(
+    low_safety: SafetyResult,
+) -> None:
+    client = FakeJSONModeLLMClient(
+        '{"intent":"progress_review","confidence":0.9,"reason":"history request"}'
+    )
+    router = LlmIntentRouter(llm_client=client)
+
+    result = await router.route("帮我回顾最近的练习", low_safety)
+
+    assert result.intent == Intent.PROGRESS_REVIEW
+    assert client.json_calls == 1
+    assert client.text_calls == 0
 
 
 @pytest.mark.anyio

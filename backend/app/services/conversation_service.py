@@ -27,7 +27,8 @@ from app.conversation.module_coordinator import ModuleCoordinator
 from app.conversation.module_policy import ConversationStateError, ModuleStackPolicy
 from app.conversation.repository import ConversationRepository, ModuleStartJob
 from app.db.factory import repository_factory
-from app.llm.factory import create_llm_client
+from app.llm.base import BaseLLMClient
+from app.llm.factory import create_local_llm_client
 from app.memory.token_estimator import ConservativeTokenEstimator
 from app.memory.active_memory_assembler import ActiveMemoryAssembler
 from app.memory.completed_event_writer import CompletedPracticeMemoryWriter
@@ -92,6 +93,7 @@ class ConversationService:
         context_manager: ConversationContextManager | None = None,
         module_coordinator: ModuleCoordinator | None = None,
         memory_context_orchestrator: MemoryContextOrchestrator | None = None,
+        lightweight_llm_client: BaseLLMClient | None = None,
         proposal_ttl: timedelta = timedelta(minutes=15),
     ) -> None:
         self._harness = harness
@@ -100,11 +102,11 @@ class ConversationService:
         self._safety_classifier = (
             safety_classifier or create_safety_classifier()
         )
+        local_llm_client = lightweight_llm_client or create_local_llm_client()
         if intent_router is None:
-            llm_client = create_llm_client()
             intent_router = (
-                LlmIntentRouter(llm_client=llm_client)
-                if llm_client is not None
+                LlmIntentRouter(llm_client=local_llm_client)
+                if local_llm_client is not None
                 else RuleBasedIntentRouter()
             )
         self._intent_router = intent_router
@@ -121,7 +123,7 @@ class ConversationService:
         self._context_manager = context_manager or ConversationContextManager(
             repository=self._repository,
             compactor=ConversationCompactor(
-                llm_client=create_llm_client(),
+                llm_client=local_llm_client,
                 token_estimator=estimator,
             ),
             token_estimator=estimator,

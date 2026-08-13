@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from app.llm.factory import LLMConfig, create_llm_client
+from app.llm.factory import LLMConfig, create_llm_client, create_local_llm_client
 from app.llm.openai_compatible import OpenAICompatibleLLMClient
 from app.llm.retry import (
     CircuitBreaker,
@@ -98,6 +98,37 @@ def test_llm_config_enables_json_mode_explicitly(
     assert config.json_mode_enabled is True
 
 
+def test_local_llm_config_is_independent_from_hosted_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_ENABLED", "true")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-chat")
+    monkeypatch.setenv("LOCAL_LLM_ENABLED", "true")
+    monkeypatch.setenv("LOCAL_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    monkeypatch.setenv("LOCAL_LLM_API_KEY", "local")
+    monkeypatch.setenv("LOCAL_LLM_MODEL", "qwen3.5:4b")
+
+    config = LLMConfig.local_from_env()
+    client = create_local_llm_client(config)
+
+    assert config.enabled is True
+    assert config.model == "qwen3.5:4b"
+    assert config.json_mode_enabled is True
+    assert config.reasoning_effort == "none"
+    assert config.retry_max_attempts == 1
+    assert isinstance(client, OpenAICompatibleLLMClient)
+    assert client.model == "qwen3.5:4b"
+    assert client.base_url == "http://127.0.0.1:8080/v1"
+
+
+def test_local_llm_factory_stays_disabled_without_explicit_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LOCAL_LLM_ENABLED", raising=False)
+
+    assert create_local_llm_client() is None
+
+
 def test_factory_rejects_incomplete_enabled_config() -> None:
     config = LLMConfig(
         enabled=True,
@@ -183,6 +214,7 @@ async def test_openai_compatible_client_generates_json_mode_text() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.read())
         assert payload["response_format"] == {"type": "json_object"}
+        assert payload["reasoning_effort"] == "none"
         return httpx.Response(
             200,
             json={"choices": [{"message": {"content": '{"ok":true}'}}]},
@@ -196,6 +228,7 @@ async def test_openai_compatible_client_generates_json_mode_text() -> None:
             api_key="demo-key",
             model="deepseek-chat",
             json_mode_enabled=True,
+            reasoning_effort="none",
             http_client=http_client,
         )
         result = await client.generate_json_text(
@@ -204,6 +237,16 @@ async def test_openai_compatible_client_generates_json_mode_text() -> None:
         )
 
     assert result == '{"ok":true}'
+
+
+def test_openai_compatible_client_rejects_unknown_reasoning_effort() -> None:
+    with pytest.raises(ValueError, match="unsupported reasoning_effort"):
+        OpenAICompatibleLLMClient(
+            base_url="https://api.example.com",
+            api_key="demo-key",
+            model="demo-model",
+            reasoning_effort="extreme",
+        )
 
 
 @pytest.mark.anyio

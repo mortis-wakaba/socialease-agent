@@ -5,7 +5,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from app.llm.base import BaseLLMClient
+from app.llm.base import BaseLLMClient, JSONModeLLMClient
 from app.llm.retry import ProviderError
 from app.llm.prompts import (
     build_intent_router_system_prompt,
@@ -40,30 +40,30 @@ class LlmIntentRouter:
         if safety_result.risk_level == RiskLevel.CRISIS:
             return await self.fallback_router.route(message, safety_result)
         try:
-            response = await self.llm_client.generate_text(
-                system_prompt=build_intent_router_system_prompt(),
-                user_prompt=build_intent_router_user_prompt(message),
-                temperature=0.0,
-            )
+            system_prompt = build_intent_router_system_prompt()
+            user_prompt = build_intent_router_user_prompt(message)
+            if (
+                isinstance(self.llm_client, JSONModeLLMClient)
+                and self.llm_client.json_mode_enabled
+            ):
+                response = await self.llm_client.generate_json_text(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.0,
+                )
+            else:
+                response = await self.llm_client.generate_text(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.0,
+                )
             payload = json.loads(response)
             if not isinstance(payload, dict):
                 raise ValueError("Intent router response must be an object.")
             result = IntentResult.model_validate(payload)
             if result.intent == Intent.CRISIS:
                 raise ValueError("LLM router cannot emit crisis outside safety routing.")
-            if (
-                result.confidence < 0.6
-                and result.intent
-                not in {Intent.EMOTIONAL_SUPPORT, Intent.OUT_OF_SCOPE}
-            ):
-                result = IntentResult(
-                    intent=Intent.CLARIFICATION_NEEDED,
-                    confidence=max(0.6, result.confidence),
-                    reason=(
-                        "The semantic router was not confident enough to start a "
-                        "specialized action; clarification is required."
-                    ),
-                )
+            result = apply_llm_intent_policy(result)
             return result.model_copy(update={"llm_usage": LLMUsage(used=True)})
         except (ValueError, json.JSONDecodeError, ValidationError):
             fallback = await self.fallback_router.route(message, safety_result)
@@ -90,6 +90,23 @@ class LlmIntentRouter:
                     )
                 }
             )
+
+
+def apply_llm_intent_policy(result: IntentResult) -> IntentResult:
+    """Apply the production confidence floor to a validated LLM prediction."""
+    if (
+        result.confidence < 0.6
+        and result.intent not in {Intent.EMOTIONAL_SUPPORT, Intent.OUT_OF_SCOPE}
+    ):
+        return IntentResult(
+            intent=Intent.CLARIFICATION_NEEDED,
+            confidence=max(0.6, result.confidence),
+            reason=(
+                "The semantic router was not confident enough to start a "
+                "specialized action; clarification is required."
+            ),
+        )
+    return result
 
 
 class RuleBasedIntentRouter:

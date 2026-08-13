@@ -31,6 +31,7 @@ class OpenAICompatibleLLMClient:
         model: str,
         timeout_seconds: float = 30.0,
         json_mode_enabled: bool = False,
+        reasoning_effort: str | None = None,
         http_client: httpx.AsyncClient | None = None,
         retry_policy: RetryPolicy | None = None,
         circuit_breaker: CircuitBreaker | None = None,
@@ -41,6 +42,9 @@ class OpenAICompatibleLLMClient:
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.json_mode_enabled = json_mode_enabled
+        if reasoning_effort not in {None, "none", "low", "medium", "high", "max"}:
+            raise ValueError("unsupported reasoning_effort")
+        self.reasoning_effort = reasoning_effort
         self.http_client = http_client
         self.retry_policy = retry_policy or RetryPolicy()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
@@ -143,6 +147,8 @@ class OpenAICompatibleLLMClient:
         }
         if response_format is not None:
             payload["response_format"] = response_format
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",

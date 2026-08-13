@@ -8,7 +8,7 @@ import re
 
 from pydantic import ValidationError
 
-from app.llm.base import BaseLLMClient
+from app.llm.base import BaseLLMClient, JSONModeLLMClient
 from app.memory.token_estimator import ConservativeTokenEstimator, TokenEstimator
 from app.models_conversation import (
     ConversationEvent,
@@ -89,11 +89,23 @@ class ConversationCompactor:
     ) -> ConversationCompactPayload:
         if self._llm_client is not None and events:
             try:
-                raw = await self._llm_client.generate_text(
-                    system_prompt=_compact_system_prompt(),
-                    user_prompt=_compact_user_prompt(previous, events),
-                    temperature=0.0,
-                )
+                system_prompt = _compact_system_prompt()
+                user_prompt = _compact_user_prompt(previous, events)
+                if (
+                    isinstance(self._llm_client, JSONModeLLMClient)
+                    and self._llm_client.json_mode_enabled
+                ):
+                    raw = await self._llm_client.generate_json_text(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=0.0,
+                    )
+                else:
+                    raw = await self._llm_client.generate_text(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=0.0,
+                    )
                 payload = ConversationCompactPayload.model_validate(
                     json.loads(_strip_json_fence(raw))
                 )

@@ -9,7 +9,7 @@ import logging
 from time import perf_counter
 from uuid import uuid4
 
-from app.llm.factory import create_llm_client
+from app.llm.factory import create_llm_client, create_local_llm_client
 from app.guardrails.output import (
     GroundingMetadata,
     OutputGuardrail,
@@ -782,7 +782,7 @@ class AgentHarness:
 
     @staticmethod
     def _default_intent_router() -> BaseIntentRouter:
-        llm_client = create_llm_client()
+        llm_client = create_local_llm_client()
         if llm_client is not None:
             return LlmIntentRouter(llm_client=llm_client)
         return IntentRouter()
