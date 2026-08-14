@@ -1,0 +1,175 @@
+backend/app/models_intent_effect.py
+  s_93639ebe3ee2f7::t_0e9c40879c870a 1-37
+backend/tests/test_intent_queue.py
+  s_93639ebe3ee2f7::t_9078b293c650e5 105-124
+  s_93639ebe3ee2f7::t_8681630320ccce 7,191-206
+  s_93639ebe3ee2f7::t_65c42be95c3cbe 8,10,150-190
+  s_93639ebe3ee2f7::t_41cddd31701159 1-6,9,11,14-17,19-22,24-81,83-104,125-149
+  s_93639ebe3ee2f7::t_04e0f1a219994a 12-13,18,23,207-235
+  s_93639ebe3ee2f7::t_28bf7af2e6e762 82
+backend/app/conversation/reversible_actions.py
+  s_93639ebe3ee2f7::t_5764e7117b2047 1-2,5-6,11-19,36-53,55-74,84-90,92-110
+  s_93639ebe3ee2f7::t_e0da73ef90db8d 7-10,20-25,34-35,75,77-82,111,113-119
+  s_93639ebe3ee2f7::t_a7ea2dfd69c2df 3-4,26-33,54,76,83,91,112,120
+backend/app/conversation/intent_queue.py
+  s_93639ebe3ee2f7::t_2c2d1c14fad576 235-237
+  s_93639ebe3ee2f7::t_9078b293c650e5 104-113
+  s_93639ebe3ee2f7::t_23a8131dc50914 12
+  s_93639ebe3ee2f7::t_69881ea972523b 125-133,135-141,146-148,174,191-213,238-261,264-265,267,271-272,275,277,279
+  s_93639ebe3ee2f7::t_d44205ff73d1c1 8-11,13-15,134,142-145,149-173,175-190
+  s_93639ebe3ee2f7::t_7f01e3db5d3054 1-7,16-53,64,67-103,114-124,262-263,266,268-270,273-274,276,278,280-289
+  s_93639ebe3ee2f7::t_677d04226c91ff 214-234
+  s_93639ebe3ee2f7::t_698b96148eddfa 54-63
+  s_93639ebe3ee2f7::t_28bf7af2e6e762 65-66
+backend/app/models.py
+  s_93639ebe3ee2f7::t_6c67bd54c8b3f6 7,99-106,108,119-125
+  s_93639ebe3ee2f7::t_885632e0d96dbb 82-98,107,118
+  s_93639ebe3ee2f7::t_03dba119bbdb40 5,46-63,128-133,135-136,143-144
+  s_93639ebe3ee2f7::t_f8b9aa2c5058a9 64-81,109-117,126-127,134
+backend/app/llm/prompt_versions.json
+  s_93639ebe3ee2f7::t_16ee772cc6ea4e 8-9
+backend/migrations/versions/0022_conversation_intent_plans.py
+  s_93639ebe3ee2f7::t_7f01e3db5d3054 1-56
+backend/app/workflow/router.py
+  s_93639ebe3ee2f7::t_753916d4c64413 185-186
+  s_93639ebe3ee2f7::t_03dba119bbdb40 7,15-17,20-21,23-26,38-46,49-58,63-73,159-164,175-184,187-188,199-207,209,250-266,277-280,294-295
+  s_93639ebe3ee2f7::t_f8b9aa2c5058a9 4,18-19,22,47-48,59-60,111-114,134,136,154-158,165-174,189-198,208,210-249,267-276,296-305
+  s_93639ebe3ee2f7::t_af0fe15906055b 61
+  s_93639ebe3ee2f7::t_be039aa087930a 117,127-133
+  s_93639ebe3ee2f7::t_bcc68b4bb1de13 62
+  s_93639ebe3ee2f7::t_5974ef6002bf52 135
+  s_93639ebe3ee2f7::t_8fccc7774f81f3 306
+backend/app/workflow/engine.py
+  s_93639ebe3ee2f7::t_03dba119bbdb40 324-328
+backend/app/jobs/module_reconciliation_worker.py
+  s_93639ebe3ee2f7::t_45179956186e6a 16,47,49,52-55,86-89
+backend/tests/test_reversible_actions.py
+  s_93639ebe3ee2f7::t_babf3fd33ed7e3 8-12,79-86,120-143
+  s_93639ebe3ee2f7::t_7a579fad005aa7 110,119
+  s_93639ebe3ee2f7::t_2a111f01571fc8 1-7,13-78,87-109,111-118
+backend/app/models_intent_plan.py
+  s_93639ebe3ee2f7::t_7f01e3db5d3054 1-32
+backend/app/models_conversation_api.py
+  s_93639ebe3ee2f7::t_71aafc3479a9a2 112
+  s_93639ebe3ee2f7::t_cebfb325b4d9cc 19,59,102,138
+backend/app/skills/calendar.py
+  s_93639ebe3ee2f7::t_98a8d568429e30 35-38,71,74,76-77
+docs/agent_harness_design.md
+  s_93639ebe3ee2f7::t_16878f074c8250 32-38,90-92,96-97
+  s_93639ebe3ee2f7::t_0bf9617840c84c 39-40,93
+  s_93639ebe3ee2f7::t_aa5532115666fa 41-44,94
+  s_93639ebe3ee2f7::t_28f711ba77b424 45-47
+  s_93639ebe3ee2f7::t_1fc5aab27727ac 31,89
+backend/tests/test_llm_intent_router.py
+  s_93639ebe3ee2f7::t_be039aa087930a 121,362
+  s_93639ebe3ee2f7::t_d1c56a5f08b9c7 108,168-179,182-186,190-208,252-263,266-270,274-300,303-307,311-315,319-342,345-349,353-361
+  s_93639ebe3ee2f7::t_fc6df00f0fb031 209-251
+  s_93639ebe3ee2f7::t_af0fe15906055b 65,83,138,158
+  s_93639ebe3ee2f7::t_0e0d73823c7ac9 5-11
+  s_93639ebe3ee2f7::t_a0cf616cb52177 66-67,84-85,139-140,159-160,180-181,187-189,264-265,271-273,301-302,308-310,316-318,343-344,350-352
+  s_93639ebe3ee2f7::t_29ebe88cce587b 109-120,122-123
+backend/app/tracing/versions.py
+  s_93639ebe3ee2f7::t_f8b9aa2c5058a9 20
+backend/tests/test_harness_architecture.py
+  s_93639ebe3ee2f7::t_46c15eb78cd759 9-19,259-300,302-303
+  s_93639ebe3ee2f7::t_698b96148eddfa 301
+  s_93639ebe3ee2f7::t_70f9ad24dee277 304-305
+backend/tests/test_llm_intent_eval.py
+  s_93639ebe3ee2f7::t_a0cf616cb52177 66-67,74-75
+  s_93639ebe3ee2f7::t_af0fe15906055b 68,76
+backend/app/services/conversation_service.py
+  s_93639ebe3ee2f7::t_6a2a76f5610485 913,915-920,933-959,961-970
+  s_93639ebe3ee2f7::t_94bb28b6445355 577-580,592-594,598-603,635-638,771-818,845-858,860-861,865,912,921-932,960,1051,1124,1197
+  s_93639ebe3ee2f7::t_3e855fd4911a82 840,842,862
+  s_93639ebe3ee2f7::t_8afc38994621a1 914
+  s_93639ebe3ee2f7::t_4939fcb411bc6e 863,1170-1188,1192-1193
+  s_93639ebe3ee2f7::t_cdf5e720e5ba8d 1402,1406-1422
+  s_93639ebe3ee2f7::t_20e1e5ff1b2517 1393,1456-1497,1620-1704
+  s_93639ebe3ee2f7::t_cebfb325b4d9cc 29,31,34,36,38,61,280-291,367,370,1777,1793-1800
+  s_93639ebe3ee2f7::t_b028b2ae35e3f4 1498-1508,1511-1514,1583-1619
+  s_93639ebe3ee2f7::t_d1e38e850f76d9 81,1074-1116,1120-1121
+  s_93639ebe3ee2f7::t_ef34d09ad077d1 37,640,642-651,658,734,739,745-770
+  s_93639ebe3ee2f7::t_730a630746613d 62-65,1510,1515-1531,1550-1551,1553-1569
+  s_93639ebe3ee2f7::t_52817c4fbee152 1253-1268,1272-1284
+  s_93639ebe3ee2f7::t_91dfebfed8328d 368-369,1325-1331,1337,1343-1392
+  s_93639ebe3ee2f7::t_ea2be031a3790a 54,96,128,145-147
+  s_93639ebe3ee2f7::t_96a04cfb16fe93 1509,1532-1549
+  s_93639ebe3ee2f7::t_a3ff3f7b6e00ea 1552,1570-1582
+  s_93639ebe3ee2f7::t_06ea176cd0ec10 868-910
+  s_93639ebe3ee2f7::t_643f8c66fd9600 819-839,841,843-844,859
+  s_93639ebe3ee2f7::t_677d04226c91ff 32
+  s_93639ebe3ee2f7::t_7c286ac2518c66 53,1832-1849
+  s_93639ebe3ee2f7::t_e0da73ef90db8d 40-43
+  s_93639ebe3ee2f7::t_caf56fbb52ea73 30,595-597
+  s_93639ebe3ee2f7::t_9247bf0b69b23e 639,641,652-657,659-667,669,671-683,685,723-733,735-738,740-744
+  s_93639ebe3ee2f7::t_e1703504d73deb 668,670,684,686-722
+  s_93639ebe3ee2f7::t_3c811d38a5269c 19,33,35,55
+  s_93639ebe3ee2f7::t_9f46f7c5baf29c 51-52,56-60,990-1016
+  s_93639ebe3ee2f7::t_690f4648f4d6fc 864
+  s_93639ebe3ee2f7::t_91c6af6c96c1a4 1850-1851
+backend/app/db/postgres/conversation_repository.py
+  s_93639ebe3ee2f7::t_0c0a9260bb9206 1975-1992
+  s_93639ebe3ee2f7::t_81c88a7ee7f38f 445,451-452
+  s_93639ebe3ee2f7::t_bad229dc523110 55-57,378-444,446-450,453-477
+  s_93639ebe3ee2f7::t_097d45a2e39b5a 1961-1974
+  s_93639ebe3ee2f7::t_87793ff6b6dada 54,267-377
+  s_93639ebe3ee2f7::t_63c4aa0f8e071a 801-829
+  s_93639ebe3ee2f7::t_5572b8f4fd4544 478
+backend/migrations/versions/0023_intent_effect_ledger.py
+  s_93639ebe3ee2f7::t_0e9c40879c870a 1-56
+backend/app/api/conversations.py
+  s_93639ebe3ee2f7::t_cebfb325b4d9cc 126-129
+backend/app/evals/llm_intent.py
+  s_93639ebe3ee2f7::t_03dba119bbdb40 25-28,230
+backend/tests/test_conversation_service.py
+  s_93639ebe3ee2f7::t_7a579fad005aa7 47,279-285,297-303
+  s_93639ebe3ee2f7::t_0bc4d89d5a2a2a 276,294
+  s_93639ebe3ee2f7::t_fc2ab430d52e3b 33,35-39,227-256,258-267,269,277-278,286-287,295-296,304-305,313-332,681-728
+  s_93639ebe3ee2f7::t_a7dbb9120ea863 34,268,270-275,288-293,306-312
+  s_93639ebe3ee2f7::t_505d8eee58a25e 15-18,20,85-153,529-598
+  s_93639ebe3ee2f7::t_0cec763fda70de 154-192,599-635
+  s_93639ebe3ee2f7::t_4bebdfaeb66748 1
+  s_93639ebe3ee2f7::t_5863c55cdfd663 193-226,257,333-336,636-680
+  s_93639ebe3ee2f7::t_6cbc3b40095498 729-730
+backend/app/conversation/repository.py
+  s_93639ebe3ee2f7::t_bad229dc523110 29,180-204
+  s_93639ebe3ee2f7::t_63c4aa0f8e071a 136-143
+  s_93639ebe3ee2f7::t_7f0dec9f907521 28,162-179
+  s_93639ebe3ee2f7::t_687eb57904a0ac 205
+backend/app/conversation/module_catalog.py
+  s_93639ebe3ee2f7::t_71aafc3479a9a2 66-70
+backend/tests/test_trace_versions.py
+  s_93639ebe3ee2f7::t_41cddd31701159 41
+backend/app/llm/prompts.py
+  s_93639ebe3ee2f7::t_03dba119bbdb40 359-360,371-377,390
+  s_93639ebe3ee2f7::t_f8b9aa2c5058a9 364-370,388-389,391-392
+backend/app/conversation/effect_reconciler.py
+  s_93639ebe3ee2f7::t_45179956186e6a 1-15,20-83,92-113,120-135
+  s_93639ebe3ee2f7::t_cc4a6e418110ff 16-19,84-91,114-119
+backend/tests/test_calendar_outbox.py
+  s_93639ebe3ee2f7::t_070fc3ef0cf3cb 102-127
+  s_93639ebe3ee2f7::t_ab22f0b4d9c26f 101
+backend/tests/test_intent_effect_reconciler.py
+  s_93639ebe3ee2f7::t_041300d12e5ec0 1-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "cde8d316840ba59d75dd1d5f096be771d24b406e",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_93639ebe3ee2f7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff9d0-e9fb-73b0-8f7f-9f9d6112f389",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
