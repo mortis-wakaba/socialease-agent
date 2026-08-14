@@ -22,7 +22,10 @@ from app.llm.prompts import (
 )
 from app.llm.retry import RetryPolicy
 from app.models import Intent, IntentResult
-from app.workflow.router import apply_llm_intent_policy
+from app.workflow.router import (
+    apply_llm_intent_policy,
+    compile_llm_intent_prediction,
+)
 
 
 SPECIALIZED_INTENTS = {
@@ -224,10 +227,7 @@ async def _evaluate_case(
     validated: IntentResult | None = None
     if json_valid:
         try:
-            validated = IntentResult.model_validate(payload)
-            if validated.intent == Intent.CRISIS:
-                validated = None
-                error_category = "UNSAFE_CRISIS_INTENT"
+            validated = compile_llm_intent_prediction(payload)
         except ValueError:
             error_category = "INVALID_SCHEMA"
 

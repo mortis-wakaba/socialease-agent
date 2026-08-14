@@ -13,6 +13,7 @@ from uuid import uuid4
 from app.calendar.outbox import CalendarActionOutbox
 from app.calendar.outbox_processor import CalendarOutboxProcessor
 from app.conversation.repository import ConversationRepository
+from app.conversation.effect_reconciler import IntentEffectReconciler
 from app.db.factory import repository_factory
 from app.observability.runtime_events import record_runtime_event
 from app.services.conversation_runtime import conversation_service
@@ -43,9 +44,14 @@ class ModuleReconciliationWorker:
         self.repository = repository
         self.config = config
         self.worker_id = worker_id or f"module-worker:{uuid4().hex}"
+        self.calendar_outbox = CalendarActionOutbox()
         self.calendar_processor = CalendarOutboxProcessor(
-            outbox=CalendarActionOutbox(),
+            outbox=self.calendar_outbox,
             worker_id=f"{self.worker_id}:calendar",
+        )
+        self.effect_reconciler = IntentEffectReconciler(
+            repository=repository,
+            outbox=self.calendar_outbox,
         )
         self._stop_requested = False
 
@@ -77,7 +83,10 @@ class ModuleReconciliationWorker:
         calendar_count = await self.calendar_processor.process_due(
             limit=self.config.batch_size
         )
-        return len(jobs) + calendar_count
+        effect_count = await self.effect_reconciler.run_once(
+            limit=self.config.batch_size
+        )
+        return len(jobs) + calendar_count + effect_count
 
     async def run_forever(self, *, max_runs: int | None = None) -> None:
         """Poll until stopped, preserving leases when a process terminates."""

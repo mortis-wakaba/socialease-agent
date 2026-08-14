@@ -5,8 +5,8 @@
       "version": "conversation-compaction-v1"
     },
     "intent_router": {
-      "fingerprint": "sha256:1c11610e09b4c3cc",
-      "version": "intent-v3"
+      "fingerprint": "sha256:dd720cbdf4c8af57",
+      "version": "intent-v5"
     },
     "memory_correction_resolution": {
       "fingerprint": "sha256:8a886ce29116ee48",

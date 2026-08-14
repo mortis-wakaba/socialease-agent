@@ -123,6 +123,10 @@ async def get_conversation(
                 conversation_id=conversation_id,
                 user_id=effective_user_id,
             ),
+            intent_plan=await service.get_intent_plan(
+                conversation_id=conversation_id,
+                user_id=effective_user_id,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

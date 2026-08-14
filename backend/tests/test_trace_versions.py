@@ -38,7 +38,7 @@ def test_execution_version_records_component_ids_without_secrets() -> None:
     assert version.model_config_version.startswith("sha256:")
     assert version.prompt_versions == {
         "safety_classifier": "safety-v1",
-        "intent_router": "intent-v3",
+        "intent_router": "intent-v5",
         "memory_tool_decision": "memory-tool-v5",
         "memory_evidence_selector": "memory-evidence-selector-v2",
             "memory_grounding_generation": "memory-grounding-v1",

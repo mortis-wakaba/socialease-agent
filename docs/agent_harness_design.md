@@ -28,8 +28,23 @@ Harness = Skills + Knowledge + Observation + Action Interfaces + Permissions
 - Conversation Service 在 Harness 之外负责 owner scope、事件顺序、幂等键、有界上下文、
   模块 Proposal 和模块栈生命周期；
 - Safety classification 在 routing 和 skill execution 前执行；
-- Intent routing 可继续普通 support，也可生成 role-play、worksheet、exposure 或
-  resource 的严格校验 Proposal；模型不能接受 Proposal 或启动、结束模块；
+- Intent routing 返回当前轮唯一主意图，并可记录最多两个带关系和置信度的次意图；
+  服务端只编译顺序计划，冲突请求转澄清，不并行执行多个 Skill；计划按 conversation
+  持久化并使用乐观版本控制；
+- 服务端依据“是否由当前消息明确请求、参数是否完整、风险等级、操作是否可撤销”把步骤编译为
+  `ready`、`ready_with_undo` 或 `awaiting_consent`。明确、完整、低风险的内部练习可直接启动，
+  推断或风险受限步骤仍生成严格校验 Proposal；模型不能自行提升授权状态；
+- “取消当前/后续/全部/指定任务”由确定性队列控制器在普通 IntentRouter 前处理；crisis 会取消
+  所有未完成队列步骤并继续执行既有危机升级；
+- 一次性 Skill 返回、用户显式结束模块或 Worksheet 给出结构化完成信号后，服务端将当前步骤
+  标为 `completed`，并连续消费后续 `ready` 步骤；启动状态型模块后停在 `active`，遇到
+  `awaiting_consent` 时停止自动推进；
+- 明确、完整、低风险的 Calendar 步骤可以作为 `ready_with_undo` 通过既有事务 outbox 执行；
+  写入经读后校验后只持久化最小补偿凭据，用户说“取消提醒”时通过 owner-scoped delete
+  outbox 撤销，并把 effect 标为 `undone`。直接 Calendar API 的 consent 边界保持不变；
+- reversible effect 另存于 owner-scoped ledger，不随 current plan 替换而丢失；后台 reconciliation
+  worker 在 Calendar outbox 完成后把 `apply_pending/undo_pending` 主动推进到 `applied/undone`，
+  原 plan 仍存在时同时同步其步骤投影；
 - 用户确认后，模块通过独立 Adapter 复用领域 Service；允许的父子组合可以嵌套，
   最大深度三层，当前顶层模块接收下一条消息；
 - 主动练习通过 `SafetyPermissionGate` 和 consent protocol；
@@ -71,10 +86,15 @@ User Input
   -> ordinary conversation: AgentHarness
   -> before_safety hooks
   -> load RunContext: auth, profile, memory context, request context
-  -> IntentRouter, unless crisis requires escalation
+  -> IntentRouter: primary intent + bounded secondary intents
+  -> persistent application-owned sequential intent plan
+  -> deterministic cancellation preemption
+  -> authorization policy: ready | ready_with_undo | awaiting_consent
+  -> completion signal -> advance sequential queue until the next gate or active module
+  -> ready_with_undo -> verified outbox effect -> durable receipt -> optional compensation
   -> optional native Memory Tool: search episodic evidence or conservatively correct one memory
-  -> ordinary support response OR validated ModuleProposal
-  -> user accepts/rejects proposal
+  -> ordinary support response OR direct low-risk internal module start OR validated ModuleProposal
+  -> user accepts/rejects only steps that still require consent
   -> on accept: policy check + push ModuleRun
   -> ModuleAdapter executes domain service
   -> Global Output Guardrail: allow | one-shot repair | replace

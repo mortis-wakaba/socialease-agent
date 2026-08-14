@@ -2,9 +2,9 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models_llm import LLMUsage
 from app.models_memory_tool import MemoryToolTraceMetadata
@@ -43,12 +43,105 @@ class SafetyResult(BaseModel):
     llm_usage: LLMUsage = LLMUsage()
 
 
+class IntentRelation(str, Enum):
+    """Semantic relationship between a secondary and the primary intent."""
+
+    AFTER_PRIMARY = "after_primary"
+    DEPENDS_ON_PRIMARY = "depends_on_primary"
+    INDEPENDENT = "independent"
+    CONFLICTING = "conflicting"
+
+
+class SecondaryIntent(BaseModel):
+    """One bounded secondary action proposed by the semantic router."""
+
+    intent: Intent
+    confidence: float = Field(ge=0.0, le=1.0)
+    relation: IntentRelation
+    reason: str
+
+
+class IntentAuthorizationBasis(str, Enum):
+    """Bounded evidence used by application policy to authorize one step."""
+
+    EXPLICIT_CURRENT_REQUEST = "explicit_current_request"
+    INFERRED = "inferred"
+
+
+class IntentStepStatus(str, Enum):
+    """Lifecycle state for one sequential intent-plan step."""
+
+    READY = "ready"
+    READY_WITH_UNDO = "ready_with_undo"
+    AWAITING_CONSENT = "awaiting_consent"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class IntentEffectStatus(str, Enum):
+    """Lifecycle for a reversible external effect owned by one plan step."""
+
+    APPLIED = "applied"
+    UNDONE = "undone"
+
+
+class IntentStepEffect(BaseModel):
+    """Minimal durable receipt required to compensate an external action."""
+
+    kind: Literal["calendar_event"] = "calendar_event"
+    external_action_id: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    status: IntentEffectStatus = IntentEffectStatus.APPLIED
+    applied_at: datetime
+    undone_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_compensation_timestamp(self) -> "IntentStepEffect":
+        """Require an undo timestamp exactly after compensation succeeds."""
+        if (self.status == IntentEffectStatus.UNDONE) != (
+            self.undone_at is not None
+        ):
+            raise ValueError("undone_at must match the effect status")
+        return self
+
+
+class IntentExecutionStep(BaseModel):
+    """Application-authorized, content-free step in a sequential intent plan."""
+
+    step_id: str = Field(min_length=1, max_length=64)
+    intent: Intent
+    relation: IntentRelation | None = None
+    authorization_basis: IntentAuthorizationBasis
+    status: IntentStepStatus
+    undo_supported: bool = False
+    effect: IntentStepEffect | None = None
+
+    @model_validator(mode="after")
+    def validate_reversible_effect(self) -> "IntentExecutionStep":
+        """Reject compensation receipts on non-reversible steps."""
+        if self.effect is not None and not self.undo_supported:
+            raise ValueError("step effect requires undo support")
+        return self
+
+
+class IntentExecutionPlan(BaseModel):
+    """Application-owned first-version plan that never executes in parallel."""
+
+    mode: Literal["sequential"] = "sequential"
+    current_intent: Intent
+    pending_intents: list[Intent] = Field(default_factory=list, max_length=2)
+    steps: list[IntentExecutionStep] = Field(default_factory=list, max_length=3)
+
+
 class IntentResult(BaseModel):
     """Output from the intent router."""
 
     intent: Intent
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str
+    secondary_intents: list[SecondaryIntent] = Field(default_factory=list, max_length=2)
+    execution_plan: IntentExecutionPlan | None = None
     llm_usage: LLMUsage = LLMUsage()
 
 

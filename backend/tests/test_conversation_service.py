@@ -1,4 +1,4 @@
-"""Tests for consent-gated module proposals in unified conversations."""
+"""Tests for authorization-aware modules and sequential conversation plans."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -12,7 +12,12 @@ from app.conversation.repository import ConversationIdempotencyError
 from app.models import (
     ChatResponse,
     Intent,
+    IntentAuthorizationBasis,
+    IntentExecutionPlan,
+    IntentExecutionStep,
+    IntentRelation,
     IntentResult,
+    IntentStepStatus,
     RiskLevel,
     SafetyResult,
     TraceRecord,
@@ -25,6 +30,13 @@ from app.models_conversation import (
     ModuleType,
     RoleplayParameters,
 )
+from app.models_calendar import (
+    CalendarEventProposal,
+    CalendarEventRecord,
+    CalendarEventResponse,
+    CalendarEventStatus,
+    CalendarToolTrace,
+)
 from app.conversation.module_catalog import module_memory_request_context
 from app.services.conversation_service import (
     ConversationCommandInProgressError,
@@ -32,6 +44,7 @@ from app.services.conversation_service import (
     ConversationProposalError,
     ConversationService,
 )
+from app.conversation.reversible_actions import ReversibleActionExecution
 from tests.postgres_test_support import fetch_one
 
 
@@ -66,6 +79,258 @@ class RoleplayIntent:
             intent=Intent.ROLEPLAY_PRACTICE,
             confidence=0.95,
             reason="test",
+        )
+
+
+class ExplicitRoleplayIntent:
+    """Return an application-authorized explicit module request."""
+
+    async def route(
+        self,
+        message: str,
+        safety_result: SafetyResult,
+    ) -> IntentResult:
+        del message, safety_result
+        return IntentResult(
+            intent=Intent.ROLEPLAY_PRACTICE,
+            confidence=0.95,
+            reason="explicit complete request",
+            execution_plan=IntentExecutionPlan(
+                current_intent=Intent.ROLEPLAY_PRACTICE,
+                steps=[
+                    IntentExecutionStep(
+                        step_id="roleplay-primary",
+                        intent=Intent.ROLEPLAY_PRACTICE,
+                        authorization_basis=(
+                            IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+                        ),
+                        status=IntentStepStatus.READY,
+                    )
+                ],
+            ),
+        )
+
+
+class MultiGeneralIntent:
+    """Return a two-step plan for service queue integration tests."""
+
+    async def route(
+        self,
+        message: str,
+        safety_result: SafetyResult,
+    ) -> IntentResult:
+        del message, safety_result
+        return IntentResult(
+            intent=Intent.EMOTIONAL_SUPPORT,
+            confidence=0.95,
+            reason="support then reminder",
+            execution_plan=IntentExecutionPlan(
+                current_intent=Intent.EMOTIONAL_SUPPORT,
+                pending_intents=[Intent.CALENDAR_PLANNING],
+                steps=[
+                    IntentExecutionStep(
+                        step_id="support-primary",
+                        intent=Intent.EMOTIONAL_SUPPORT,
+                        authorization_basis=(
+                            IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+                        ),
+                        status=IntentStepStatus.READY,
+                    ),
+                    IntentExecutionStep(
+                        step_id="calendar-secondary",
+                        intent=Intent.CALENDAR_PLANNING,
+                        relation=IntentRelation.AFTER_PRIMARY,
+                        authorization_basis=(
+                            IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+                        ),
+                        status=IntentStepStatus.READY_WITH_UNDO,
+                        undo_supported=True,
+                    ),
+                ],
+            ),
+        )
+
+
+class GeneralThenRoleplayIntent:
+    """Return a ready one-shot step followed by a ready module."""
+
+    async def route(
+        self,
+        message: str,
+        safety_result: SafetyResult,
+    ) -> IntentResult:
+        del message, safety_result
+        return IntentResult(
+            intent=Intent.EMOTIONAL_SUPPORT,
+            confidence=0.95,
+            reason="support then practice",
+            execution_plan=IntentExecutionPlan(
+                current_intent=Intent.EMOTIONAL_SUPPORT,
+                pending_intents=[Intent.ROLEPLAY_PRACTICE],
+                steps=[
+                    IntentExecutionStep(
+                        step_id="support-first",
+                        intent=Intent.EMOTIONAL_SUPPORT,
+                        authorization_basis=(
+                            IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+                        ),
+                        status=IntentStepStatus.READY,
+                    ),
+                    IntentExecutionStep(
+                        step_id="roleplay-next",
+                        intent=Intent.ROLEPLAY_PRACTICE,
+                        relation=IntentRelation.AFTER_PRIMARY,
+                        authorization_basis=(
+                            IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+                        ),
+                        status=IntentStepStatus.READY,
+                    ),
+                ],
+            ),
+        )
+
+
+class RoleplayThenReviewIntent:
+    """Return a stateful module followed by a ready one-shot review."""
+
+    async def route(
+        self,
+        message: str,
+        safety_result: SafetyResult,
+    ) -> IntentResult:
+        del message, safety_result
+        return IntentResult(
+            intent=Intent.ROLEPLAY_PRACTICE,
+            confidence=0.95,
+            reason="practice then review",
+            execution_plan=IntentExecutionPlan(
+                current_intent=Intent.ROLEPLAY_PRACTICE,
+                pending_intents=[Intent.PROGRESS_REVIEW],
+                steps=[
+                    IntentExecutionStep(
+                        step_id="roleplay-first",
+                        intent=Intent.ROLEPLAY_PRACTICE,
+                        authorization_basis=(
+                            IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+                        ),
+                        status=IntentStepStatus.READY,
+                    ),
+                    IntentExecutionStep(
+                        step_id="review-next",
+                        intent=Intent.PROGRESS_REVIEW,
+                        relation=IntentRelation.AFTER_PRIMARY,
+                        authorization_basis=(
+                            IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+                        ),
+                        status=IntentStepStatus.READY,
+                    ),
+                ],
+            ),
+        )
+
+
+class ExplicitCalendarIntent:
+    """Return one explicit complete reversible calendar step."""
+
+    async def route(
+        self,
+        message: str,
+        safety_result: SafetyResult,
+    ) -> IntentResult:
+        del message, safety_result
+        return IntentResult(
+            intent=Intent.CALENDAR_PLANNING,
+            confidence=0.98,
+            reason="explicit schedule",
+            execution_plan=IntentExecutionPlan(
+                current_intent=Intent.CALENDAR_PLANNING,
+                steps=[
+                    IntentExecutionStep(
+                        step_id="calendar-reversible",
+                        intent=Intent.CALENDAR_PLANNING,
+                        authorization_basis=(
+                            IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+                        ),
+                        status=IntentStepStatus.READY_WITH_UNDO,
+                        undo_supported=True,
+                    )
+                ],
+            ),
+        )
+
+
+class FakeReversibleCalendarExecutor:
+    """Return verified calendar results while recording compensation."""
+
+    def __init__(self) -> None:
+        self.created = 0
+        self.undone = 0
+        self.proposal: CalendarEventProposal | None = None
+
+    async def create(
+        self,
+        *,
+        user_id: str,
+        proposal: CalendarEventProposal,
+        idempotency_key: str,
+    ) -> ReversibleActionExecution:
+        self.created += 1
+        self.proposal = proposal
+        return ReversibleActionExecution(
+            job_id="create-job-1",
+            response=self._response(
+                user_id=user_id,
+                idempotency_key=idempotency_key,
+                status=CalendarEventStatus.CONFIRMED,
+            ),
+        )
+
+    async def undo(
+        self,
+        *,
+        user_id: str,
+        calendar_action_id: str,
+        idempotency_key: str,
+    ) -> ReversibleActionExecution:
+        del calendar_action_id
+        self.undone += 1
+        return ReversibleActionExecution(
+            job_id="undo-job-1",
+            response=self._response(
+                user_id=user_id,
+                idempotency_key=idempotency_key,
+                status=CalendarEventStatus.CANCELLED,
+            ),
+        )
+
+    def _response(
+        self,
+        *,
+        user_id: str,
+        idempotency_key: str,
+        status: CalendarEventStatus,
+    ) -> CalendarEventResponse:
+        now = datetime.now(UTC)
+        assert self.proposal is not None
+        return CalendarEventResponse(
+            event=CalendarEventRecord(
+                calendar_action_id="calendar-action-1",
+                provider_event_id="provider-action-1",
+                user_id=user_id,
+                proposal=self.proposal,
+                idempotency_key=idempotency_key,
+                status=status,
+                created_at=now,
+                updated_at=now,
+            ),
+            verified=True,
+            tool_trace=CalendarToolTrace(
+                tool_name="calendar-test",
+                transport="fake",
+                status="success",
+                latency_ms=0,
+                read_after_write_verified=True,
+            ),
         )
 
 
@@ -259,6 +524,208 @@ async def test_module_intent_only_creates_an_option_until_user_confirms(
     proposal_count = proposal_row["total"]
     assert episodic_count == 0
     assert proposal_count == 0
+
+
+@pytest.mark.anyio
+async def test_explicit_complete_low_risk_module_starts_without_proposal_pause(
+    repository: PostgresConversationRepository,
+) -> None:
+    service = _service(repository)
+    service._intent_router = ExplicitRoleplayIntent()
+    conversation = await service.create_conversation(
+        user_id="owner",
+        title="Direct practice",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+
+    response = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="和我模拟一次小组讨论",
+        idempotency_key="request-direct-module",
+    )
+
+    assert response.pending_module_proposal is None
+    assert len(response.active_module_stack) == 1
+    assert response.active_module_stack[0].module_type is ModuleType.ROLEPLAY
+
+
+@pytest.mark.anyio
+async def test_pending_queue_cancellation_preempts_ordinary_routing(
+    repository: PostgresConversationRepository,
+) -> None:
+    harness = GeneralHarness()
+    context_manager = ConversationContextManager(
+        repository=repository,
+        compactor=ConversationCompactor(),
+    )
+    router = MultiGeneralIntent()
+    service = ConversationService(
+        harness=harness,
+        repository=repository,
+        safety_classifier=LowSafety(),
+        intent_router=router,
+        context_manager=context_manager,
+    )
+    conversation = await service.create_conversation(
+        user_id="owner",
+        title="Queue",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+    first = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="先聊聊，之后设置提醒",
+        idempotency_key="request-queue-create",
+    )
+    assert first.intent_plan is not None
+
+    cancelled = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="当前继续，后面的都不用做了",
+        idempotency_key="request-queue-cancel",
+    )
+
+    assert cancelled.intent_plan is not None
+    assert cancelled.intent_plan.execution_plan.pending_intents == []
+    assert (
+        cancelled.intent_plan.execution_plan.steps[1].status
+        is IntentStepStatus.CANCELLED
+    )
+    assert len(harness.conversation_contexts) == 1
+
+
+@pytest.mark.anyio
+async def test_completed_one_shot_step_starts_next_ready_module(
+    repository: PostgresConversationRepository,
+) -> None:
+    harness = GeneralHarness()
+    service = ConversationService(
+        harness=harness,
+        repository=repository,
+        safety_classifier=LowSafety(),
+        intent_router=GeneralThenRoleplayIntent(),
+        context_manager=ConversationContextManager(
+            repository=repository,
+            compactor=ConversationCompactor(),
+        ),
+    )
+    conversation = await service.create_conversation(
+        user_id="owner",
+        title="Auto progression",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+
+    response = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="先听我说说，然后模拟小组讨论",
+        idempotency_key="request-auto-progress",
+    )
+
+    assert response.intent_plan is not None
+    assert [
+        step.status for step in response.intent_plan.execution_plan.steps
+    ] == [IntentStepStatus.COMPLETED, IntentStepStatus.ACTIVE]
+    assert response.active_module_stack[-1].module_type is ModuleType.ROLEPLAY
+    assert "接下来" in response.response
+
+
+@pytest.mark.anyio
+async def test_terminating_active_step_restores_source_and_runs_next_step(
+    repository: PostgresConversationRepository,
+) -> None:
+    harness = GeneralHarness()
+    service = ConversationService(
+        harness=harness,
+        repository=repository,
+        safety_classifier=LowSafety(),
+        intent_router=RoleplayThenReviewIntent(),
+        context_manager=ConversationContextManager(
+            repository=repository,
+            compactor=ConversationCompactor(),
+        ),
+    )
+    conversation = await service.create_conversation(
+        user_id="owner",
+        title="Delayed progression",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+    started = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="先模拟小组讨论，再复盘",
+        idempotency_key="request-delayed-progress",
+    )
+    run = started.active_module_stack[-1]
+
+    finished = await service.terminate_current_module(
+        conversation_id=conversation.conversation_id,
+        module_run_id=run.module_run_id,
+        user_id="owner",
+    )
+
+    assert finished.intent_plan is not None
+    assert finished.intent_plan.status.value == "completed"
+    assert all(
+        step.status is IntentStepStatus.COMPLETED
+        for step in finished.intent_plan.execution_plan.steps
+    )
+    assert "接下来" in finished.response
+    assert len(harness.conversation_contexts) == 1
+
+
+@pytest.mark.anyio
+async def test_explicit_calendar_step_executes_and_can_be_undone(
+    repository: PostgresConversationRepository,
+) -> None:
+    calendar = FakeReversibleCalendarExecutor()
+    service = ConversationService(
+        harness=GeneralHarness(),
+        repository=repository,
+        safety_classifier=LowSafety(),
+        intent_router=ExplicitCalendarIntent(),
+        context_manager=ConversationContextManager(
+            repository=repository,
+            compactor=ConversationCompactor(),
+        ),
+        reversible_calendar_executor=calendar,  # type: ignore[arg-type]
+    )
+    conversation = await service.create_conversation(
+        user_id="owner",
+        title="Reversible calendar",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+
+    created = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="每天晚上8点提醒我练习",
+        idempotency_key="request-calendar-create",
+    )
+    assert created.intent_plan is not None
+    effect = created.intent_plan.execution_plan.steps[0].effect
+    assert effect is not None
+    assert effect.status.value == "applied"
+    assert calendar.created == 1
+
+    undone = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="取消提醒",
+        idempotency_key="request-calendar-undo",
+    )
+    assert undone.intent_plan is not None
+    undone_effect = undone.intent_plan.execution_plan.steps[0].effect
+    assert undone_effect is not None
+    assert undone_effect.status.value == "undone"
+    assert calendar.undone == 1
 
 
 @pytest.mark.anyio

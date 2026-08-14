@@ -1,9 +1,10 @@
 """Intent routers for rule-based and optional LLM-backed workflow selection."""
 
 import json
+from hashlib import sha256
 from typing import Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.llm.base import BaseLLMClient, JSONModeLLMClient
 from app.llm.retry import ProviderError
@@ -11,7 +12,18 @@ from app.llm.prompts import (
     build_intent_router_system_prompt,
     build_intent_router_user_prompt,
 )
-from app.models import Intent, IntentResult, RiskLevel, SafetyResult
+from app.models import (
+    Intent,
+    IntentExecutionPlan,
+    IntentExecutionStep,
+    IntentAuthorizationBasis,
+    IntentRelation,
+    IntentResult,
+    IntentStepStatus,
+    RiskLevel,
+    SafetyResult,
+    SecondaryIntent,
+)
 from app.models_llm import LLMUsage
 
 
@@ -21,6 +33,42 @@ class BaseIntentRouter(Protocol):
     async def route(self, message: str, safety_result: SafetyResult) -> IntentResult:
         """Route a user message to a workflow intent."""
         ...
+
+
+class LLMSecondaryIntentPrediction(BaseModel):
+    """One untrusted secondary intent emitted by the semantic router."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Intent
+    confidence: float = Field(ge=0.0, le=1.0)
+    relation: IntentRelation
+    reason: str = Field(min_length=1, max_length=240)
+    explicitly_requested: bool
+    parameters_complete: bool
+
+
+class LLMIntentPrediction(BaseModel):
+    """Strict provider response before application-owned plan compilation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Intent
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason: str = Field(min_length=1, max_length=240)
+    explicitly_requested: bool
+    parameters_complete: bool
+    secondary_intents: list[LLMSecondaryIntentPrediction] = Field(max_length=2)
+
+
+_EXECUTABLE_SECONDARY_INTENTS = {
+    Intent.ROLEPLAY_PRACTICE,
+    Intent.CBT_WORKSHEET,
+    Intent.EXPOSURE_PLANNING,
+    Intent.CAMPUS_RESOURCE_QUERY,
+    Intent.PROGRESS_REVIEW,
+    Intent.CALENDAR_PLANNING,
+}
 
 
 class LlmIntentRouter:
@@ -60,18 +108,29 @@ class LlmIntentRouter:
             payload = json.loads(response)
             if not isinstance(payload, dict):
                 raise ValueError("Intent router response must be an object.")
-            result = IntentResult.model_validate(payload)
-            if result.intent == Intent.CRISIS:
-                raise ValueError("LLM router cannot emit crisis outside safety routing.")
+            result = compile_llm_intent_prediction(
+                payload,
+                risk_level=safety_result.risk_level,
+            )
             result = apply_llm_intent_policy(result)
             return result.model_copy(update={"llm_usage": LLMUsage(used=True)})
-        except (ValueError, json.JSONDecodeError, ValidationError):
+        except json.JSONDecodeError:
             fallback = await self.fallback_router.route(message, safety_result)
             return fallback.model_copy(
                 update={
                     "llm_usage": LLMUsage(
                         fallback_used=True,
                         error_category="INVALID_JSON",
+                    )
+                }
+            )
+        except (ValueError, ValidationError):
+            fallback = await self.fallback_router.route(message, safety_result)
+            return fallback.model_copy(
+                update={
+                    "llm_usage": LLMUsage(
+                        fallback_used=True,
+                        error_category="INVALID_SCHEMA",
                     )
                 }
             )
@@ -92,6 +151,133 @@ class LlmIntentRouter:
             )
 
 
+def compile_llm_intent_prediction(
+    payload: object,
+    *,
+    risk_level: RiskLevel = RiskLevel.LOW,
+) -> IntentResult:
+    """Validate an LLM proposal and compile a server-owned sequential plan."""
+    prediction = LLMIntentPrediction.model_validate(payload)
+    if prediction.intent == Intent.CRISIS:
+        raise ValueError("LLM router cannot emit crisis outside safety routing.")
+
+    accepted: list[SecondaryIntent] = []
+    steps = [
+        _execution_step(
+            intent=prediction.intent,
+            relation=None,
+            explicitly_requested=prediction.explicitly_requested,
+            parameters_complete=prediction.parameters_complete,
+            risk_level=risk_level,
+            position=0,
+        )
+    ]
+    seen = {prediction.intent}
+    for candidate in prediction.secondary_intents:
+        if candidate.intent == Intent.CRISIS:
+            raise ValueError("LLM router cannot queue crisis as a secondary intent.")
+        if (
+            candidate.confidence < 0.6
+            or candidate.intent not in _EXECUTABLE_SECONDARY_INTENTS
+            or candidate.intent in seen
+        ):
+            continue
+        if candidate.relation == IntentRelation.CONFLICTING:
+            return _clarification_for_conflicting_intents(prediction, candidate)
+        seen.add(candidate.intent)
+        accepted.append(SecondaryIntent.model_validate(candidate.model_dump()))
+        steps.append(
+            _execution_step(
+                intent=candidate.intent,
+                relation=candidate.relation,
+                explicitly_requested=candidate.explicitly_requested,
+                parameters_complete=candidate.parameters_complete,
+                risk_level=risk_level,
+                position=len(steps),
+            )
+        )
+
+    return IntentResult(
+        intent=prediction.intent,
+        confidence=prediction.confidence,
+        reason=prediction.reason,
+        secondary_intents=accepted,
+        execution_plan=IntentExecutionPlan(
+            current_intent=prediction.intent,
+            pending_intents=[candidate.intent for candidate in accepted],
+            steps=steps,
+        ),
+    )
+
+
+def _execution_step(
+    *,
+    intent: Intent,
+    relation: IntentRelation | None,
+    explicitly_requested: bool,
+    parameters_complete: bool,
+    risk_level: RiskLevel,
+    position: int,
+) -> IntentExecutionStep:
+    """Convert semantic evidence into an application-owned authorization state."""
+    basis = (
+        IntentAuthorizationBasis.EXPLICIT_CURRENT_REQUEST
+        if explicitly_requested
+        else IntentAuthorizationBasis.INFERRED
+    )
+    if (
+        not explicitly_requested
+        or not parameters_complete
+        or risk_level in {RiskLevel.HIGH, RiskLevel.CRISIS}
+        or (intent == Intent.EXPOSURE_PLANNING and risk_level == RiskLevel.MEDIUM)
+    ):
+        status = IntentStepStatus.AWAITING_CONSENT
+        undo_supported = False
+    elif intent == Intent.CALENDAR_PLANNING:
+        status = IntentStepStatus.READY_WITH_UNDO
+        undo_supported = True
+    else:
+        status = IntentStepStatus.READY
+        undo_supported = False
+    step_key = f"{position}:{intent.value}:{relation.value if relation else 'primary'}"
+    return IntentExecutionStep(
+        step_id=sha256(step_key.encode("utf-8")).hexdigest()[:24],
+        intent=intent,
+        relation=relation,
+        authorization_basis=basis,
+        status=status,
+        undo_supported=undo_supported,
+    )
+
+
+def _clarification_for_conflicting_intents(
+    prediction: LLMIntentPrediction,
+    conflicting: LLMSecondaryIntentPrediction,
+) -> IntentResult:
+    """Turn an unresolved multi-intent conflict into one safe clarification step."""
+    return IntentResult(
+        intent=Intent.CLARIFICATION_NEEDED,
+        confidence=max(0.6, min(prediction.confidence, conflicting.confidence)),
+        reason=(
+            "The request contains conflicting actions without a safe execution "
+            "order; clarification is required."
+        ),
+        execution_plan=IntentExecutionPlan(
+            current_intent=Intent.CLARIFICATION_NEEDED,
+            steps=[
+                _execution_step(
+                    intent=Intent.CLARIFICATION_NEEDED,
+                    relation=None,
+                    explicitly_requested=True,
+                    parameters_complete=True,
+                    risk_level=RiskLevel.LOW,
+                    position=0,
+                )
+            ],
+        ),
+    )
+
+
 def apply_llm_intent_policy(result: IntentResult) -> IntentResult:
     """Apply the production confidence floor to a validated LLM prediction."""
     if (
@@ -104,6 +290,19 @@ def apply_llm_intent_policy(result: IntentResult) -> IntentResult:
             reason=(
                 "The semantic router was not confident enough to start a "
                 "specialized action; clarification is required."
+            ),
+            execution_plan=IntentExecutionPlan(
+                current_intent=Intent.CLARIFICATION_NEEDED,
+                steps=[
+                    _execution_step(
+                        intent=Intent.CLARIFICATION_NEEDED,
+                        relation=None,
+                        explicitly_requested=True,
+                        parameters_complete=True,
+                        risk_level=RiskLevel.LOW,
+                        position=0,
+                    )
+                ],
             ),
         )
     return result

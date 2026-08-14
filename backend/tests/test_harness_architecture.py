@@ -6,7 +6,17 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import ChatRequest, Intent, RiskLevel, SafetyResult, TraceRecord
+from app.models import (
+    ChatRequest,
+    Intent,
+    IntentExecutionPlan,
+    IntentRelation,
+    IntentResult,
+    RiskLevel,
+    SafetyResult,
+    SecondaryIntent,
+    TraceRecord,
+)
 from app.models_long_term_memory import MemoryPipelineResult, MemoryType
 from app.models_memory import (
     PracticePreferences,
@@ -244,6 +254,53 @@ def test_permission_gate_action_matrix() -> None:
         SafetyResult(risk_level=RiskLevel.HIGH, reason="x"),
         HarnessAction.START_ROLEPLAY,
     ).action == PermissionAction.BLOCK
+
+
+@pytest.mark.anyio
+async def test_harness_exposes_secondary_intents_without_executing_them(
+    create_test_harness: Callable[..., AgentHarness],
+) -> None:
+    support_skill = ContextInspectingSupportSkill()
+    harness = create_test_harness(
+        trace_logger=TraceLogger(repository=InMemoryTraceRepository()),
+        skill_registry=SkillRegistry(executable_skills=(support_skill,)),
+    )
+    routed = IntentResult(
+        intent=Intent.EMOTIONAL_SUPPORT,
+        confidence=0.92,
+        reason="Support is the current foreground action.",
+        secondary_intents=[
+            SecondaryIntent(
+                intent=Intent.CALENDAR_PLANNING,
+                confidence=0.88,
+                relation=IntentRelation.AFTER_PRIMARY,
+                reason="The user asked to schedule a reminder afterwards.",
+            )
+        ],
+        execution_plan=IntentExecutionPlan(
+            current_intent=Intent.EMOTIONAL_SUPPORT,
+            pending_intents=[Intent.CALENDAR_PLANNING],
+        ),
+    )
+
+    response = await harness.run(
+        ChatRequest(user_id="multi_intent_user", message="先聊聊，之后设置提醒。"),
+        trusted_safety_result=SafetyResult(
+            risk_level=RiskLevel.LOW,
+            reason="test-owned safety result",
+        ),
+        trusted_intent_result=routed,
+    )
+
+    assert response.intent == Intent.EMOTIONAL_SUPPORT
+    assert response.trace.selected_skill == "general_support_skill"
+    assert response.structured_data["intent_execution_plan"] == {
+        "mode": "sequential",
+        "current_intent": "emotional_support",
+        "pending_intents": ["calendar_planning"],
+        "steps": [],
+    }
+    assert response.trace.intent_result.secondary_intents == routed.secondary_intents
 
 
 def test_skill_manifest_loads_on_demand() -> None:

@@ -321,6 +321,11 @@ class AgentHarness:
                     category=category,
                 )
 
+        if intent_result.execution_plan is not None:
+            skill_result.structured_data["intent_execution_plan"] = (
+                intent_result.execution_plan.model_dump(mode="json")
+            )
+
         _emit_stage_completed(
             event_sink,
             run_id=run_id,

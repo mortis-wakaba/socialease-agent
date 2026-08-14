@@ -32,7 +32,10 @@ class CalendarPlanningSkill:
 
     async def run(self, context: SkillContext) -> SkillResult:
         """Return a proposal or request the missing start time."""
-        proposal = _proposal_from_message(context.message, now=self.clock())
+        proposal = build_calendar_event_proposal(
+            context.message,
+            now=self.clock(),
+        )
         if proposal is None:
             return SkillResult(
                 response=(
@@ -65,12 +68,13 @@ class CalendarPlanningSkill:
         )
 
 
-def _proposal_from_message(
+def build_calendar_event_proposal(
     message: str,
     *,
-    now: datetime,
+    now: datetime | None = None,
 ) -> CalendarEventProposal | None:
-    """Extract only a bounded time/recurrence shape with conservative defaults."""
+    """Extract a bounded proposal for preview or authorized execution."""
+    now = now or datetime.now(ZoneInfo("Asia/Shanghai"))
     time_parts = _extract_time(message)
     if time_parts is None:
         return None
@@ -120,4 +124,3 @@ def _extract_time(message: str) -> tuple[int, int] | None:
         hour += 12
     minute = 30 if chinese.group(2) else int(chinese.group(3) or 0)
     return hour, minute
-

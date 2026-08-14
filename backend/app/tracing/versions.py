@@ -17,7 +17,7 @@ SKILL_REGISTRY_VERSION = "bounded-skills-2026-07-19"
 
 PROMPT_VERSIONS: dict[str, str] = {
     "safety_classifier": "safety-v1",
-    "intent_router": "intent-v3",
+    "intent_router": "intent-v5",
     "support_generation": "support-v8",
     "support_stream_generation": "support-stream-v1",
     "memory_tool_decision": "memory-tool-v5",

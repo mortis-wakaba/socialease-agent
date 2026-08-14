@@ -63,11 +63,17 @@ async def test_benchmark_records_quality_latency_and_gpu_evidence() -> None:
                 "intent": "roleplay_practice",
                 "confidence": 0.92,
                 "reason": "interactive rehearsal",
+                "explicitly_requested": True,
+                "parameters_complete": True,
+                "secondary_intents": [],
             },
             {
                 "intent": "emotional_support",
                 "confidence": 0.88,
                 "reason": "talk-only request",
+                "explicitly_requested": True,
+                "parameters_complete": True,
+                "secondary_intents": [],
             },
         ]
     )

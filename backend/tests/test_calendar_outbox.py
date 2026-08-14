@@ -99,6 +99,33 @@ async def test_consent_consumption_and_enqueue_are_atomic(
 
 
 @pytest.mark.anyio
+async def test_plan_authorized_protocol_free_job_is_idempotent(
+    outbox: CalendarActionOutbox,
+) -> None:
+    request = _request()
+    request_hash = direct_action_request_hash(
+        harness_action=HarnessAction.CREATE_CALENDAR_EVENT,
+        payload=request,
+    )
+    values = {
+        "protocol_id": None,
+        "user_id": request.user_id,
+        "action_type": "create",
+        "request_hash": request_hash,
+        "idempotency_key": request.idempotency_key,
+        "payload": request.model_dump(mode="json"),
+    }
+
+    first = await outbox.enqueue(**values)  # type: ignore[arg-type]
+    replay = await outbox.enqueue(**values)  # type: ignore[arg-type]
+
+    assert first is not None
+    assert replay is not None
+    assert replay.job_id == first.job_id
+    assert replay.protocol_id is None
+
+
+@pytest.mark.anyio
 async def test_concurrent_claim_has_single_lease_owner(
     outbox: CalendarActionOutbox,
 ) -> None:

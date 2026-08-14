@@ -51,6 +51,10 @@ from app.models_conversation import (
     ModuleType,
 )
 from app.models_conversation_context import ConversationCompactSummary
+from app.models_intent_plan import ConversationIntentPlan
+from app.models_intent_effect import (
+    IntentEffectLedgerRecord,
+)
 
 
 class PostgresConversationRepository:
@@ -259,6 +263,218 @@ class PostgresConversationRepository:
             raise ConversationConcurrencyError(
                 "conversation command is no longer claimable"
             )
+
+    async def save_intent_plan(
+        self,
+        plan: ConversationIntentPlan,
+    ) -> ConversationIntentPlan:
+        """Replace the current owner-scoped plan under a conversation lock."""
+        async with self.engine.begin() as connection:
+            owner = (await connection.execute(
+                text(
+                    """SELECT 1 FROM conversations
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id AND status != :deleted
+                    FOR UPDATE"""
+                ),
+                {
+                    "conversation_id": plan.conversation_id,
+                    "user_id": plan.user_id,
+                    "deleted": ConversationStatus.DELETED.value,
+                },
+            )).first()
+            if owner is None:
+                raise LookupError("conversation not found")
+            existing_version = (await connection.execute(
+                text(
+                    """SELECT version FROM conversation_intent_plans
+                    WHERE conversation_id = :conversation_id"""
+                ),
+                {"conversation_id": plan.conversation_id},
+            )).scalar_one_or_none()
+            saved = plan.model_copy(
+                update={"version": (existing_version or 0) + 1}
+            )
+            await connection.execute(
+                text(
+                    """INSERT INTO conversation_intent_plans
+                    (conversation_id, plan_id, user_id, status, version,
+                     payload, created_at, updated_at)
+                    VALUES (:conversation_id, :plan_id, :user_id, :status,
+                            :version, CAST(:payload AS jsonb), :created_at,
+                            :updated_at)
+                    ON CONFLICT (conversation_id) DO UPDATE SET
+                        plan_id = EXCLUDED.plan_id,
+                        user_id = EXCLUDED.user_id,
+                        status = EXCLUDED.status,
+                        version = EXCLUDED.version,
+                        payload = EXCLUDED.payload,
+                        created_at = EXCLUDED.created_at,
+                        updated_at = EXCLUDED.updated_at"""
+                ),
+                _intent_plan_params(saved),
+            )
+        return saved
+
+    async def get_intent_plan(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationIntentPlan | None:
+        """Return one current plan only to its conversation owner."""
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
+                text(
+                    """SELECT ip.payload
+                    FROM conversation_intent_plans ip
+                    JOIN conversations c
+                      ON c.conversation_id = ip.conversation_id
+                    WHERE ip.conversation_id = :conversation_id
+                      AND ip.user_id = :user_id
+                      AND c.user_id = :user_id AND c.status != :deleted"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "deleted": ConversationStatus.DELETED.value,
+                },
+            )).mappings().first()
+        return (
+            ConversationIntentPlan.model_validate(row["payload"])
+            if row is not None
+            else None
+        )
+
+    async def update_intent_plan(
+        self,
+        plan: ConversationIntentPlan,
+        *,
+        expected_version: int,
+    ) -> ConversationIntentPlan:
+        """Optimistically persist a queue state transition."""
+        saved = plan.model_copy(update={"version": expected_version + 1})
+        async with self.engine.begin() as connection:
+            updated = await connection.execute(
+                text(
+                    """UPDATE conversation_intent_plans
+                    SET status = :status, version = :version,
+                        payload = CAST(:payload AS jsonb),
+                        updated_at = :updated_at
+                    WHERE conversation_id = :conversation_id
+                      AND plan_id = :plan_id AND user_id = :user_id
+                      AND version = :expected_version"""
+                ),
+                {
+                    **_intent_plan_params(saved),
+                    "expected_version": expected_version,
+                },
+            )
+        if updated.rowcount != 1:
+            raise ConversationConcurrencyError(
+                "intent plan version no longer matches"
+            )
+        return saved
+
+    async def save_intent_effect(
+        self,
+        effect: IntentEffectLedgerRecord,
+    ) -> IntentEffectLedgerRecord:
+        """Insert one durable effect receipt or replay the same plan step."""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """INSERT INTO conversation_intent_effects
+                    (effect_id, plan_id, step_id, conversation_id, user_id,
+                     kind, status, version, payload, created_at, updated_at)
+                    VALUES (:effect_id, :plan_id, :step_id, :conversation_id,
+                            :user_id, :kind, :status, :version,
+                            CAST(:payload AS jsonb), :created_at, :updated_at)
+                    ON CONFLICT (plan_id, step_id) DO NOTHING"""
+                ),
+                _intent_effect_params(effect),
+            )
+            row = (await connection.execute(
+                text(
+                    """SELECT payload FROM conversation_intent_effects
+                    WHERE plan_id = :plan_id AND step_id = :step_id
+                      AND user_id = :user_id"""
+                ),
+                {
+                    "plan_id": effect.plan_id,
+                    "step_id": effect.step_id,
+                    "user_id": effect.user_id,
+                },
+            )).mappings().first()
+        if row is None:
+            raise LookupError("intent effect owner mismatch")
+        return IntentEffectLedgerRecord.model_validate(row["payload"])
+
+    async def update_intent_effect(
+        self,
+        effect: IntentEffectLedgerRecord,
+        *,
+        expected_version: int,
+    ) -> IntentEffectLedgerRecord:
+        """Optimistically transition an effect ledger record."""
+        saved = effect.model_copy(update={"version": expected_version + 1})
+        async with self.engine.begin() as connection:
+            updated = await connection.execute(
+                text(
+                    """UPDATE conversation_intent_effects
+                    SET status = :status, version = :version,
+                        payload = CAST(:payload AS jsonb), updated_at = :updated_at
+                    WHERE effect_id = :effect_id AND user_id = :user_id
+                      AND version = :expected_version"""
+                ),
+                {
+                    **_intent_effect_params(saved),
+                    "expected_version": expected_version,
+                },
+            )
+        if updated.rowcount != 1:
+            raise ConversationConcurrencyError("intent effect version no longer matches")
+        return saved
+
+    async def latest_applied_intent_effect(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> IntentEffectLedgerRecord | None:
+        """Return the newest applied or undo-pending effect inside owner scope."""
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
+                text(
+                    """SELECT payload FROM conversation_intent_effects
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND status IN ('applied', 'undo_pending')
+                    ORDER BY updated_at DESC, effect_id DESC LIMIT 1"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            )).mappings().first()
+        return IntentEffectLedgerRecord.model_validate(row["payload"]) if row else None
+
+    async def list_pending_intent_effects(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[IntentEffectLedgerRecord]:
+        """List bounded pending effects for background reconciliation."""
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(
+                text(
+                    """SELECT payload FROM conversation_intent_effects
+                    WHERE status IN ('apply_pending', 'undo_pending')
+                    ORDER BY updated_at ASC LIMIT :limit"""
+                ),
+                {"limit": _validated_limit(limit, maximum=100)},
+            )).mappings().all()
+        return [IntentEffectLedgerRecord.model_validate(row["payload"]) for row in rows]
 
     async def list_for_user(
         self,
@@ -577,6 +793,35 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                     "idempotency_key": idempotency_key,
+                    "deleted": ConversationStatus.DELETED.value,
+                },
+            )).mappings().first()
+        return self._event_from_row(row) if row else None
+
+    async def get_event_for_user(
+        self,
+        *,
+        event_id: str,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationEvent | None:
+        """Restore one event by durable ID inside its complete owner scope."""
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
+                text(
+                    """SELECT events.* FROM conversation_events AS events
+                    JOIN conversations AS conversations
+                      ON conversations.conversation_id = events.conversation_id
+                    WHERE events.event_id = :event_id
+                      AND events.conversation_id = :conversation_id
+                      AND events.user_id = :user_id
+                      AND conversations.user_id = :user_id
+                      AND conversations.status != :deleted"""
+                ),
+                {
+                    "event_id": event_id,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
                     "deleted": ConversationStatus.DELETED.value,
                 },
             )).mappings().first()
@@ -1710,6 +1955,38 @@ def _proposal_params(proposal: ModuleProposal) -> dict[str, object]:
         "payload": proposal.model_dump_json(),
         "expires_at": proposal.expires_at,
         "created_at": proposal.created_at,
+    }
+
+
+def _intent_plan_params(plan: ConversationIntentPlan) -> dict[str, object]:
+    """Serialize a durable plan while keeping indexed columns authoritative."""
+    return {
+        "conversation_id": plan.conversation_id,
+        "plan_id": plan.plan_id,
+        "user_id": plan.user_id,
+        "status": plan.status.value,
+        "version": plan.version,
+        "payload": plan.model_dump_json(),
+        "created_at": plan.created_at,
+        "updated_at": plan.updated_at,
+    }
+
+
+def _intent_effect_params(
+    effect: IntentEffectLedgerRecord,
+) -> dict[str, object]:
+    return {
+        "effect_id": effect.effect_id,
+        "plan_id": effect.plan_id,
+        "step_id": effect.step_id,
+        "conversation_id": effect.conversation_id,
+        "user_id": effect.user_id,
+        "kind": effect.kind,
+        "status": effect.status.value,
+        "version": effect.version,
+        "payload": effect.model_dump_json(),
+        "created_at": effect.created_at,
+        "updated_at": effect.updated_at,
     }
 
 

@@ -2,7 +2,13 @@
 
 import pytest
 
-from app.models import Intent, RiskLevel, SafetyResult
+from app.models import (
+    Intent,
+    IntentAuthorizationBasis,
+    IntentStepStatus,
+    RiskLevel,
+    SafetyResult,
+)
 from app.workflow.router import LlmIntentRouter
 
 
@@ -56,7 +62,9 @@ def low_safety() -> SafetyResult:
 async def test_llm_router_is_default_when_available(low_safety: SafetyResult) -> None:
     router = LlmIntentRouter(
         llm_client=FakeLLMClient(
-            '{"intent":"exposure_planning","confidence":0.91,"reason":"semantic match"}'
+            '{"intent":"exposure_planning","confidence":0.91,'
+            '"reason":"semantic match","explicitly_requested":true,'
+            '"parameters_complete":true,"secondary_intents":[]}'
         )
     )
 
@@ -72,7 +80,9 @@ async def test_llm_router_uses_json_mode_for_local_structured_output(
     low_safety: SafetyResult,
 ) -> None:
     client = FakeJSONModeLLMClient(
-        '{"intent":"progress_review","confidence":0.9,"reason":"history request"}'
+        '{"intent":"progress_review","confidence":0.9,'
+        '"reason":"history request","explicitly_requested":true,'
+        '"parameters_complete":true,"secondary_intents":[]}'
     )
     router = LlmIntentRouter(llm_client=client)
 
@@ -96,6 +106,22 @@ async def test_llm_router_falls_back_on_invalid_output(low_safety: SafetyResult)
 
 
 @pytest.mark.anyio
+async def test_llm_router_requires_multi_intent_contract_field(
+    low_safety: SafetyResult,
+) -> None:
+    router = LlmIntentRouter(
+        llm_client=FakeLLMClient(
+            '{"intent":"emotional_support","confidence":0.9,"reason":"legacy shape"}'
+        )
+    )
+
+    result = await router.route("我只想聊聊。", low_safety)
+
+    assert result.llm_usage.fallback_used is True
+    assert result.llm_usage.error_category == "INVALID_SCHEMA"
+
+
+@pytest.mark.anyio
 async def test_llm_router_falls_back_on_provider_failure(low_safety: SafetyResult) -> None:
     router = LlmIntentRouter(llm_client=FakeLLMClient("", should_fail=True))
 
@@ -109,7 +135,9 @@ async def test_llm_router_falls_back_on_provider_failure(low_safety: SafetyResul
 @pytest.mark.anyio
 async def test_crisis_skips_llm_router_call() -> None:
     client = FakeLLMClient(
-        '{"intent":"roleplay_practice","confidence":0.9,"reason":"wrong"}'
+        '{"intent":"roleplay_practice","confidence":0.9,'
+        '"reason":"wrong","explicitly_requested":true,'
+        '"parameters_complete":true,"secondary_intents":[]}'
     )
     router = LlmIntentRouter(llm_client=client)
     safety = SafetyResult(risk_level=RiskLevel.CRISIS, reason="crisis")
@@ -127,7 +155,9 @@ async def test_llm_router_low_confidence_action_requests_clarification(
 ) -> None:
     router = LlmIntentRouter(
         llm_client=FakeLLMClient(
-            '{"intent":"roleplay_practice","confidence":0.41,"reason":"unclear"}'
+            '{"intent":"roleplay_practice","confidence":0.41,'
+            '"reason":"unclear","explicitly_requested":false,'
+            '"parameters_complete":false,"secondary_intents":[]}'
         )
     )
 
@@ -135,3 +165,198 @@ async def test_llm_router_low_confidence_action_requests_clarification(
 
     assert result.intent == Intent.CLARIFICATION_NEEDED
     assert result.llm_usage.used is True
+
+
+@pytest.mark.anyio
+async def test_llm_router_compiles_multiple_intents_into_sequential_plan(
+    low_safety: SafetyResult,
+) -> None:
+    router = LlmIntentRouter(
+        llm_client=FakeLLMClient(
+            """{
+                "intent":"exposure_planning",
+                "confidence":0.94,
+                "reason":"the user asked to build the ladder first",
+                "explicitly_requested":true,
+                "parameters_complete":true,
+                "secondary_intents":[
+                    {
+                        "intent":"calendar_planning",
+                        "confidence":0.91,
+                        "relation":"depends_on_primary",
+                        "reason":"the reminder depends on the selected practice step",
+                        "explicitly_requested":true,
+                        "parameters_complete":true
+                    }
+                ]
+            }"""
+        )
+    )
+
+    result = await router.route(
+        "先帮我制定练习阶梯，然后把第一级安排到日历里。",
+        low_safety,
+    )
+
+    assert result.intent == Intent.EXPOSURE_PLANNING
+    assert [item.intent for item in result.secondary_intents] == [
+        Intent.CALENDAR_PLANNING
+    ]
+    assert result.execution_plan is not None
+    assert result.execution_plan.mode == "sequential"
+    assert result.execution_plan.current_intent == Intent.EXPOSURE_PLANNING
+    assert result.execution_plan.pending_intents == [Intent.CALENDAR_PLANNING]
+    assert result.execution_plan.steps[0].status == IntentStepStatus.READY
+    assert (
+        result.execution_plan.steps[1].status
+        == IntentStepStatus.READY_WITH_UNDO
+    )
+    assert result.execution_plan.steps[1].undo_supported is True
+
+
+@pytest.mark.anyio
+async def test_llm_router_requires_consent_for_inferred_incomplete_step(
+    low_safety: SafetyResult,
+) -> None:
+    router = LlmIntentRouter(
+        llm_client=FakeLLMClient(
+            """{
+                "intent":"emotional_support",
+                "confidence":0.9,
+                "reason":"support first",
+                "explicitly_requested":true,
+                "parameters_complete":true,
+                "secondary_intents":[{
+                    "intent":"calendar_planning",
+                    "confidence":0.8,
+                    "relation":"after_primary",
+                    "reason":"a possible follow-up",
+                    "explicitly_requested":false,
+                    "parameters_complete":false
+                }]
+            }"""
+        )
+    )
+
+    result = await router.route("我有点紧张，之后也许可以提醒我。", low_safety)
+
+    assert result.execution_plan is not None
+    assert (
+        result.execution_plan.steps[1].status
+        == IntentStepStatus.AWAITING_CONSENT
+    )
+    assert (
+        result.execution_plan.steps[1].authorization_basis
+        == IntentAuthorizationBasis.INFERRED
+    )
+
+
+@pytest.mark.anyio
+async def test_llm_router_conflicting_intents_request_clarification(
+    low_safety: SafetyResult,
+) -> None:
+    router = LlmIntentRouter(
+        llm_client=FakeLLMClient(
+            """{
+                "intent":"roleplay_practice",
+                "confidence":0.82,
+                "reason":"one possible action",
+                "explicitly_requested":false,
+                "parameters_complete":false,
+                "secondary_intents":[
+                    {
+                        "intent":"cbt_worksheet",
+                        "confidence":0.79,
+                        "relation":"conflicting",
+                        "reason":"the user did not choose which interactive task to start",
+                        "explicitly_requested":false,
+                        "parameters_complete":false
+                    }
+                ]
+            }"""
+        )
+    )
+
+    result = await router.route(
+        "角色扮演或者做想法记录都行，你替我决定。",
+        low_safety,
+    )
+
+    assert result.intent == Intent.CLARIFICATION_NEEDED
+    assert result.secondary_intents == []
+    assert result.execution_plan is not None
+    assert result.execution_plan.pending_intents == []
+
+
+@pytest.mark.anyio
+async def test_llm_router_filters_unsafe_duplicate_and_low_confidence_secondaries(
+    low_safety: SafetyResult,
+) -> None:
+    router = LlmIntentRouter(
+        llm_client=FakeLLMClient(
+            """{
+                "intent":"progress_review",
+                "confidence":0.9,
+                "reason":"review comes first",
+                "explicitly_requested":true,
+                "parameters_complete":true,
+                "secondary_intents":[
+                    {
+                        "intent":"progress_review",
+                        "confidence":0.9,
+                        "relation":"after_primary",
+                        "reason":"duplicate",
+                        "explicitly_requested":true,
+                        "parameters_complete":true
+                    },
+                    {
+                        "intent":"calendar_planning",
+                        "confidence":0.4,
+                        "relation":"depends_on_primary",
+                        "reason":"too uncertain to queue",
+                        "explicitly_requested":false,
+                        "parameters_complete":false
+                    }
+                ]
+            }"""
+        )
+    )
+
+    result = await router.route("复盘后可能再设置提醒。", low_safety)
+
+    assert result.intent == Intent.PROGRESS_REVIEW
+    assert result.secondary_intents == []
+    assert result.execution_plan is not None
+    assert result.execution_plan.pending_intents == []
+
+
+@pytest.mark.anyio
+async def test_llm_router_rejects_crisis_as_secondary_intent(
+    low_safety: SafetyResult,
+) -> None:
+    router = LlmIntentRouter(
+        llm_client=FakeLLMClient(
+            """{
+                "intent":"emotional_support",
+                "confidence":0.9,
+                "reason":"ordinary request",
+                "explicitly_requested":true,
+                "parameters_complete":true,
+                "secondary_intents":[
+                    {
+                        "intent":"crisis",
+                        "confidence":0.9,
+                        "relation":"independent",
+                        "reason":"unsafe router authority",
+                        "explicitly_requested":true,
+                        "parameters_complete":true
+                    }
+                ]
+            }"""
+        )
+    )
+
+    result = await router.route("我想聊聊，也想练习。", low_safety)
+
+    assert result.llm_usage.fallback_used is True
+    assert result.llm_usage.error_category == "INVALID_SCHEMA"

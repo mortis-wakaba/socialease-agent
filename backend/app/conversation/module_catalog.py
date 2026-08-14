@@ -63,6 +63,11 @@ def module_type_for_intent(intent: Intent) -> ModuleType | None:
     return _MODULE_BY_INTENT.get(intent)
 
 
+def intent_for_module_type(module_type: ModuleType) -> Intent:
+    """Return the canonical intent represented by one module type."""
+    return _MODULE_DEFINITIONS[module_type].intent
+
+
 def module_skill_name(module_type: ModuleType) -> str | None:
     """Return the Skill name used to select stable module context."""
     return _MODULE_DEFINITIONS[module_type].skill_name

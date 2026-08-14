@@ -16,6 +16,7 @@ from app.models_conversation import (
     ConversationStatus,
 )
 from app.models_conversation_context import ConversationContextDiagnostics
+from app.models_intent_plan import ConversationIntentPlan
 
 
 class ConversationCreateRequest(StrictConversationModel):
@@ -55,6 +56,7 @@ class ConversationMessageResponse(StrictConversationModel):
     appended_events: list[ConversationEvent] = Field(default_factory=list)
     active_module_stack: list[ModuleRun] = Field(default_factory=list)
     pending_module_proposal: ModuleProposal | None = None
+    intent_plan: ConversationIntentPlan | None = None
     response: str
     safety_result: SafetyResult
     context_diagnostics: ConversationContextDiagnostics
@@ -97,6 +99,7 @@ class ConversationDetailResponse(StrictConversationModel):
     events: ConversationEventPage
     active_module_stack: list[ModuleRun] = Field(default_factory=list)
     pending_module_proposals: list[ModuleProposal] = Field(default_factory=list)
+    intent_plan: ConversationIntentPlan | None = None
 
 
 class ModuleControlResponse(StrictConversationModel):
@@ -106,6 +109,7 @@ class ModuleControlResponse(StrictConversationModel):
     active_module_stack: list[ModuleRun] = Field(default_factory=list)
     appended_events: list[ConversationEvent] = Field(default_factory=list)
     response: str
+    intent_plan: ConversationIntentPlan | None = None
 
 
 class ConversationUpdateRequest(StrictConversationModel):
@@ -131,6 +135,7 @@ class ConversationExportResponse(StrictConversationModel):
     events: list[ConversationEvent] = Field(default_factory=list)
     module_runs: list[ModuleRun] = Field(default_factory=list)
     module_proposals: list[ModuleProposal] = Field(default_factory=list)
+    intent_plan: ConversationIntentPlan | None = None
     exported_at: datetime
 
 

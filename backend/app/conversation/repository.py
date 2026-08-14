@@ -25,6 +25,8 @@ from app.models_conversation import (
     ModuleType,
 )
 from app.models_conversation_context import ConversationCompactSummary
+from app.models_intent_plan import ConversationIntentPlan
+from app.models_intent_effect import IntentEffectLedgerRecord
 
 
 class ConversationConcurrencyError(RuntimeError):
@@ -131,6 +133,14 @@ class ConversationRepository(Protocol):
         idempotency_key: str,
     ) -> ConversationEvent | None: ...
 
+    async def get_event_for_user(
+        self,
+        *,
+        event_id: str,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationEvent | None: ...
+
     async def claim_command(
         self,
         *,
@@ -148,6 +158,50 @@ class ConversationRepository(Protocol):
         idempotency_key: str,
         result: str,
     ) -> None: ...
+
+    async def save_intent_plan(
+        self,
+        plan: ConversationIntentPlan,
+    ) -> ConversationIntentPlan: ...
+
+    async def get_intent_plan(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationIntentPlan | None: ...
+
+    async def update_intent_plan(
+        self,
+        plan: ConversationIntentPlan,
+        *,
+        expected_version: int,
+    ) -> ConversationIntentPlan: ...
+
+    async def save_intent_effect(
+        self,
+        effect: IntentEffectLedgerRecord,
+    ) -> IntentEffectLedgerRecord: ...
+
+    async def update_intent_effect(
+        self,
+        effect: IntentEffectLedgerRecord,
+        *,
+        expected_version: int,
+    ) -> IntentEffectLedgerRecord: ...
+
+    async def latest_applied_intent_effect(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> IntentEffectLedgerRecord | None: ...
+
+    async def list_pending_intent_effects(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[IntentEffectLedgerRecord]: ...
 
     async def get_compact_summary(
         self,

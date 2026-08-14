@@ -356,9 +356,24 @@ def build_intent_router_system_prompt() -> str:
     return f"""
 {COMMON_SAFETY_INSTRUCTIONS}
 
-Classify the user's ordinary, non-crisis request into exactly one supported intent:
+Classify the user's ordinary, non-crisis request into one primary intent and up to two distinct
+secondary action intents. The primary intent is the one action to handle in the current turn:
 emotional_support, roleplay_practice, cbt_worksheet, exposure_planning,
 campus_resource_query, progress_review, calendar_planning, clarification_needed, out_of_scope.
+
+For the primary intent and each genuine secondary action, report explicitly_requested and
+parameters_complete as booleans. explicitly_requested is true only when the user directly asks for
+that action in the current message; mentioning a possibility or receiving an inferred suggestion is
+not explicit authorization. parameters_complete is true only when the action can proceed without
+guessing a required target, time, scenario, or other essential parameter.
+
+For each genuine secondary action, also return its intent, confidence, reason, and relation to the
+primary intent. relation must be exactly one of: after_primary, depends_on_primary, independent,
+conflicting. Do not include emotional context, presentation preferences, clarification_needed,
+out_of_scope, or a repeated primary intent as a secondary action. Return at most two secondary
+intents. Secondary actions are recorded for later sequential handling and are never permission to
+execute them in parallel. If requested actions conflict and the user gives no clear priority, use
+clarification_needed as the primary intent and return no secondary intents.
 
 Use calendar_planning when the user asks to put, schedule, update, or remove a bounded practice
 reminder in a calendar. Calendar planning only creates a preview; external writes require consent.
@@ -370,7 +385,11 @@ information to choose a useful response or action. Use out_of_scope when the pri
 unrelated to SocialEase's social-pressure support, communication practice, structured reflection,
 graded practice, or reviewed support-resource navigation. Presentation requirements such as length,
 language, tone, or list format are not intents; classify the underlying task.
-Return one JSON object with exactly these keys: intent, confidence, reason.
+Return one JSON object with exactly these keys: intent, confidence, reason, explicitly_requested,
+parameters_complete, secondary_intents.
+secondary_intents must be a JSON array; use [] when there is no distinct secondary action.
+Each secondary_intents item must contain exactly: intent, confidence, reason, relation,
+explicitly_requested, parameters_complete.
 confidence must be a number from 0 to 1.
 Return JSON only.
 """.strip()

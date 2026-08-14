@@ -16,6 +16,7 @@ from app.conversation.adapters import (
 )
 from app.conversation.module_catalog import (
     build_module_parameters,
+    intent_for_module_type,
     module_memory_request_context,
     module_proposal_copy,
     module_proposal_reason,
@@ -25,7 +26,21 @@ from app.conversation.module_catalog import (
 )
 from app.conversation.module_coordinator import ModuleCoordinator
 from app.conversation.module_policy import ConversationStateError, ModuleStackPolicy
+from app.conversation.intent_queue import (
+    IntentQueueControl,
+    IntentQueueControlAction,
+    activate_current_consented_step,
+    activate_current_ready_step,
+    apply_intent_queue_control,
+    complete_current_intent_step,
+    detect_intent_queue_control,
+    undo_calendar_step_effect,
+)
 from app.conversation.repository import ConversationRepository, ModuleStartJob
+from app.conversation.reversible_actions import (
+    ReversibleActionPending,
+    ReversibleCalendarExecutor,
+)
 from app.db.factory import repository_factory
 from app.llm.base import BaseLLMClient
 from app.llm.factory import create_local_llm_client
@@ -33,7 +48,21 @@ from app.memory.token_estimator import ConservativeTokenEstimator
 from app.memory.active_memory_assembler import ActiveMemoryAssembler
 from app.memory.completed_event_writer import CompletedPracticeMemoryWriter
 from app.memory.context_orchestrator import MemoryContextOrchestrator
-from app.models import ChatRequest, IntentResult, RiskLevel, SafetyResult
+from app.models import (
+    ChatRequest,
+    Intent,
+    IntentStepEffect,
+    IntentExecutionStep,
+    IntentResult,
+    IntentStepStatus,
+    RiskLevel,
+    SafetyResult,
+)
+from app.models_intent_plan import ConversationIntentPlan
+from app.models_intent_effect import (
+    IntentEffectLedgerRecord,
+    IntentEffectLedgerStatus,
+)
 from app.models_conversation import (
     HISTORY_NOTICE_VERSION,
     Conversation,
@@ -49,6 +78,7 @@ from app.models_conversation import (
     ModuleProposalEventPayload,
     ModuleProposalStatus,
     ModuleType,
+    WorksheetMessageEventPayload,
 )
 from app.models_conversation_api import ConversationMessageResponse
 from app.models_conversation_api import ModuleControlResponse
@@ -63,6 +93,7 @@ from app.models_conversation_context import (
 )
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.safety.crisis import crisis_escalation_response
+from app.skills.calendar import build_calendar_event_proposal
 from app.workflow.engine import AgentHarness
 from app.workflow.context import ResponseChunkSink
 from app.workflow.router import BaseIntentRouter, LlmIntentRouter, RuleBasedIntentRouter
@@ -94,6 +125,7 @@ class ConversationService:
         module_coordinator: ModuleCoordinator | None = None,
         memory_context_orchestrator: MemoryContextOrchestrator | None = None,
         lightweight_llm_client: BaseLLMClient | None = None,
+        reversible_calendar_executor: ReversibleCalendarExecutor | None = None,
         proposal_ttl: timedelta = timedelta(minutes=15),
     ) -> None:
         self._harness = harness
@@ -110,6 +142,9 @@ class ConversationService:
                 else RuleBasedIntentRouter()
             )
         self._intent_router = intent_router
+        self._reversible_calendar_executor = (
+            reversible_calendar_executor or ReversibleCalendarExecutor()
+        )
         estimator = ConservativeTokenEstimator()
         memory_assembler = ActiveMemoryAssembler(token_estimator=estimator)
         self._memory_context_orchestrator = (
@@ -242,6 +277,18 @@ class ConversationService:
             and proposal.expires_at > now
         ]
 
+    async def get_intent_plan(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> ConversationIntentPlan | None:
+        """Return the current durable intent plan to its owner."""
+        return await self._repository.get_intent_plan(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+
     async def update_conversation(
         self,
         *,
@@ -314,6 +361,10 @@ class ConversationService:
                 user_id=user_id,
             ),
             module_proposals=await self._repository.list_proposals(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            ),
+            intent_plan=await self._repository.get_intent_plan(
                 conversation_id=conversation_id,
                 user_id=user_id,
             ),
@@ -523,6 +574,10 @@ class ConversationService:
             ),
             idempotency_key=f"user:{idempotency_key}",
         )
+        intent_plan = await self._repository.get_intent_plan(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
         if safety_result.risk_level == RiskLevel.CRISIS:
             context = await self._context_manager.assemble(
                 conversation_id=conversation_id,
@@ -534,6 +589,18 @@ class ConversationService:
                 conversation_id=conversation_id,
                 user_id=user_id,
             )
+            if intent_plan is not None:
+                cancelled_plan, _ = apply_intent_queue_control(
+                    intent_plan,
+                    IntentQueueControl(
+                        action=IntentQueueControlAction.CANCEL_ALL
+                    ),
+                )
+                if cancelled_plan is not intent_plan:
+                    intent_plan = await self._repository.update_intent_plan(
+                        cancelled_plan,
+                        expected_version=intent_plan.version,
+                    )
             response = crisis_escalation_response(
                 paused_activity="当前对话和练习"
             )
@@ -565,9 +632,342 @@ class ConversationService:
                 response=response,
                 safety_result=safety_result,
                 context_diagnostics=context.diagnostics,
+                intent_plan=intent_plan,
             )
 
+        queue_control = detect_intent_queue_control(message)
+        live_calendar_step = bool(
+            intent_plan is not None
+            and any(
+                step.intent == Intent.CALENDAR_PLANNING
+                and step.status
+                in {
+                    IntentStepStatus.READY,
+                    IntentStepStatus.READY_WITH_UNDO,
+                    IntentStepStatus.AWAITING_CONSENT,
+                    IntentStepStatus.ACTIVE,
+                }
+                for step in intent_plan.execution_plan.steps
+            )
+        )
+        if (
+            queue_control is not None
+            and queue_control.action == IntentQueueControlAction.CANCEL_INTENT
+            and queue_control.target_intent == Intent.CALENDAR_PLANNING
+            and not live_calendar_step
+        ):
+            ledger_effect = await self._repository.latest_applied_intent_effect(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            if (
+                ledger_effect is not None
+                and ledger_effect.external_action_id is not None
+            ):
+                undo_key = f"intent-calendar-undo:{ledger_effect.effect_id}"
+                try:
+                    undo_execution = await self._reversible_calendar_executor.undo(
+                        user_id=user_id,
+                        calendar_action_id=ledger_effect.external_action_id,
+                        idempotency_key=undo_key,
+                    )
+                except ReversibleActionPending as pending:
+                    now = datetime.now(UTC)
+                    ledger_effect = await self._repository.update_intent_effect(
+                        ledger_effect.model_copy(
+                            update={
+                                "status": IntentEffectLedgerStatus.UNDO_PENDING,
+                                "undo_job_id": pending.job_id,
+                                "undo_idempotency_key": undo_key,
+                                "updated_at": now,
+                            }
+                        ),
+                        expected_version=ledger_effect.version,
+                    )
+                    acknowledgement = (
+                        "撤销操作已经进入重试队列；重复说“取消提醒”"
+                        "会复用同一个撤销任务。"
+                    )
+                    context = await self._context_manager.assemble(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        current_user_message=message,
+                        current_event_id=user_event.event_id,
+                    )
+                    acknowledgement_event = (
+                        await self._repository.append_event(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            event_type=(
+                                ConversationEventType.ASSISTANT_MESSAGE
+                            ),
+                            role=ConversationEventRole.ASSISTANT,
+                            content=acknowledgement,
+                            idempotency_key=(
+                                f"intent-plan-undo-pending:{idempotency_key}"
+                            ),
+                        )
+                    )
+                    return await self._response(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        appended_events=[
+                            user_event,
+                            acknowledgement_event,
+                        ],
+                        response=acknowledgement,
+                        safety_result=safety_result,
+                        context_diagnostics=context.diagnostics,
+                        intent_plan=intent_plan,
+                    )
+                now = datetime.now(UTC)
+                ledger_effect = await self._repository.update_intent_effect(
+                    ledger_effect.model_copy(
+                        update={
+                            "status": IntentEffectLedgerStatus.UNDONE,
+                            "undo_job_id": undo_execution.job_id,
+                            "undo_idempotency_key": undo_key,
+                            "updated_at": now,
+                        }
+                    ),
+                    expected_version=ledger_effect.version,
+                )
+                if intent_plan is not None and intent_plan.plan_id == ledger_effect.plan_id:
+                    undone = undo_calendar_step_effect(
+                        intent_plan,
+                        step_id=ledger_effect.step_id,
+                    )
+                    if undone is not intent_plan:
+                        intent_plan = await self._repository.update_intent_plan(
+                            undone,
+                            expected_version=intent_plan.version,
+                        )
+                acknowledgement = "好的，之前创建的日历提醒已经撤销。"
+                context = await self._context_manager.assemble(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    current_user_message=message,
+                    current_event_id=user_event.event_id,
+                )
+                acknowledgement_event = await self._repository.append_event(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    event_type=ConversationEventType.ASSISTANT_MESSAGE,
+                    role=ConversationEventRole.ASSISTANT,
+                    content=acknowledgement,
+                    idempotency_key=(
+                        f"intent-plan-undo:{idempotency_key}"
+                    ),
+                )
+                return await self._response(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    appended_events=[user_event, acknowledgement_event],
+                    response=acknowledgement,
+                    safety_result=safety_result,
+                    context_diagnostics=context.diagnostics,
+                    intent_plan=intent_plan,
+                )
+        if intent_plan is not None and queue_control is not None:
+            previous_plan = intent_plan
+            intent_plan, acknowledgement = apply_intent_queue_control(
+                previous_plan,
+                queue_control,
+            )
+            if intent_plan is previous_plan:
+                intent_plan = previous_plan
+            else:
+                intent_plan = await self._repository.update_intent_plan(
+                    intent_plan,
+                    expected_version=previous_plan.version,
+                )
+            lifecycle_events: list[ConversationEvent] = []
+            should_end_active = queue_control.action in {
+                IntentQueueControlAction.CANCEL_CURRENT,
+                IntentQueueControlAction.CANCEL_ALL,
+            }
+            if (
+                queue_control.action == IntentQueueControlAction.CANCEL_INTENT
+                and queue_control.target_intent is not None
+                and active_run is not None
+            ):
+                should_end_active = (
+                    module_type_for_intent(queue_control.target_intent)
+                    == active_run.module_type
+                )
+            if stack and should_end_active:
+                control_response = (
+                    await self._module_coordinator.terminate_all(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                    )
+                    if queue_control.action
+                    == IntentQueueControlAction.CANCEL_ALL
+                    else await self._module_coordinator.terminate_current(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        module_run_id=active_run.module_run_id,
+                    )
+                )
+                lifecycle_events.extend(control_response.appended_events)
+            context = await self._context_manager.assemble(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                current_user_message=message,
+                current_event_id=user_event.event_id,
+            )
+            progression_events: list[ConversationEvent] = []
+            progression_responses: list[str] = []
+            source_event = await self._repository.get_event_for_user(
+                event_id=intent_plan.source_event_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            if source_event is not None:
+                original_safety = await self._safety_classifier.classify(
+                    source_event.content
+                )
+                (
+                    intent_plan,
+                    progression_events,
+                    progression_responses,
+                ) = await self._consume_ready_intent_steps(
+                    plan=intent_plan,
+                    source_event=source_event,
+                    safety_result=original_safety,
+                    context=context,
+                )
+            combined_acknowledgement = acknowledgement
+            if progression_responses:
+                combined_acknowledgement += "\n\n接下来：" + "\n\n".join(
+                    progression_responses
+                )
+            acknowledgement_event = await self._repository.append_event(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                event_type=ConversationEventType.ASSISTANT_MESSAGE,
+                role=ConversationEventRole.ASSISTANT,
+                content=acknowledgement,
+                idempotency_key=f"intent-plan-control:{idempotency_key}",
+            )
+            return await self._response(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                appended_events=[
+                    user_event,
+                    *lifecycle_events,
+                    *progression_events,
+                    acknowledgement_event,
+                ],
+                response=combined_acknowledgement,
+                safety_result=safety_result,
+                context_diagnostics=context.diagnostics,
+                intent_plan=intent_plan,
+            )
+
+        if intent_plan is not None and queue_control is None:
+            retry_step = _current_intent_step(intent_plan)
+            if (
+                retry_step is not None
+                and retry_step.status == IntentStepStatus.READY_WITH_UNDO
+                and retry_step.intent == Intent.CALENDAR_PLANNING
+            ):
+                source_event = await self._repository.get_event_for_user(
+                    event_id=intent_plan.source_event_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+                if (
+                    source_event is not None
+                    and source_event.content.strip() == message.strip()
+                ):
+                    context = await self._context_manager.assemble(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        current_user_message=message,
+                        current_event_id=user_event.event_id,
+                    )
+                    (
+                        intent_plan,
+                        retry_events,
+                        retry_responses,
+                    ) = await self._consume_ready_intent_steps(
+                        plan=intent_plan,
+                        source_event=source_event,
+                        safety_result=safety_result,
+                        context=context,
+                    )
+                    if retry_responses:
+                        return await self._response(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            appended_events=[user_event, *retry_events],
+                            response="\n\n".join(retry_responses),
+                            safety_result=safety_result,
+                            context_diagnostics=context.diagnostics,
+                            intent_plan=intent_plan,
+                        )
+
         intent_result = await self._intent_router.route(message, safety_result)
+        if (
+            not stack
+            and intent_result.execution_plan is not None
+            and intent_result.execution_plan.steps
+            and (
+                len(intent_result.execution_plan.steps) > 1
+                or intent_result.execution_plan.steps[0].status
+                == IntentStepStatus.READY_WITH_UNDO
+            )
+        ):
+            now = datetime.now(UTC)
+            intent_plan = await self._repository.save_intent_plan(
+                ConversationIntentPlan(
+                    plan_id=uuid4().hex,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    source_event_id=user_event.event_id,
+                    execution_plan=intent_result.execution_plan,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        primary_step = (
+            intent_result.execution_plan.steps[0]
+            if intent_result.execution_plan is not None
+            and intent_result.execution_plan.steps
+            else None
+        )
+        if (
+            intent_plan is not None
+            and primary_step is not None
+            and primary_step.status == IntentStepStatus.READY_WITH_UNDO
+        ):
+            context = await self._context_manager.assemble(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                current_user_message=message,
+                current_event_id=user_event.event_id,
+            )
+            (
+                intent_plan,
+                effect_events,
+                effect_responses,
+            ) = await self._consume_ready_intent_steps(
+                plan=intent_plan,
+                source_event=user_event,
+                safety_result=safety_result,
+                context=context,
+            )
+            if effect_responses:
+                return await self._response(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    appended_events=[user_event, *effect_events],
+                    response="\n\n".join(effect_responses),
+                    safety_result=safety_result,
+                    context_diagnostics=context.diagnostics,
+                    intent_plan=intent_plan,
+                )
         proposed_module = module_type_for_intent(intent_result.intent)
         if (
             proposed_module is not None
@@ -587,6 +987,33 @@ class ConversationService:
                 message=message,
                 module_type=proposed_module,
             )
+            if (
+                primary_step is not None
+                and primary_step.status == IntentStepStatus.READY
+            ):
+                started = await self._module_coordinator.accept(
+                    proposal,
+                    context,
+                )
+                if intent_plan is not None:
+                    prior_version = intent_plan.version
+                    intent_plan.execution_plan.steps[0].status = (
+                        IntentStepStatus.ACTIVE
+                    )
+                    intent_plan.updated_at = datetime.now(UTC)
+                    intent_plan = await self._repository.update_intent_plan(
+                        intent_plan,
+                        expected_version=prior_version,
+                    )
+                return await self._response(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    appended_events=[user_event, *started.appended_events],
+                    response=started.response,
+                    safety_result=safety_result,
+                    context_diagnostics=context.diagnostics,
+                    intent_plan=intent_plan,
+                )
             proposal_copy = module_proposal_copy(proposed_module)
             proposal_event = await self._repository.get_event_by_idempotency(
                 conversation_id=conversation_id,
@@ -621,6 +1048,7 @@ class ConversationService:
                 safety_result=safety_result,
                 context_diagnostics=context.diagnostics,
                 pending_proposal=proposal,
+                intent_plan=intent_plan,
             )
 
         if stack:
@@ -643,13 +1071,57 @@ class ConversationService:
                 idempotency_key=idempotency_key,
                 context=context,
             )
+            completion_events: list[ConversationEvent] = []
+            progression_responses: list[str] = []
+            if (
+                intent_plan is not None
+                and isinstance(
+                    result.event_payload,
+                    WorksheetMessageEventPayload,
+                )
+                and result.event_payload.completed
+            ):
+                ended = await self._module_coordinator.terminate_current(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    module_run_id=active_run.module_run_id,
+                    context=context,
+                )
+                completion_events.extend(ended.appended_events)
+                source_event = await self._repository.get_event_for_user(
+                    event_id=intent_plan.source_event_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+                if source_event is not None:
+                    original_safety = await self._safety_classifier.classify(
+                        source_event.content
+                    )
+                    (
+                        intent_plan,
+                        progression_events,
+                        progression_responses,
+                    ) = await self._complete_and_consume_intent_plan(
+                        plan=intent_plan,
+                        completed_intent=Intent.CBT_WORKSHEET,
+                        source_event=source_event,
+                        safety_result=original_safety,
+                        context=context,
+                    )
+                    completion_events.extend(progression_events)
+            combined_response = result.response
+            if progression_responses:
+                combined_response += "\n\n接下来：" + "\n\n".join(
+                    progression_responses
+                )
             return await self._response(
                 conversation_id=conversation_id,
                 user_id=user_id,
-                appended_events=[user_event, module_event],
-                response=result.response,
+                appended_events=[user_event, module_event, *completion_events],
+                response=combined_response,
                 safety_result=safety_result,
                 context_diagnostics=context.diagnostics,
+                intent_plan=intent_plan,
             )
 
         assistant_key = f"assistant:{idempotency_key}"
@@ -695,14 +1167,34 @@ class ConversationService:
                 content=workflow_response.response,
                 idempotency_key=assistant_key,
             )
+        progression_events: list[ConversationEvent] = []
+        progression_responses: list[str] = []
+        if intent_plan is not None:
+            (
+                intent_plan,
+                progression_events,
+                progression_responses,
+            ) = await self._complete_and_consume_intent_plan(
+                plan=intent_plan,
+                completed_intent=intent_result.intent,
+                source_event=user_event,
+                safety_result=safety_result,
+                context=context,
+            )
+        combined_response = replay.content
+        if progression_responses:
+            combined_response += "\n\n接下来：" + "\n\n".join(
+                progression_responses
+            )
         return await self._response(
             conversation_id=conversation_id,
             user_id=user_id,
-            appended_events=[user_event, replay],
-            response=replay.content,
+            appended_events=[user_event, replay, *progression_events],
+            response=combined_response,
             safety_result=safety_result,
             context_diagnostics=context.diagnostics,
             workflow_response=workflow_response,
+            intent_plan=intent_plan,
         )
 
     async def reject_proposal(
@@ -758,17 +1250,38 @@ class ConversationService:
             current_event_id=proposal.source_event_id,
         )
         if proposal.status == ModuleProposalStatus.ACCEPTED:
-            return await self._module_coordinator.accept(proposal, context)
-        proposal = await self._validated_pending_proposal(
+            result = await self._module_coordinator.accept(proposal, context)
+        else:
+            proposal = await self._validated_pending_proposal(
+                conversation_id=conversation_id,
+                proposal_id=proposal_id,
+                user_id=user_id,
+                request_hash=request_hash,
+            )
+            try:
+                result = await self._module_coordinator.accept(
+                    proposal,
+                    context,
+                )
+            except ConversationStateError as exc:
+                raise ConversationProposalError(str(exc)) from exc
+        plan = await self._repository.get_intent_plan(
             conversation_id=conversation_id,
-            proposal_id=proposal_id,
             user_id=user_id,
-            request_hash=request_hash,
         )
-        try:
-            return await self._module_coordinator.accept(proposal, context)
-        except ConversationStateError as exc:
-            raise ConversationProposalError(str(exc)) from exc
+        if plan is not None:
+            activated = activate_current_consented_step(
+                plan,
+                expected_intent=intent_for_module_type(
+                    proposal.proposed_module
+                ),
+            )
+            if activated is not plan:
+                plan = await self._repository.update_intent_plan(
+                    activated,
+                    expected_version=plan.version,
+                )
+        return result.model_copy(update={"intent_plan": plan})
 
     async def reconcile_module_start(
         self,
@@ -809,16 +1322,74 @@ class ConversationService:
         user_id: str,
     ) -> ModuleControlResponse:
         """Explicitly terminate the active top module."""
+        run = await self._repository.get_module_run_for_user(
+            module_run_id=module_run_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        if run is None:
+            raise LookupError("active module not found")
         context = await self._context_manager.assemble(
             conversation_id=conversation_id,
             user_id=user_id,
             current_user_message="结束当前模块",
         )
-        return await self._module_coordinator.terminate_current(
+        terminated = await self._module_coordinator.terminate_current(
             conversation_id=conversation_id,
             user_id=user_id,
             module_run_id=module_run_id,
             context=context,
+        )
+        plan = await self._repository.get_intent_plan(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        progression_events: list[ConversationEvent] = []
+        progression_responses: list[str] = []
+        if plan is not None:
+            source_event = await self._repository.get_event_for_user(
+                event_id=plan.source_event_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            if source_event is not None:
+                safety_result = await self._safety_classifier.classify(
+                    source_event.content
+                )
+                (
+                    plan,
+                    progression_events,
+                    progression_responses,
+                ) = await self._complete_and_consume_intent_plan(
+                    plan=plan,
+                    completed_intent=intent_for_module_type(run.module_type),
+                    source_event=source_event,
+                    safety_result=safety_result,
+                    context=context,
+                )
+        conversation = await self._repository.get_for_user(
+            conversation_id,
+            user_id,
+        )
+        if conversation is None:
+            raise LookupError("conversation not found")
+        response = terminated.response
+        if progression_responses:
+            response += "\n\n接下来：" + "\n\n".join(
+                progression_responses
+            )
+        return ModuleControlResponse(
+            conversation=conversation,
+            active_module_stack=await self._repository.list_module_stack(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            ),
+            appended_events=[
+                *terminated.appended_events,
+                *progression_events,
+            ],
+            response=response,
+            intent_plan=plan,
         )
 
     async def terminate_all_modules(
@@ -828,10 +1399,27 @@ class ConversationService:
         user_id: str,
     ) -> ModuleControlResponse:
         """Explicitly terminate all active and suspended frames."""
-        return await self._module_coordinator.terminate_all(
+        result = await self._module_coordinator.terminate_all(
             conversation_id=conversation_id,
             user_id=user_id,
         )
+        plan = await self._repository.get_intent_plan(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        if plan is not None:
+            cancelled, _ = apply_intent_queue_control(
+                plan,
+                IntentQueueControl(
+                    action=IntentQueueControlAction.CANCEL_ALL
+                ),
+            )
+            if cancelled is not plan:
+                plan = await self._repository.update_intent_plan(
+                    cancelled,
+                    expected_version=plan.version,
+                )
+        return result.model_copy(update={"intent_plan": plan})
 
     async def _assemble_module_context(
         self,
@@ -864,6 +1452,255 @@ class ConversationService:
             current_event_id=current_event_id,
             active_memory=active_memory,
         )
+
+    async def _complete_and_consume_intent_plan(
+        self,
+        *,
+        plan: ConversationIntentPlan,
+        completed_intent: Intent,
+        source_event: ConversationEvent,
+        safety_result: SafetyResult,
+        context: ConversationWorkingContext,
+    ) -> tuple[ConversationIntentPlan, list[ConversationEvent], list[str]]:
+        """Persist completion, then consume consecutive safe ready steps."""
+        completed = complete_current_intent_step(
+            plan,
+            expected_intent=completed_intent,
+        )
+        if completed is plan:
+            return plan, [], []
+        plan = await self._repository.update_intent_plan(
+            completed,
+            expected_version=plan.version,
+        )
+        return await self._consume_ready_intent_steps(
+            plan=plan,
+            source_event=source_event,
+            safety_result=safety_result,
+            context=context,
+        )
+
+    async def _consume_ready_intent_steps(
+        self,
+        *,
+        plan: ConversationIntentPlan,
+        source_event: ConversationEvent,
+        safety_result: SafetyResult,
+        context: ConversationWorkingContext,
+    ) -> tuple[ConversationIntentPlan, list[ConversationEvent], list[str]]:
+        """Execute ready steps serially, stopping at modules or permission gates."""
+        events: list[ConversationEvent] = []
+        responses: list[str] = []
+        if safety_result.risk_level != RiskLevel.LOW:
+            return plan, events, responses
+        for _ in range(2):
+            current = _current_intent_step(plan)
+            if current is None:
+                break
+            if current.status == IntentStepStatus.READY_WITH_UNDO:
+                if current.intent != Intent.CALENDAR_PLANNING:
+                    break
+                proposal = build_calendar_event_proposal(source_event.content)
+                if proposal is None:
+                    break
+                idempotency_key = (
+                    f"intent-calendar:{plan.plan_id}:{current.step_id}"
+                )
+                try:
+                    calendar_execution = await self._reversible_calendar_executor.create(
+                        user_id=plan.user_id,
+                        proposal=proposal,
+                        idempotency_key=idempotency_key,
+                    )
+                except ReversibleActionPending as pending:
+                    now = datetime.now(UTC)
+                    await self._repository.save_intent_effect(
+                        IntentEffectLedgerRecord(
+                            effect_id=uuid4().hex,
+                            plan_id=plan.plan_id,
+                            step_id=current.step_id,
+                            conversation_id=plan.conversation_id,
+                            user_id=plan.user_id,
+                            kind="calendar_event",
+                            status=IntentEffectLedgerStatus.APPLY_PENDING,
+                            create_job_id=pending.job_id,
+                            create_idempotency_key=idempotency_key,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    response = (
+                        "日历写入已经进入重试队列，系统会复用同一个任务，"
+                        "不会重复创建事件。你也可以稍后重复原请求查询结果。"
+                    )
+                    event = await self._repository.append_event(
+                        conversation_id=plan.conversation_id,
+                        user_id=plan.user_id,
+                        event_type=ConversationEventType.ASSISTANT_MESSAGE,
+                        role=ConversationEventRole.ASSISTANT,
+                        content=response,
+                        idempotency_key=(
+                            f"intent-plan-effect-pending:{plan.plan_id}:"
+                            f"{current.step_id}"
+                        ),
+                    )
+                    events.append(event)
+                    responses.append(response)
+                    break
+                calendar_result = calendar_execution.response
+                now = datetime.now(UTC)
+                stored_effect = await self._repository.save_intent_effect(
+                    IntentEffectLedgerRecord(
+                        effect_id=uuid4().hex,
+                        plan_id=plan.plan_id,
+                        step_id=current.step_id,
+                        conversation_id=plan.conversation_id,
+                        user_id=plan.user_id,
+                        kind="calendar_event",
+                        status=IntentEffectLedgerStatus.APPLIED,
+                        create_job_id=calendar_execution.job_id,
+                        external_action_id=(
+                            calendar_result.event.calendar_action_id
+                        ),
+                        create_idempotency_key=idempotency_key,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                if stored_effect.status == IntentEffectLedgerStatus.APPLY_PENDING:
+                    stored_effect = await self._repository.update_intent_effect(
+                        stored_effect.model_copy(
+                            update={
+                                "status": IntentEffectLedgerStatus.APPLIED,
+                                "external_action_id": (
+                                    calendar_result.event.calendar_action_id
+                                ),
+                                "updated_at": now,
+                            }
+                        ),
+                        expected_version=stored_effect.version,
+                    )
+                response = (
+                    "已按你的明确请求写入日历："
+                    f"{calendar_result.event.proposal.title}，"
+                    f"{calendar_result.event.proposal.start_time.isoformat()}。"
+                    "如果不需要了，直接说“取消提醒”即可撤销。"
+                )
+                event = await self._repository.append_event(
+                    conversation_id=plan.conversation_id,
+                    user_id=plan.user_id,
+                    event_type=ConversationEventType.ASSISTANT_MESSAGE,
+                    role=ConversationEventRole.ASSISTANT,
+                    content=response,
+                    idempotency_key=(
+                        f"intent-plan-effect:{plan.plan_id}:{current.step_id}"
+                    ),
+                )
+                events.append(event)
+                responses.append(response)
+                completed = complete_current_intent_step(
+                    plan,
+                    expected_intent=current.intent,
+                    effect=IntentStepEffect(
+                        external_action_id=(
+                            calendar_result.event.calendar_action_id
+                        ),
+                        idempotency_key=idempotency_key,
+                        applied_at=datetime.now(UTC),
+                    ),
+                )
+                if completed is plan:
+                    break
+                plan = await self._repository.update_intent_plan(
+                    completed,
+                    expected_version=plan.version,
+                )
+                continue
+            if current.status != IntentStepStatus.READY:
+                break
+            stack = await self._repository.list_module_stack(
+                conversation_id=plan.conversation_id,
+                user_id=plan.user_id,
+            )
+            if stack:
+                break
+            module_type = module_type_for_intent(current.intent)
+            if module_type is not None:
+                proposal = await self._create_proposal(
+                    conversation_id=plan.conversation_id,
+                    user_id=plan.user_id,
+                    source_event=source_event,
+                    message=source_event.content,
+                    module_type=module_type,
+                )
+                module_context = await self._assemble_module_context(
+                    conversation_id=plan.conversation_id,
+                    user_id=plan.user_id,
+                    message=source_event.content,
+                    module_type=module_type,
+                    module_parameters=proposal.bounded_parameters,
+                    current_event_id=source_event.event_id,
+                )
+                started = await self._module_coordinator.accept(
+                    proposal,
+                    module_context,
+                )
+                activated = activate_current_ready_step(
+                    plan,
+                    expected_step_id=current.step_id,
+                )
+                if activated is not plan:
+                    plan = await self._repository.update_intent_plan(
+                        activated,
+                        expected_version=plan.version,
+                    )
+                events.extend(started.appended_events)
+                responses.append(started.response)
+                break
+
+            workflow = await self._harness.run(
+                ChatRequest(
+                    user_id=plan.user_id,
+                    message=source_event.content,
+                    context=_workflow_context(
+                        context,
+                        source_event_id=source_event.event_id,
+                    ),
+                ),
+                trusted_safety_result=safety_result,
+                trusted_intent_result=IntentResult(
+                    intent=current.intent,
+                    confidence=1.0,
+                    reason="authorized sequential plan progression",
+                ),
+                trusted_conversation_context=build_conversation_prompt_context(
+                    context
+                ),
+                streaming_requested=False,
+            )
+            event = await self._repository.append_event(
+                conversation_id=plan.conversation_id,
+                user_id=plan.user_id,
+                event_type=ConversationEventType.ASSISTANT_MESSAGE,
+                role=ConversationEventRole.ASSISTANT,
+                content=workflow.response,
+                idempotency_key=(
+                    f"intent-plan-step:{plan.plan_id}:{current.step_id}"
+                ),
+            )
+            events.append(event)
+            responses.append(workflow.response)
+            completed = complete_current_intent_step(
+                plan,
+                expected_intent=current.intent,
+            )
+            if completed is plan:
+                break
+            plan = await self._repository.update_intent_plan(
+                completed,
+                expected_version=plan.version,
+            )
+        return plan, events, responses
 
     async def _validated_pending_proposal(
         self,
@@ -937,6 +1774,7 @@ class ConversationService:
         context_diagnostics,
         pending_proposal: ModuleProposal | None = None,
         workflow_response=None,
+        intent_plan: ConversationIntentPlan | None = None,
     ) -> ConversationMessageResponse:
         conversation = await self._repository.get_for_user(
             conversation_id,
@@ -952,6 +1790,14 @@ class ConversationService:
                 user_id=user_id,
             ),
             pending_module_proposal=pending_proposal,
+            intent_plan=(
+                intent_plan
+                if intent_plan is not None
+                else await self._repository.get_intent_plan(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+            ),
             response=response,
             safety_result=safety_result,
             context_diagnostics=context_diagnostics,
@@ -981,6 +1827,26 @@ def _proposal_request_hash(
         separators=(",", ":"),
     )
     return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _current_intent_step(
+    plan: ConversationIntentPlan,
+) -> IntentExecutionStep | None:
+    """Return the first nonterminal step from authoritative plan state."""
+    live_statuses = {
+        IntentStepStatus.READY,
+        IntentStepStatus.READY_WITH_UNDO,
+        IntentStepStatus.AWAITING_CONSENT,
+        IntentStepStatus.ACTIVE,
+    }
+    return next(
+        (
+            step
+            for step in plan.execution_plan.steps
+            if step.status in live_statuses
+        ),
+        None,
+    )
 
 
 def _workflow_context(
