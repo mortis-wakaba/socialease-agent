@@ -3,6 +3,7 @@
 from app.models_conversation_api import (
     ConversationStreamChunkEvent,
     ConversationStreamErrorEvent,
+    ConversationStreamHeartbeatEvent,
 )
 from app.services.response_streaming import (
     SentenceBuffer,
@@ -47,8 +48,11 @@ def test_typed_sse_payload_owns_the_matching_event_name() -> None:
     error = conversation_sse_event(
         ConversationStreamErrorEvent(detail="The response could not be completed")
     )
+    heartbeat = conversation_sse_event(ConversationStreamHeartbeatEvent())
 
     assert chunk.startswith("event: response_chunk\n")
     assert '"type":"response_chunk"' in chunk
     assert error.startswith("event: response_error\n")
     assert '"type":"response_error"' in error
+    assert heartbeat.startswith("event: response_heartbeat\n")
+    assert '"type":"response_heartbeat"' in heartbeat

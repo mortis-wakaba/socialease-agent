@@ -84,10 +84,17 @@ class ConversationStreamErrorEvent(StrictConversationModel):
     detail: str = Field(min_length=1, max_length=240)
 
 
+class ConversationStreamHeartbeatEvent(StrictConversationModel):
+    """Content-free keepalive emitted while a turn is still processing."""
+
+    type: Literal["response_heartbeat"] = "response_heartbeat"
+
+
 ConversationStreamEvent = Annotated[
     ConversationStreamChunkEvent
     | ConversationStreamCompletedEvent
-    | ConversationStreamErrorEvent,
+    | ConversationStreamErrorEvent
+    | ConversationStreamHeartbeatEvent,
     Field(discriminator="type"),
 ]
 

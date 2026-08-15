@@ -44,7 +44,11 @@ from app.services.conversation_service import (
     ConversationProposalError,
     ConversationService,
 )
-from app.conversation.reversible_actions import ReversibleActionExecution
+from app.services.conversation_runtime import build_conversation_service
+from app.conversation.reversible_actions import (
+    ReversibleActionExecution,
+    ReversibleActionPending,
+)
 from tests.postgres_test_support import fetch_one
 
 
@@ -334,6 +338,27 @@ class FakeReversibleCalendarExecutor:
         )
 
 
+class PendingOnceCalendarExecutor(FakeReversibleCalendarExecutor):
+    """Expose one durable pending create before succeeding on retry."""
+
+    async def create(
+        self,
+        *,
+        user_id: str,
+        proposal: CalendarEventProposal,
+        idempotency_key: str,
+    ) -> ReversibleActionExecution:
+        if self.created == 0:
+            self.created += 1
+            self.proposal = proposal
+            raise ReversibleActionPending("create-job-1")
+        return await super().create(
+            user_id=user_id,
+            proposal=proposal,
+            idempotency_key=idempotency_key,
+        )
+
+
 class GeneralIntent:
     async def route(
         self,
@@ -437,7 +462,7 @@ def _service(
         repository=repository,
         compactor=ConversationCompactor(),
     )
-    return ConversationService(
+    return build_conversation_service(
         harness=StubHarness(),  # type: ignore[arg-type]
         repository=repository,
         safety_classifier=CrisisSafety() if crisis else LowSafety(),
@@ -561,7 +586,7 @@ async def test_pending_queue_cancellation_preempts_ordinary_routing(
         compactor=ConversationCompactor(),
     )
     router = MultiGeneralIntent()
-    service = ConversationService(
+    service = build_conversation_service(
         harness=harness,
         repository=repository,
         safety_classifier=LowSafety(),
@@ -603,7 +628,7 @@ async def test_completed_one_shot_step_starts_next_ready_module(
     repository: PostgresConversationRepository,
 ) -> None:
     harness = GeneralHarness()
-    service = ConversationService(
+    service = build_conversation_service(
         harness=harness,
         repository=repository,
         safety_classifier=LowSafety(),
@@ -640,7 +665,7 @@ async def test_terminating_active_step_restores_source_and_runs_next_step(
     repository: PostgresConversationRepository,
 ) -> None:
     harness = GeneralHarness()
-    service = ConversationService(
+    service = build_conversation_service(
         harness=harness,
         repository=repository,
         safety_classifier=LowSafety(),
@@ -685,7 +710,7 @@ async def test_explicit_calendar_step_executes_and_can_be_undone(
     repository: PostgresConversationRepository,
 ) -> None:
     calendar = FakeReversibleCalendarExecutor()
-    service = ConversationService(
+    service = build_conversation_service(
         harness=GeneralHarness(),
         repository=repository,
         safety_classifier=LowSafety(),
@@ -726,6 +751,63 @@ async def test_explicit_calendar_step_executes_and_can_be_undone(
     assert undone_effect is not None
     assert undone_effect.status.value == "undone"
     assert calendar.undone == 1
+
+
+@pytest.mark.anyio
+async def test_pending_calendar_step_recovers_with_same_effect_receipt(
+    repository: PostgresConversationRepository,
+) -> None:
+    calendar = PendingOnceCalendarExecutor()
+    service = build_conversation_service(
+        harness=GeneralHarness(),
+        repository=repository,
+        safety_classifier=LowSafety(),
+        intent_router=ExplicitCalendarIntent(),
+        context_manager=ConversationContextManager(
+            repository=repository,
+            compactor=ConversationCompactor(),
+        ),
+        reversible_calendar_executor=calendar,  # type: ignore[arg-type]
+    )
+    conversation = await service.create_conversation(
+        user_id="owner",
+        title="Pending calendar",
+        history_notice_version=HISTORY_NOTICE_VERSION,
+        history_notice_acknowledged=True,
+    )
+
+    pending = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="每天晚上8点提醒我练习",
+        idempotency_key="request-calendar-pending",
+    )
+    recovered = await service.send_message(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+        message="每天晚上8点提醒我练习",
+        idempotency_key="request-calendar-retry",
+    )
+
+    assert pending.intent_plan is not None
+    assert (
+        pending.intent_plan.execution_plan.steps[0].status
+        is IntentStepStatus.READY_WITH_UNDO
+    )
+    assert "重试队列" in pending.response
+    assert recovered.intent_plan is not None
+    assert (
+        recovered.intent_plan.execution_plan.steps[0].status
+        is IntentStepStatus.COMPLETED
+    )
+    effect = await repository.latest_applied_intent_effect(
+        conversation_id=conversation.conversation_id,
+        user_id="owner",
+    )
+    assert effect is not None
+    assert effect.status.value == "applied"
+    assert effect.version == 2
+    assert calendar.created == 2
 
 
 @pytest.mark.anyio
@@ -810,7 +892,7 @@ async def test_general_support_abstains_from_module_proposal(
     repository: PostgresConversationRepository,
 ) -> None:
     harness = GeneralHarness()
-    service = ConversationService(
+    service = build_conversation_service(
         harness=harness,  # type: ignore[arg-type]
         repository=repository,
         safety_classifier=LowSafety(),
@@ -862,7 +944,7 @@ async def test_message_command_prevents_concurrent_model_execution_and_replays(
     repository: PostgresConversationRepository,
 ) -> None:
     harness = BlockingGeneralHarness()
-    service = ConversationService(
+    service = build_conversation_service(
         harness=harness,  # type: ignore[arg-type]
         repository=repository,
         safety_classifier=LowSafety(),

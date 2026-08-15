@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -30,6 +31,7 @@ from app.models_conversation_api import (
     ConversationStreamChunkEvent,
     ConversationStreamCompletedEvent,
     ConversationStreamErrorEvent,
+    ConversationStreamHeartbeatEvent,
     ConversationModuleDecisionRequest,
     ConversationModuleTerminateRequest,
     ConversationUpdateRequest,
@@ -236,12 +238,15 @@ async def send_conversation_message(
     """Append one message without allowing the model to start a module."""
     user_id = resolve_request_user_id(request.user_id, current_user)
     try:
-        return await conversation_service().send_message(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            message=request.message,
-            idempotency_key=request.idempotency_key,
-        )
+        async with asyncio.timeout(_conversation_turn_timeout_seconds()):
+            return await conversation_service().send_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                message=request.message,
+                idempotency_key=request.idempotency_key,
+            )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Conversation turn timed out") from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
     except (ConversationCommandInProgressError, ConversationIdempotencyError) as exc:
@@ -265,15 +270,18 @@ async def stream_conversation_message(
 
         async def produce() -> None:
             try:
-                result = await conversation_service().send_message(
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    message=request.message,
-                    idempotency_key=request.idempotency_key,
-                    streaming_requested=True,
-                    response_chunk_sink=chunk_sink,
-                )
+                async with asyncio.timeout(_conversation_turn_timeout_seconds()):
+                    result = await conversation_service().send_message(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        message=request.message,
+                        idempotency_key=request.idempotency_key,
+                        streaming_requested=True,
+                        response_chunk_sink=chunk_sink,
+                    )
                 await queue.put(("completed", result))
+            except TimeoutError:
+                await queue.put(("error", "The response timed out; retry this message"))
             except LookupError:
                 await queue.put(("error", "Conversation not found"))
             except (
@@ -291,7 +299,14 @@ async def stream_conversation_message(
         producer.add_done_callback(_STREAM_PRODUCERS.discard)
         streamed_chunks = 0
         while True:
-            kind, payload = await queue.get()
+            try:
+                kind, payload = await asyncio.wait_for(
+                    queue.get(),
+                    timeout=_conversation_heartbeat_seconds(),
+                )
+            except TimeoutError:
+                yield conversation_sse_event(ConversationStreamHeartbeatEvent())
+                continue
             if kind == "chunk" and isinstance(payload, str):
                 streamed_chunks += 1
                 yield conversation_sse_event(
@@ -327,6 +342,41 @@ async def stream_conversation_message(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _conversation_turn_timeout_seconds() -> float:
+    """Return the bounded end-to-end deadline for one streamed turn."""
+    return _bounded_float_env(
+        "SOCIALEASE_CONVERSATION_TURN_TIMEOUT_SECONDS",
+        default=85.0,
+        minimum=10.0,
+        maximum=300.0,
+    )
+
+
+def _conversation_heartbeat_seconds() -> float:
+    """Return the idle interval between content-free SSE keepalives."""
+    return _bounded_float_env(
+        "SOCIALEASE_CONVERSATION_HEARTBEAT_SECONDS",
+        default=15.0,
+        minimum=1.0,
+        maximum=30.0,
+    )
+
+
+def _bounded_float_env(
+    name: str,
+    *,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    """Parse and clamp one operational duration setting."""
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return min(maximum, max(minimum, value))
 
 
 @router.post(

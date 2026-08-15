@@ -137,9 +137,12 @@ class PostgresConversationRepository:
         user_id: str,
         idempotency_key: str,
         request_hash: str,
+        lease_owner: str,
+        lease_seconds: int,
     ) -> ConversationCommandClaim:
         """Atomically acquire one logical command or return its saved result."""
         now = datetime.now(UTC)
+        lease_seconds = max(1, lease_seconds)
         async with self.engine.begin() as connection:
             owner = (await connection.execute(
                 text(
@@ -160,11 +163,17 @@ class PostgresConversationRepository:
                 text(
                     """INSERT INTO conversation_commands
                     (conversation_id, user_id, idempotency_key, request_hash,
-                     status, created_at)
+                     status, created_at, lease_owner, lease_expires_at,
+                     attempt_count)
                     VALUES (:conversation_id, :user_id, :idempotency_key,
-                            :request_hash, 'processing', :created_at)
+                            :request_hash, 'processing', :created_at,
+                            :lease_owner,
+                            CURRENT_TIMESTAMP
+                                + CAST(:lease_seconds AS integer)
+                                * INTERVAL '1 second',
+                            1)
                     ON CONFLICT (conversation_id, idempotency_key) DO NOTHING
-                    RETURNING conversation_id"""
+                    RETURNING attempt_count"""
                 ),
                 {
                     "conversation_id": conversation_id,
@@ -172,10 +181,15 @@ class PostgresConversationRepository:
                     "idempotency_key": idempotency_key,
                     "request_hash": request_hash,
                     "created_at": now,
+                    "lease_owner": lease_owner,
+                    "lease_seconds": lease_seconds,
                 },
             )).first()
             if inserted is not None:
-                return ConversationCommandClaim(acquired=True)
+                return ConversationCommandClaim(
+                    acquired=True,
+                    attempt_count=int(inserted[0]),
+                )
             row = (await connection.execute(
                 text(
                     """SELECT * FROM conversation_commands
@@ -188,16 +202,44 @@ class PostgresConversationRepository:
                     "idempotency_key": idempotency_key,
                 },
             )).mappings().first()
-        if row is None or row["user_id"] != user_id:
-            raise ConversationIdempotencyError(
-                "idempotency key belongs to another command"
-            )
-        if row["request_hash"] != request_hash:
-            raise ConversationIdempotencyError(
-                "idempotency key was reused with different input"
-            )
-        if row["status"] != "completed":
-            return ConversationCommandClaim(acquired=False)
+            if row is None or row["user_id"] != user_id:
+                raise ConversationIdempotencyError(
+                    "idempotency key belongs to another command"
+                )
+            if row["request_hash"] != request_hash:
+                raise ConversationIdempotencyError(
+                    "idempotency key was reused with different input"
+                )
+            if row["status"] != "completed":
+                reclaimed = (await connection.execute(
+                    text(
+                        """UPDATE conversation_commands
+                        SET lease_owner = :lease_owner,
+                            lease_expires_at = CURRENT_TIMESTAMP
+                                + CAST(:lease_seconds AS integer)
+                                * INTERVAL '1 second',
+                            attempt_count = attempt_count + 1
+                        WHERE conversation_id = :conversation_id
+                          AND user_id = :user_id
+                          AND idempotency_key = :idempotency_key
+                          AND status = 'processing'
+                          AND lease_expires_at <= CURRENT_TIMESTAMP
+                        RETURNING attempt_count"""
+                    ),
+                    {
+                        "lease_owner": lease_owner,
+                        "lease_seconds": lease_seconds,
+                        "conversation_id": conversation_id,
+                        "user_id": user_id,
+                        "idempotency_key": idempotency_key,
+                    },
+                )).first()
+                if reclaimed is None:
+                    return ConversationCommandClaim(acquired=False)
+                return ConversationCommandClaim(
+                    acquired=True,
+                    attempt_count=int(reclaimed[0]),
+                )
         result = self._protector.recover(
             ProtectedContent(
                 plaintext=row["result_plaintext"],
@@ -214,7 +256,41 @@ class PostgresConversationRepository:
         return ConversationCommandClaim(
             acquired=False,
             completed_result=result,
+            attempt_count=int(row["attempt_count"]),
         )
+
+    async def renew_command_lease(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+        lease_seconds: int,
+    ) -> bool:
+        """Extend a processing command lease only for its current owner."""
+        async with self.engine.begin() as connection:
+            updated = await connection.execute(
+                text(
+                    """UPDATE conversation_commands
+                    SET lease_expires_at = CURRENT_TIMESTAMP
+                        + CAST(:lease_seconds AS integer)
+                        * INTERVAL '1 second'
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND idempotency_key = :idempotency_key
+                      AND status = 'processing'
+                      AND lease_owner = :lease_owner"""
+                ),
+                {
+                    "lease_seconds": max(1, lease_seconds),
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                    "lease_owner": lease_owner,
+                },
+            )
+        return updated.rowcount == 1
 
     async def complete_command(
         self,
@@ -222,6 +298,7 @@ class PostgresConversationRepository:
         conversation_id: str,
         user_id: str,
         idempotency_key: str,
+        lease_owner: str,
         result: str,
     ) -> None:
         """Persist the final encrypted-capable result exactly once."""
@@ -242,11 +319,14 @@ class PostgresConversationRepository:
                         result_ciphertext = :result_ciphertext,
                         result_nonce = :result_nonce,
                         result_key_version = :result_key_version,
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
                         completed_at = :completed_at
                     WHERE conversation_id = :conversation_id
                       AND user_id = :user_id
                       AND idempotency_key = :idempotency_key
-                      AND status = 'processing'"""
+                      AND status = 'processing'
+                      AND lease_owner = :lease_owner"""
                 ),
                 {
                     "result_plaintext": protected.plaintext,
@@ -257,6 +337,7 @@ class PostgresConversationRepository:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                     "idempotency_key": idempotency_key,
+                    "lease_owner": lease_owner,
                 },
             ))
         if updated.rowcount != 1:

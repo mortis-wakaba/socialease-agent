@@ -43,6 +43,7 @@ class ConversationCommandClaim:
 
     acquired: bool
     completed_result: str | None = None
+    attempt_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -148,7 +149,19 @@ class ConversationRepository(Protocol):
         user_id: str,
         idempotency_key: str,
         request_hash: str,
+        lease_owner: str,
+        lease_seconds: int,
     ) -> ConversationCommandClaim: ...
+
+    async def renew_command_lease(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+        lease_seconds: int,
+    ) -> bool: ...
 
     async def complete_command(
         self,
@@ -156,6 +169,7 @@ class ConversationRepository(Protocol):
         conversation_id: str,
         user_id: str,
         idempotency_key: str,
+        lease_owner: str,
         result: str,
     ) -> None: ...
 

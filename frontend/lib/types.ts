@@ -336,6 +336,7 @@ export type ConversationMessageResponse = {
 export type ConversationStreamPayload =
   | { type: "response_chunk"; text: string }
   | { type: "response_completed"; result: ConversationMessageResponse }
+  | { type: "response_heartbeat" }
   | { type: "response_error"; detail: string };
 
 export type ModuleControlResponse = {

@@ -46,6 +46,9 @@ export function parseConversationStreamFrame(
   if (payload.type === "response_error" && typeof payload.detail === "string") {
     return { type: payload.type, detail: payload.detail };
   }
+  if (payload.type === "response_heartbeat") {
+    return { type: payload.type };
+  }
   throw new Error("Streaming response contained an invalid payload");
 }
 

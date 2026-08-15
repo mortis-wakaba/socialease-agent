@@ -10,6 +10,14 @@ test("parses a typed conversation stream chunk", () => {
   ).toEqual({ type: "response_chunk", text: "hello" });
 });
 
+test("accepts a typed heartbeat frame", () => {
+  expect(
+    parseConversationStreamFrame(
+      'event: response_heartbeat\ndata: {"type":"response_heartbeat"}'
+    )
+  ).toEqual({ type: "response_heartbeat" });
+});
+
 test("rejects drift between the SSE event name and payload discriminator", () => {
   expect(() =>
     parseConversationStreamFrame(

@@ -6,8 +6,10 @@ import os
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 
 from app.conversation.content_protector import LocalPlaintextContentProtector
+from app.conversation.repository import ConversationConcurrencyError
 from app.db.postgres.conversation_repository import (
     PostgresConversationRepository,
 )
@@ -106,6 +108,70 @@ async def test_postgres_conversation_owner_scope_and_idempotency(
         )
         is None
     )
+
+
+async def test_expired_conversation_command_lease_is_reclaimed(
+    repository: PostgresConversationRepository,
+) -> None:
+    user_id = f"pg_command_lease_{uuid4().hex}"
+    conversation = await repository.create(user_id=user_id, title="Lease")
+    values = {
+        "conversation_id": conversation.conversation_id,
+        "user_id": user_id,
+        "idempotency_key": "leased-command-001",
+        "request_hash": "a" * 64,
+    }
+
+    first = await repository.claim_command(
+        **values,
+        lease_owner="worker-one",
+        lease_seconds=60,
+    )
+    async with repository.engine.begin() as connection:
+        await connection.execute(
+            text(
+                """UPDATE conversation_commands
+                SET lease_expires_at = :expired
+                WHERE conversation_id = :conversation_id
+                  AND idempotency_key = :idempotency_key"""
+            ),
+            {
+                "expired": datetime.now(UTC) - timedelta(seconds=1),
+                "conversation_id": conversation.conversation_id,
+                "idempotency_key": values["idempotency_key"],
+            },
+        )
+    reclaimed = await repository.claim_command(
+        **values,
+        lease_owner="worker-two",
+        lease_seconds=60,
+    )
+
+    assert first.acquired is True
+    assert first.attempt_count == 1
+    assert reclaimed.acquired is True
+    assert reclaimed.attempt_count == 2
+    with pytest.raises(ConversationConcurrencyError):
+        await repository.complete_command(
+            conversation_id=conversation.conversation_id,
+            user_id=user_id,
+            idempotency_key=values["idempotency_key"],
+            lease_owner="worker-one",
+            result='{"response":"stale"}',
+        )
+    await repository.complete_command(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key=values["idempotency_key"],
+        lease_owner="worker-two",
+        result='{"response":"done"}',
+    )
+    replay = await repository.claim_command(
+        **values,
+        lease_owner="worker-three",
+        lease_seconds=60,
+    )
+    assert replay.completed_result == '{"response":"done"}'
 
 
 async def test_postgres_concurrent_append_sequence_is_contiguous(

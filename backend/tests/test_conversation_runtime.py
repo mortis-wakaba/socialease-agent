@@ -48,9 +48,13 @@ def test_runtime_shares_local_model_between_router_and_compactor(
     assert isinstance(service, StubConversationService)
     assert isinstance(service_kwargs, dict)
     assert isinstance(harness_kwargs, dict)
-    assert service_kwargs["lightweight_llm_client"] is local_client
     assert service_kwargs["intent_router"] is harness_kwargs["intent_router"]
     assert isinstance(service_kwargs["intent_router"], LlmIntentRouter)
     assert service_kwargs["intent_router"].llm_client is local_client
+    context_manager = service_kwargs["context_manager"]
+    assert context_manager._compactor._llm_client is local_client
+    assert "lightweight_llm_client" not in service_kwargs
+    assert service_kwargs["repository"] is not None
+    assert service_kwargs["module_coordinator"] is not None
 
     conversation_runtime.conversation_service.cache_clear()

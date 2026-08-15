@@ -71,6 +71,7 @@ from app.workflow.recovery import (
 )
 from app.workflow.router import BaseIntentRouter, IntentRouter, LlmIntentRouter
 from app.workflow.response_constraints import extract_response_constraints
+from app.workflow.stages import IntentRoutingStage, SafetyCheckStage
 
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,15 @@ class AgentHarness:
         self.output_guardrail = output_guardrail or create_output_guardrail()
         self.output_guardrail_policy = output_guardrail_policy or OutputGuardrailPolicy()
         self.hooks = tuple(hooks or ())
+        self.safety_stage = SafetyCheckStage(
+            classifier=self.safety_classifier,
+            hooks=self.hooks,
+        )
+        self.routing_stage = IntentRoutingStage(
+            router=self.intent_router,
+            permission_gate=self.permission_gate,
+            hooks=self.hooks,
+        )
         factory = repository_factory()
         self.user_profile_repository = user_profile_repository or factory.user_profile_repository()
         self.memory_settings_repository = (
@@ -165,35 +175,13 @@ class AgentHarness:
             ),
         )
 
-        for hook in self.hooks:
-            method = getattr(hook, "before_safety", None)
-            if method is not None:
-                method(request)
-
-        if trusted_safety_result is not None:
-            safety_result = trusted_safety_result
-        else:
-            try:
-                safety_result = await self.safety_classifier.classify(request.message)
-            except Exception as exc:
-                safety_result = SafetyResult(
-                    risk_level=RiskLevel.HIGH,
-                    reason=(
-                        "Safety classifier failed; using conservative high-risk "
-                        "fallback instead of ordinary low-risk handling."
-                    ),
-                )
-                errors.append(
-                    format_trace_error(
-                        ErrorCategory.SAFETY_CLASSIFIER_FAILURE,
-                        exc,
-                    )
-                )
+        safety_stage_result = await self.safety_stage.execute(
+            request,
+            trusted_result=trusted_safety_result,
+        )
+        safety_result = safety_stage_result.safety_result
+        errors.extend(safety_stage_result.errors)
         run_context.safety_result = safety_result
-        for hook in self.hooks:
-            method = getattr(hook, "after_safety", None)
-            if method is not None:
-                method(request, safety_result)
         _emit_stage_completed(
             event_sink,
             run_id=run_id,
@@ -203,26 +191,12 @@ class AgentHarness:
         )
         stage_started = perf_counter()
 
-        crisis_decision = self.permission_gate.decide(
+        intent_result = await self.routing_stage.execute(
+            request,
             safety_result,
-            HarnessAction.CRISIS_ESCALATION,
+            trusted_result=trusted_intent_result,
         )
-        if crisis_decision.action == PermissionAction.ESCALATE:
-            intent_result = IntentResult(
-                intent=Intent.CRISIS,
-                confidence=1.0,
-                reason="Safety permission gate required crisis escalation.",
-            )
-        elif trusted_intent_result is not None:
-            intent_result = trusted_intent_result
-        else:
-            intent_result = await self.intent_router.route(request.message, safety_result)
         run_context.intent_result = intent_result
-
-        for hook in self.hooks:
-            method = getattr(hook, "after_routing", None)
-            if method is not None:
-                method(request, intent_result)
         _emit_stage_completed(
             event_sink,
             run_id=run_id,
