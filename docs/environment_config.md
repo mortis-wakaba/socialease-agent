@@ -203,6 +203,9 @@ Provider 失败或关闭时，系统仍必须保持安全。
 | `LLM_MAX_CONCURRENCY` | pilot | 推荐的全局 LLM 并发上限变量 |
 | `SOCIALEASE_LLM_MAX_CONCURRENCY` | legacy | `LLM_MAX_CONCURRENCY` 的兼容别名 |
 | `SOCIALEASE_SLOW_REQUEST_MS` | pilot | structured log 和 slow-request metrics 阈值 |
+| `SOCIALEASE_CONVERSATION_TURN_TIMEOUT_SECONDS` | conversation | 单次 HTTP/SSE turn 的端到端 deadline，默认 85 秒 |
+| `SOCIALEASE_CONVERSATION_HEARTBEAT_SECONDS` | conversation SSE | 无内容期间的 typed SSE heartbeat 间隔，默认 15 秒 |
+| `SOCIALEASE_CONVERSATION_COMMAND_LEASE_SECONDS` | conversation | command owner lease 时长，运行中会持续续租，默认 90 秒 |
 | `SOCIALEASE_REDIS_URL` | context cache / multi-instance | 统一 Conversation Context、Module Overlay、Worksheet Draft 和 Resource 引用状态共用的 Redis URL |
 | `SOCIALEASE_REQUIRE_REDIS` | production | production 默认 `true`；缺少 Redis URL 时拒绝启动，Redis 探针失败时 `/ready` 返回 503 |
 | `SOCIALEASE_DOCKER_REDIS_URL` | local compose | 可选的 backend 容器 Redis URL；默认 `redis://redis:6379/0`，避免把宿主机的 `localhost` 地址传入容器 |
@@ -211,15 +214,15 @@ Provider 失败或关闭时，系统仍必须保持安全。
 | `MODULE_OVERLAY_CACHE_TTL_SECONDS` | modules | 加密 Module Overlay Cache TTL，默认 3600 秒 |
 | `WORKSHEET_DRAFT_TTL_SECONDS` | worksheet | Worksheet 当前字段引用和草稿状态 TTL，默认 3600 秒；不复制统一 Timeline 原文 |
 | `SUPPORT_SEARCH_TTL_SECONDS` | resource | Resource Citation ID 指代状态 TTL，默认 1800 秒；不缓存任意网页正文 |
-| `SOCIALEASE_RATE_LIMIT_BACKEND` | pilot | `local` 进程内限流；`gateway` 表示网关限流；`redis` 目前 fail fast |
+| `SOCIALEASE_RATE_LIMIT_BACKEND` | pilot | `local` 进程内限流；`gateway` 表示网关限流；`redis` 使用共享 sliding-window |
 
 Redis 保存加密、版本化的统一 Conversation Context Projection 和 Module Overlay，以及
 Worksheet 当前字段引用、Resource Citation ID 等允许过期的任务状态。Role-play 消息不再
 拥有独立 Redis window，正文只来自 Conversation Timeline。Redis miss/timeout 会从数据库
 重建，不能改变用户历史或冒充数据库事实。production 模式默认要求 Redis：未配置 URL 时
-拒绝启动，探针失败时 `/ready` 返回 503；请求正确性仍不以缓存命中为前提。当前限流仍是
-进程内实现，多实例试点时只有部署网关真正执行请求预算，才设置
-`SOCIALEASE_RATE_LIMIT_BACKEND=gateway`。LLM concurrency 目前固定为进程内 semaphore；
+拒绝启动，探针失败时 `/ready` 返回 503；请求正确性仍不以缓存命中为前提。单进程可使用
+`local`；多实例部署必须选择真正执行限流的 `gateway`，或使用共享 Redis 的
+`redis`。Redis 限流不可用时 fail closed 为 503。LLM concurrency 目前固定为进程内 semaphore；
 共享 provider semaphore 尚未实现，因此不提供运行时 backend 选择变量。
 
 ## Operational Alerts

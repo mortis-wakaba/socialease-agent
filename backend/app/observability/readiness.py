@@ -14,6 +14,7 @@ from app.db.config import database_settings
 from app.db.migration_check import validate_revision_chain
 from app.db.providers import DatabaseProvider, resolve_database_provider
 from app.db.postgres.engine import shared_postgres_async_engine
+from app.rate_limit import rate_limit_backend
 from app.workflow.default_hooks import metrics_hook
 
 async def readiness_snapshot() -> tuple[int, dict[str, object]]:
@@ -24,6 +25,7 @@ async def readiness_snapshot() -> tuple[int, dict[str, object]]:
         "migrations": _migration_graph_check(),
         "metrics": await _metrics_check(),
         "auth": _auth_config_check(),
+        "rate_limit": _rate_limit_config_check(),
         "calendar": _calendar_config_check(),
         "outbox": await _outbox_check(),
     }
@@ -209,6 +211,27 @@ def _calendar_config_check() -> dict[str, object]:
     return {
         "ok": configured or not production,
         "transport": "remote_mcp" if configured else "demo_in_process",
+    }
+
+
+def _rate_limit_config_check() -> dict[str, object]:
+    """Describe whether request budgets are safe for the deployment topology."""
+    backend = rate_limit_backend()
+    limit = _int_env("SOCIALEASE_RATE_LIMIT_PER_MINUTE") or 0
+    redis_configured = bool(os.getenv("SOCIALEASE_REDIS_URL", "").strip())
+    supported = backend in {"local", "gateway", "redis"}
+    configured = backend != "redis" or redis_configured
+    warnings: list[str] = []
+    if backend == "local":
+        warnings.append("single_process_only")
+    if limit <= 0 and backend != "gateway":
+        warnings.append("application_rate_limit_disabled")
+    return {
+        "ok": supported and configured,
+        "backend": backend,
+        "limit_per_minute": limit,
+        "multi_instance_safe": backend in {"gateway", "redis"},
+        "warnings": warnings,
     }
 
 
