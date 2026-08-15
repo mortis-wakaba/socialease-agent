@@ -1,0 +1,41 @@
+docker-compose.prod.yml
+  s_e796b7291c691e::t_f4c54714751297 35-37
+  s_e796b7291c691e::t_253d59e19ac276 33
+backend/app/rate_limit.py
+  s_e796b7291c691e::t_4530693f781b44 163-164,170-172
+  s_e796b7291c691e::t_de1ab04b5a24f4 64
+  s_e796b7291c691e::t_e48e09e3175f78 135-143
+  s_e796b7291c691e::t_9b242a95171662 1,115,165-169
+  s_e796b7291c691e::t_11173e89e6e0bd 4,7,10,30-35,65-114,116-134,144-162,173-176,191,196,200-215,223-241
+backend/tests/test_rate_limit.py
+  s_e796b7291c691e::t_4530693f781b44 5-6,305-329
+  s_e796b7291c691e::t_e48e09e3175f78 242-252,270-283
+  s_e796b7291c691e::t_9a8e1e556fac14 23,220,222,224-241,253-269,284-304
+docs/environment_config.md
+  s_e796b7291c691e::t_253d59e19ac276 217,223-225
+  s_e796b7291c691e::t_f4c54714751297 206-208
+backend/app/observability/readiness.py
+  s_e796b7291c691e::t_253d59e19ac276 17,28,217-234
+  s_e796b7291c691e::t_4056b8ea47b099 235-237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "8f2814bb64f6ea191e838e54ebdc288ae6f628de",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_e796b7291c691e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00470-7f29-7983-8891-8f19c5330d65",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
