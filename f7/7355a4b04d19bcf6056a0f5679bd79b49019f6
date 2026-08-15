@@ -1,0 +1,104 @@
+frontend/lib/conversation-stream.ts
+  s_e796b7291c691e::t_e5a9fd8be6b5fd 49-51
+backend/tests/test_postgres_conversation_repository.py
+  s_e796b7291c691e::t_f3e28525ee5e4b 9,12,113-174
+  s_e796b7291c691e::t_0386c6e14ed645 176
+  s_e796b7291c691e::t_2a336f331fa871 175
+backend/app/api/conversations.py
+  s_e796b7291c691e::t_7a63079b49365d 5,34,273-281,283-284,302-309,347-379
+  s_e796b7291c691e::t_f4c54714751297 241-249
+  s_e796b7291c691e::t_e035f4a29391ec 380-381
+backend/app/conversation/turn_coordinators.py
+  s_e796b7291c691e::t_3b47d863410364 12,148,270,376-379
+  s_e796b7291c691e::t_381c5f3f1e0480 1-11,13-81,92-147,149-269,271-375,380-414,416-421,423-429,431-621
+  s_e796b7291c691e::t_a8a5671298e73a 82-91,415,422,430
+backend/tests/test_intent_effect_executor.py
+  s_e796b7291c691e::t_9c7ce0beefdf5f 1-229
+backend/app/conversation/turns.py
+  s_e796b7291c691e::t_0c38d11395961c 1-32
+backend/app/db/postgres/conversation_repository.py
+  s_e796b7291c691e::t_577127eb9672a6 140-141,166-167,169,176,184,189-192,205-217,221-225,227-230,232-242,259,262-275,279-285,287-294,301,322-323,328-329,340
+  s_e796b7291c691e::t_9b242a95171662 145,170-174,185,218-220,226,231,276-278,286
+backend/tests/test_conversation_service.py
+  s_e796b7291c691e::t_ddf4c0b4b9b802 47
+  s_e796b7291c691e::t_cd03315abc4469 48-51,341-358
+  s_e796b7291c691e::t_0787530630656b 757-760,762-812
+  s_e796b7291c691e::t_0af6d0aff28e91 465,589,631,668,713,761,895,947
+  s_e796b7291c691e::t_ae6bc6804cc6b4 359-361,756
+frontend/lib/types.ts
+  s_e796b7291c691e::t_e5a9fd8be6b5fd 339
+frontend/e2e/conversation-stream-contract.spec.ts
+  s_e796b7291c691e::t_0c622f2d7182b2 13-20
+backend/tests/test_turn_coordinators.py
+  s_e796b7291c691e::t_4dbcb336041125 1-100,102-119,121-131
+  s_e796b7291c691e::t_a8a5671298e73a 101,120
+backend/app/conversation/intent_step_runner.py
+  s_e796b7291c691e::t_7b86323d46ec57 1-286
+backend/app/workflow/stages.py
+  s_e796b7291c691e::t_8f162de96308ec 1-111
+backend/app/services/conversation_runtime.py
+  s_e796b7291c691e::t_ddf4c0b4b9b802 57,120
+  s_e796b7291c691e::t_ff56cd7e362428 7-19,21-24,26-28,32-34,39-56,58-119,121-122,134
+  s_e796b7291c691e::t_01e4d1243cdfb5 3
+  s_e796b7291c691e::t_f4c54714751297 5,142-144
+backend/migrations/versions/0024_conversation_command_leases.py
+  s_e796b7291c691e::t_a6603b08e9058f 62-66
+  s_e796b7291c691e::t_75427dfb03cb37 37-48
+  s_e796b7291c691e::t_dbb65108899218 1-36,49-61,67-82
+backend/app/workflow/engine.py
+  s_e796b7291c691e::t_b86d3b69cf1940 74,107-115,178-183,194-195,197
+backend/tests/test_conversation_runtime.py
+  s_e796b7291c691e::t_43d7fa68d6324c 54-58
+backend/app/models_conversation_api.py
+  s_e796b7291c691e::t_f356d22cbd10c4 87-92,97
+  s_e796b7291c691e::t_263c6259c94c64 96
+backend/tests/test_intent_step_runner.py
+  s_e796b7291c691e::t_ee81064515dfdd 1-256
+backend/tests/test_workflow_stages.py
+  s_e796b7291c691e::t_25a763c84817e9 1-91
+backend/app/conversation/intent_effect_executor.py
+  s_e796b7291c691e::t_31dc1719b98efa 1-229
+backend/tests/test_response_streaming.py
+  s_e796b7291c691e::t_0c622f2d7182b2 6,51,57-58
+backend/app/services/conversation_service.py
+  s_e796b7291c691e::t_bb9134bfd2b5d1 35,555-556,564-566,568,577-578,614-615,618-623,626-649,651-654,656-669,673-676,678-686,688-691
+  s_e796b7291c691e::t_4bf8f68849bf9a 29-31,135-141,828
+  s_e796b7291c691e::t_06da0183ca15f1 77,81,103-109,114-115,117-120
+  s_e796b7291c691e::t_c6e402a1327e99 34
+  s_e796b7291c691e::t_a8a5671298e73a 145,151-158,550
+  s_e796b7291c691e::t_c7237f0c69e374 3-4,111,122,473,479-480,490-531,542-543,547-549,551
+  s_e796b7291c691e::t_2bf25cbdfac833 532-541
+  s_e796b7291c691e::t_e0ad1b27ead891 28,131,133
+  s_e796b7291c691e::t_6487563012b54a 546,554,720-745,747-749,751-755,757,759-761,768,771-773,778-782,784-791,794-800,802-805,808-809,815,820,822-823,826-827,830,836-837,845,847,851,853-854,863-865,867,870
+  s_e796b7291c691e::t_de1ab04b5a24f4 670-672
+  s_e796b7291c691e::t_ba2e0d55ff27c5 36-39,123-129,143,146-149
+  s_e796b7291c691e::t_7d471b0a7868f2 1164-1171
+  s_e796b7291c691e::t_28208ead1e2db3 692-718
+  s_e796b7291c691e::t_77dc04ccfc7d6b 27
+  s_e796b7291c691e::t_49c87d49292d5a 121
+  s_e796b7291c691e::t_c0f6b6606edd8b 544-545
+  s_e796b7291c691e::t_ed9d9d283fb49a 552-553
+backend/app/conversation/repository.py
+  s_e796b7291c691e::t_3e4786c805e9bb 46,152-153,156-165,172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "f77355a4b04d19bcf6056a0f5679bd79b49019f6",
+  "prompts": {},
+  "humans": {
+    "h_267b8cfe3a59a4": {
+      "author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_e796b7291c691e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00470-7f29-7983-8891-8f19c5330d65",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "mortis_wakaba <mortis_wakaba@qq.com>"
+    }
+  }
+}
