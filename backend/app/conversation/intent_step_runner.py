@@ -34,6 +34,7 @@ from app.models_conversation_context import (
     build_conversation_prompt_context,
 )
 from app.models_intent_plan import ConversationIntentPlan
+from app.observability.turn_latency import measure_turn_stage
 from app.workflow.engine import AgentHarness
 
 
@@ -207,24 +208,27 @@ class IntentStepRunner:
         safety_result: SafetyResult,
         context: ConversationWorkingContext,
     ) -> tuple[ConversationIntentPlan, ConversationEvent, str]:
-        workflow = await self._harness.run(
-            ChatRequest(
-                user_id=plan.user_id,
-                message=source_event.content,
-                context=conversation_workflow_context(
-                    context,
-                    source_event_id=source_event.event_id,
+        with measure_turn_stage("workflow"):
+            workflow = await self._harness.run(
+                ChatRequest(
+                    user_id=plan.user_id,
+                    message=source_event.content,
+                    context=conversation_workflow_context(
+                        context,
+                        source_event_id=source_event.event_id,
+                    ),
                 ),
-            ),
-            trusted_safety_result=safety_result,
-            trusted_intent_result=IntentResult(
-                intent=step.intent,
-                confidence=1.0,
-                reason="authorized sequential plan progression",
-            ),
-            trusted_conversation_context=build_conversation_prompt_context(context),
-            streaming_requested=False,
-        )
+                trusted_safety_result=safety_result,
+                trusted_intent_result=IntentResult(
+                    intent=step.intent,
+                    confidence=1.0,
+                    reason="authorized sequential plan progression",
+                ),
+                trusted_conversation_context=build_conversation_prompt_context(
+                    context
+                ),
+                streaming_requested=False,
+            )
         event = await self._repository.append_event(
             conversation_id=plan.conversation_id,
             user_id=plan.user_id,

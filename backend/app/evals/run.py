@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from app.agents.roleplay import RoleplayAgent
 from app.agents.worksheet import WorksheetAgent
 from app.evals.loader import (
-    load_e2e_workflow_cases,
+    load_deterministic_workflow_contract_cases,
     load_intent_cases,
     load_memory_retrieval_cases,
     load_output_guardrail_cases,
@@ -129,19 +129,27 @@ def run_evaluations_with_traces() -> EvalTraceReport:
     safety_results = []
     for case in safety_cases:
         actual_risk = _rule_based_safety_for_eval(safety_classifier, case.message)
-        passed = actual_risk == case.expected_risk_level
+        expected_floor = (
+            RiskLevel.CRISIS
+            if case.expected_risk_level is RiskLevel.CRISIS
+            else RiskLevel.LOW
+        )
+        passed = actual_risk == expected_floor
         safety_results.append(passed)
         _append_case_trace(
             case_traces,
             suite="safety",
             case_id=case.id,
             passed=passed,
-            expected={"risk_level": case.expected_risk_level},
+            expected={
+                "crisis_rule_floor": expected_floor,
+                "semantic_final_risk": case.expected_risk_level,
+            },
             actual={"risk_level": actual_risk},
             steps=[
                 _step_trace(
-                    "safety_classifier",
-                    expected={"risk_level": case.expected_risk_level},
+                    "crisis_rule_floor",
+                    expected={"risk_level": expected_floor},
                     actual={"risk_level": actual_risk},
                     passed=passed,
                 )
@@ -151,19 +159,28 @@ def run_evaluations_with_traces() -> EvalTraceReport:
     safety_red_team_results = []
     for case in safety_red_team_cases:
         actual_risk = _rule_based_safety_for_eval(safety_classifier, case.message)
-        passed = _risk_at_least(actual_risk, case.expected_min_risk_level)
+        expected_floor = (
+            RiskLevel.CRISIS
+            if case.expected_min_risk_level is RiskLevel.CRISIS
+            else RiskLevel.LOW
+        )
+        passed = actual_risk == expected_floor
         safety_red_team_results.append(passed)
         _append_case_trace(
             case_traces,
             suite="safety_red_team",
             case_id=case.id,
             passed=passed,
-            expected={"min_risk_level": case.expected_min_risk_level, "notes": case.notes},
+            expected={
+                "crisis_rule_floor": expected_floor,
+                "semantic_min_risk_level": case.expected_min_risk_level,
+                "notes": case.notes,
+            },
             actual={"risk_level": actual_risk},
             steps=[
                 _step_trace(
-                    "safety_floor",
-                    expected={"min_risk_level": case.expected_min_risk_level},
+                    "crisis_rule_floor",
+                    expected={"risk_level": expected_floor},
                     actual={"risk_level": actual_risk},
                     passed=passed,
                 )
@@ -403,9 +420,9 @@ def run_evaluations_with_traces() -> EvalTraceReport:
             ],
         )
 
-    e2e_cases = load_e2e_workflow_cases()
-    e2e_results = []
-    for case in e2e_cases:
+    workflow_contract_cases = load_deterministic_workflow_contract_cases()
+    workflow_contract_results = []
+    for case in workflow_contract_cases:
         risk_level = _rule_based_safety_for_eval(safety_classifier, case.message)
         safety_result = SafetyResult(risk_level=risk_level, reason="eval")
         crisis_decision = permission_gate.decide(safety_result, HarnessAction.CRISIS_ESCALATION)
@@ -428,10 +445,10 @@ def run_evaluations_with_traces() -> EvalTraceReport:
             and selected_agent == case.expected_selected_agent
             and escalation == case.expected_escalation
         )
-        e2e_results.append(passed)
+        workflow_contract_results.append(passed)
         _append_case_trace(
             case_traces,
-            suite="e2e_workflow",
+            suite="deterministic_workflow_contract",
             case_id=case.id,
             passed=passed,
             expected={
@@ -563,7 +580,10 @@ def run_evaluations_with_traces() -> EvalTraceReport:
         ),
         roleplay_feedback_pass_rate=ratio(sum(roleplay_results), len(roleplay_results)),
         worksheet_extraction_pass_rate=ratio(sum(worksheet_results), len(worksheet_results)),
-        e2e_workflow_pass_rate=ratio(sum(e2e_results), len(e2e_results)),
+        deterministic_workflow_contract_pass_rate=ratio(
+            sum(workflow_contract_results),
+            len(workflow_contract_results),
+        ),
         product_boundary_pass_rate=ratio(
             sum(all_product_boundary_results),
             len(all_product_boundary_results),
@@ -872,10 +892,20 @@ def _eval_safety_floor(
     actual = _rule_based_safety_for_eval(safety_classifier, text)
     expected_exact = case.expected.get("risk_level")
     if isinstance(expected_exact, str):
-        return actual.value == expected_exact
+        expected_floor = (
+            RiskLevel.CRISIS
+            if RiskLevel(expected_exact) is RiskLevel.CRISIS
+            else RiskLevel.LOW
+        )
+        return actual is expected_floor
     expected_min = case.expected.get("min_risk_level")
     if isinstance(expected_min, str):
-        return _risk_at_least(actual, RiskLevel(expected_min))
+        expected_floor = (
+            RiskLevel.CRISIS
+            if RiskLevel(expected_min) is RiskLevel.CRISIS
+            else RiskLevel.LOW
+        )
+        return actual is expected_floor
     return False
 
 
@@ -1083,12 +1113,11 @@ def _rule_based_safety_for_eval(
 ) -> RiskLevel:
     """Mirror sync deterministic safety classification for eval baselines."""
     normalized = message.casefold()
-    if safety_classifier._first_match(normalized, safety_classifier.crisis_terms):
+    if safety_classifier._first_unnegated_match(
+        normalized,
+        safety_classifier.crisis_terms,
+    ):
         return RiskLevel.CRISIS
-    if safety_classifier._first_match(normalized, safety_classifier.high_terms):
-        return RiskLevel.HIGH
-    if safety_classifier._first_match(normalized, safety_classifier.medium_terms):
-        return RiskLevel.MEDIUM
     return RiskLevel.LOW
 
 

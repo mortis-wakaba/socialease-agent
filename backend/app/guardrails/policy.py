@@ -10,6 +10,7 @@ class OutputGuardrailMode(str, Enum):
     """Supported levels of synchronous output enforcement."""
 
     DETERMINISTIC_ONLY = "deterministic_only"
+    LOCAL_TRIAGE = "local_triage"
     FULL = "full"
 
 
@@ -33,10 +34,11 @@ class OutputGuardrailPolicy:
         intent: Intent,
         selected_skill: str,
         memory_evidence: list[str],
+        requires_full_guardrail: bool = False,
     ) -> OutputGuardrailPolicyDecision:
         """Return a conservative policy from trusted runtime facts."""
-        if not streaming_requested:
-            return _full("non_streaming_request")
+        if requires_full_guardrail:
+            return _full("tool_assisted_response")
         if risk_level is not RiskLevel.LOW:
             return _full("elevated_risk")
         if memory_evidence:
@@ -48,8 +50,8 @@ class OutputGuardrailPolicy:
         if intent not in {Intent.EMOTIONAL_SUPPORT, Intent.PROGRESS_REVIEW}:
             return _full("non_streamable_intent")
         return OutputGuardrailPolicyDecision(
-            mode=OutputGuardrailMode.DETERMINISTIC_ONLY,
-            sentence_streaming_allowed=True,
+            mode=OutputGuardrailMode.LOCAL_TRIAGE,
+            sentence_streaming_allowed=streaming_requested,
             reason="low_risk_general_support",
         )
 

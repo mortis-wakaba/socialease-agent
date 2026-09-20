@@ -37,15 +37,13 @@ def test_execution_version_records_component_ids_without_secrets() -> None:
     assert version.trace_schema_version == "trace-v3"
     assert version.model_config_version.startswith("sha256:")
     assert version.prompt_versions == {
-        "safety_classifier": "safety-v1",
-        "intent_router": "intent-v5",
-        "memory_tool_decision": "memory-tool-v5",
+        "safety_classifier": "safety-v3",
+        "intent_router": "intent-v7",
         "memory_evidence_selector": "memory-evidence-selector-v2",
-            "memory_grounding_generation": "memory-grounding-v1",
-            "support_generation": "support-v8",
-            "support_stream_generation": "support-stream-v1",
-            "output_guardrail": "output-guardrail-v7",
-        "output_repair": "output-repair-v5",
+        "support_generation": "support-v13",
+        "support_stream_generation": "support-stream-v6",
+        "output_guardrail": "output-guardrail-v10",
+        "output_repair": "output-repair-v7",
     }
     assert "private-gateway" not in payload
     assert "sk-private" not in payload

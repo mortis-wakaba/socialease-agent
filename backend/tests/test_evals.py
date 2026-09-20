@@ -3,12 +3,13 @@
 from collections import Counter
 
 from app.evals.loader import (
-    load_e2e_workflow_cases,
+    load_deterministic_workflow_contract_cases,
     load_intent_cases,
     load_memory_retrieval_cases,
     load_memory_scale_seeds,
     load_memory_vector_challenge_cases,
     load_output_guardrail_cases,
+    load_output_guardrail_shadow_train_cases,
     load_product_boundary_cases,
     load_rag_cases,
     load_roleplay_feedback_cases,
@@ -39,9 +40,36 @@ def test_eval_loaders_return_cases() -> None:
     assert load_rag_cases()
     assert load_roleplay_feedback_cases()
     assert load_worksheet_cases()
-    assert load_e2e_workflow_cases()
+    assert load_deterministic_workflow_contract_cases()
     assert load_product_boundary_cases()
     assert load_output_guardrail_cases()
+    assert load_output_guardrail_shadow_train_cases()
+
+
+def test_output_guardrail_shadow_training_data_is_balanced_and_independent() -> None:
+    """Training examples must not duplicate the fixed validation fixtures."""
+    training = load_output_guardrail_shadow_train_cases()
+    validation = load_output_guardrail_cases()
+    category_counts = Counter(
+        category
+        for case in training
+        for category in case.categories
+    )
+    training_pairs = {
+        (case.user_message.strip(), case.response.strip())
+        for case in training
+    }
+    validation_pairs = {
+        (case.user_message.strip(), case.response.strip())
+        for case in validation
+    }
+
+    assert len({case.id for case in training}) == len(training)
+    assert len(training_pairs) == len(training)
+    assert training_pairs.isdisjoint(validation_pairs)
+    assert sum(not case.categories for case in training) >= 20
+    assert category_counts
+    assert min(category_counts.values()) >= 8
 
 
 def test_ratio_handles_non_empty_and_empty_totals() -> None:
@@ -76,7 +104,7 @@ def test_bundled_evaluations_pass_current_mvp() -> None:
     assert report.memory_context_token_budget.score == 1.0
     assert report.roleplay_feedback_pass_rate.score == 1.0
     assert report.worksheet_extraction_pass_rate.score == 1.0
-    assert report.e2e_workflow_pass_rate.score == 1.0
+    assert report.deterministic_workflow_contract_pass_rate.score == 1.0
     assert report.product_boundary_pass_rate.score == 1.0
     assert report.privacy_redaction_pass_rate.score == 1.0
     assert report.consent_replay_resistance.score == 1.0
@@ -113,7 +141,10 @@ def test_eval_trace_report_contains_case_artifacts(tmp_path) -> None:
     assert trace_report.execution_version.eval_dataset_version.startswith("sha256:")
     assert trace_report.execution_version.trace_schema_version == "trace-v3"
     assert trace_report.cases
-    assert any(case.suite == "e2e_workflow" for case in trace_report.cases)
+    assert any(
+        case.suite == "deterministic_workflow_contract"
+        for case in trace_report.cases
+    )
     assert any(case.suite == "memory_retrieval" for case in trace_report.cases)
     assert all(case.expected for case in trace_report.cases)
     assert all(case.actual for case in trace_report.cases)
@@ -122,7 +153,9 @@ def test_eval_trace_report_contains_case_artifacts(tmp_path) -> None:
 
     assert latest_path.exists()
     assert failures_path.exists()
-    assert "e2e_workflow" in latest_path.read_text(encoding="utf-8")
+    assert "deterministic_workflow_contract" in latest_path.read_text(
+        encoding="utf-8"
+    )
     assert '"execution_version"' in latest_path.read_text(encoding="utf-8")
     assert '"cases": []' in failures_path.read_text(encoding="utf-8")
 

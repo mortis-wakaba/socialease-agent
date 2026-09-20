@@ -96,7 +96,15 @@ async def test_benchmark_records_quality_latency_and_gpu_evidence() -> None:
             )
         payload = json.loads(request.read())
         assert request.url.path == "/v1/chat/completions"
-        assert payload["response_format"] == {"type": "json_object"}
+        response_format = payload["response_format"]
+        assert response_format["type"] == "json_schema"
+        assert response_format["json_schema"]["name"] == (
+            "socialease_intent_prediction"
+        )
+        assert response_format["json_schema"]["strict"] is True
+        assert response_format["json_schema"]["schema"]["type"] == "object"
+        assert payload["max_tokens"] == 64
+        assert "s" not in response_format["json_schema"]["schema"]["properties"]
         assert payload["reasoning_effort"] == "none"
         return httpx.Response(
             200,

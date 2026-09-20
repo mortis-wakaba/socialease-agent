@@ -46,7 +46,7 @@ flowchart LR
   Redis 缓存加密的 Context Projection、Module Overlay 和最小任务状态，不保存第二份
   Role-play transcript。
 - **Grounded Retrieval**：本地 BM25 检索返回 Citation；未命中时返回 `unknown`，不编造学校、电话或联系人。
-- **Trace / Eval**：记录隐私安全的执行诊断；当前生成 311 条确定性 Eval Trace（含 45 条 Output Guardrail 用例）和可选 DeepEval LLM Judge。
+- **Trace / Eval**：记录隐私安全的执行诊断；当前生成 312 条确定性 Eval Trace（其中语义 Output Guardrail 是标签回放，不代表真实模型质量），并以独立 PostgreSQL 集成测试覆盖 ConversationService → AgentHarness 应用入口；真实模型评测按需运行。
 
 ## 项目结构
 
@@ -195,9 +195,14 @@ LOCAL_LLM_MODEL=qwen3.5:4b
 OUTPUT_GUARDRAIL_LLM_ENABLED=true
 ```
 
-上面的开发命令会读取仓库根目录的 `.env`；使用 Docker Compose 时，Compose
-也会读取它。若模型服务运行在宿主机，可另设
-`LOCAL_LLM_DOCKER_BASE_URL=http://host.docker.internal:11434/v1`。
+上面的开发命令会读取仓库根目录的 `.env`。Docker Compose 对 `.env` 的读取只负责
+`${VAR}` 插值；只有 `docker-compose*.yml` 的 `environment` 中显式映射的变量才会进入容器。
+本仓库已映射主模型并发、语义 Output Guardrail 与 `LOCAL_LLM_*` 契约。若模型服务运行在
+宿主机，可另设 `LOCAL_LLM_DOCKER_BASE_URL=http://host.docker.internal:11434/v1`。
+
+统一对话 SSE 会在完成事件中区分已持久化历史与未保存的静态安全指引。浏览器对同一逻辑消息
+复用幂等键；刷新后可恢复已完成结果，或显式结束已过期且无法继续的命令。恢复回执不保存用户
+聊天正文，修改输入后会生成新键。
 
 完整变量与生产建议见 [环境配置说明](docs/environment_config.md)。
 

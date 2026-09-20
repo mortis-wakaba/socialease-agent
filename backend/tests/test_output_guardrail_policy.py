@@ -4,7 +4,7 @@ from app.guardrails.policy import OutputGuardrailMode, OutputGuardrailPolicy
 from app.models import Intent, RiskLevel
 
 
-def test_low_risk_general_support_can_use_deterministic_sentence_streaming() -> None:
+def test_low_risk_general_support_can_use_local_triage_streaming() -> None:
     decision = OutputGuardrailPolicy().decide(
         streaming_requested=True,
         risk_level=RiskLevel.LOW,
@@ -13,8 +13,22 @@ def test_low_risk_general_support_can_use_deterministic_sentence_streaming() -> 
         memory_evidence=[],
     )
 
-    assert decision.mode is OutputGuardrailMode.DETERMINISTIC_ONLY
+    assert decision.mode is OutputGuardrailMode.LOCAL_TRIAGE
     assert decision.sentence_streaming_allowed is True
+
+
+def test_low_risk_general_support_can_use_local_triage_non_streaming() -> None:
+    decision = OutputGuardrailPolicy().decide(
+        streaming_requested=False,
+        risk_level=RiskLevel.LOW,
+        intent=Intent.EMOTIONAL_SUPPORT,
+        selected_skill="general_support_skill",
+        memory_evidence=[],
+    )
+
+    assert decision.mode is OutputGuardrailMode.LOCAL_TRIAGE
+    assert decision.sentence_streaming_allowed is False
+    assert decision.reason == "low_risk_general_support"
 
 
 def test_memory_grounded_response_keeps_full_blocking_guardrail() -> None:
@@ -29,6 +43,21 @@ def test_memory_grounded_response_keeps_full_blocking_guardrail() -> None:
     assert decision.mode is OutputGuardrailMode.FULL
     assert decision.sentence_streaming_allowed is False
     assert decision.reason == "memory_grounded_response"
+
+
+def test_any_tool_assisted_response_keeps_full_blocking_guardrail() -> None:
+    decision = OutputGuardrailPolicy().decide(
+        streaming_requested=True,
+        risk_level=RiskLevel.LOW,
+        intent=Intent.EMOTIONAL_SUPPORT,
+        selected_skill="general_support_skill",
+        memory_evidence=[],
+        requires_full_guardrail=True,
+    )
+
+    assert decision.mode is OutputGuardrailMode.FULL
+    assert decision.sentence_streaming_allowed is False
+    assert decision.reason == "tool_assisted_response"
 
 
 def test_resource_and_elevated_risk_responses_remain_final_only() -> None:
@@ -51,3 +80,18 @@ def test_resource_and_elevated_risk_responses_remain_final_only() -> None:
 
     assert resource.mode is OutputGuardrailMode.FULL
     assert elevated.mode is OutputGuardrailMode.FULL
+
+
+def test_non_streaming_sensitive_response_keeps_full_guardrail() -> None:
+    decision = OutputGuardrailPolicy().decide(
+        streaming_requested=False,
+        risk_level=RiskLevel.LOW,
+        intent=Intent.EMOTIONAL_SUPPORT,
+        selected_skill="general_support_skill",
+        memory_evidence=[],
+        requires_full_guardrail=True,
+    )
+
+    assert decision.mode is OutputGuardrailMode.FULL
+    assert decision.sentence_streaming_allowed is False
+    assert decision.reason == "tool_assisted_response"

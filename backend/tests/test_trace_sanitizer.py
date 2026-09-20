@@ -94,6 +94,22 @@ def test_trace_sanitizer_redacts_all_supported_free_text_metadata() -> None:
     }
 
 
+def test_trace_sanitizer_preserves_valid_numeric_shaped_memory_hash() -> None:
+    record = _trace_record()
+    record.active_memory_selections = [
+        {
+            "memory_id_hash": "1391234567890123",
+            "memory_type": "preferred_difficulty",
+        }
+    ]
+
+    sanitized = TraceSanitizer().sanitize(record)
+
+    assert sanitized.active_memory_selections[0]["memory_id_hash"] == (
+        "1391234567890123"
+    )
+
+
 @pytest.mark.anyio
 async def test_trace_logger_sanitizes_before_repository_write() -> None:
     repository = InMemoryTraceRepository()

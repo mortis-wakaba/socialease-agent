@@ -49,7 +49,8 @@ def sentence_streaming_allowed(result: ConversationMessageResponse) -> bool:
     metadata = workflow.structured_data.get("output_guardrail")
     return (
         isinstance(metadata, dict)
-        and metadata.get("evaluation_mode") == "deterministic_only"
+        and metadata.get("evaluation_mode")
+        in {"deterministic_only", "local_triage"}
         and metadata.get("action") == "allow"
     )
 

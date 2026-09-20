@@ -14,6 +14,7 @@ from app.models_memory_tool import (
     MemoryToolDecisionReason,
     MemoryToolRunResult,
 )
+from app.observability.turn_latency import measure_turn_stage
 from app.tools.practice_memory import (
     PracticeMemorySearchService,
     memory_tool_registry,
@@ -62,13 +63,14 @@ class MemoryToolAgent:
             return MemoryToolRunResult(outcome="blocked_risk")
         if self._llm_client is None:
             return MemoryToolRunResult(outcome="skipped")
-        result = await self._run_native_tool_loop(
-            user_id=user_id,
-            message=message,
-            conversation_context=conversation_context,
-            skill_name=skill_name,
-            risk_level=risk_level,
-        )
+        with measure_turn_stage("tool_calling"):
+            result = await self._run_native_tool_loop(
+                user_id=user_id,
+                message=message,
+                conversation_context=conversation_context,
+                skill_name=skill_name,
+                risk_level=risk_level,
+            )
         return result
 
     async def _run_native_tool_loop(
@@ -141,7 +143,7 @@ class MemoryToolAgent:
             run_result.status is ToolCallStatus.COMPLETED
             and isinstance(run_result.output, MemoryCorrectionAutoUpdateResult)
         ):
-            return _memory_update_run_result(run_result.output)
+            return memory_update_run_result(run_result.output)
         return MemoryToolRunResult(
             decision_action="search_practice_memory",
             decision_reason=MemoryToolDecisionReason.EXPLICIT_CROSS_SESSION_HISTORY,
@@ -149,7 +151,7 @@ class MemoryToolAgent:
         )
 
 
-def _memory_update_run_result(
+def memory_update_run_result(
     result: MemoryCorrectionAutoUpdateResult,
 ) -> MemoryToolRunResult:
     """Project a mutation result into the existing content-free run contract."""

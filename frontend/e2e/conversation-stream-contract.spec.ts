@@ -18,6 +18,24 @@ test("accepts a typed heartbeat frame", () => {
   ).toEqual({ type: "response_heartbeat" });
 });
 
+test("accepts the compact completed-event payload", () => {
+  expect(
+    parseConversationStreamFrame(
+      'event: response_completed\ndata: {"type":"response_completed","result":{"conversation":{"conversation_id":"demo"},"appended_events":[],"active_module_stack":[],"pending_module_proposal":null,"transient_response":"safe guidance","crisis_persistence_status":"degraded_retry_required"}}'
+    )
+  ).toEqual({
+    type: "response_completed",
+    result: {
+      conversation: { conversation_id: "demo" },
+      appended_events: [],
+      active_module_stack: [],
+      pending_module_proposal: null,
+      transient_response: "safe guidance",
+      crisis_persistence_status: "degraded_retry_required"
+    }
+  });
+});
+
 test("rejects drift between the SSE event name and payload discriminator", () => {
   expect(() =>
     parseConversationStreamFrame(
@@ -29,7 +47,7 @@ test("rejects drift between the SSE event name and payload discriminator", () =>
 test("rejects an incomplete completed-event payload", () => {
   expect(() =>
     parseConversationStreamFrame(
-      'event: response_completed\ndata: {"type":"response_completed","result":{"response":"done"}}'
+      'event: response_completed\ndata: {"type":"response_completed","result":{"appended_events":[]}}'
     )
   ).toThrow("Streaming response contained an invalid payload");
 });

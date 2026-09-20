@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from app.llm.base import ToolCallingLLMClient
+from app.observability.turn_latency import measure_turn_stage
 from app.tools.runtime import (
     ToolCall,
     ToolCallResult,
@@ -82,12 +83,13 @@ class AgentToolLoop:
                 and len(tool_results) < self._maximum_tool_calls
             )
             try:
-                response = await self._llm_client.complete_with_tools(
-                    messages=conversation,
-                    tools=tools,
-                    temperature=temperature,
-                    tool_choice="auto" if can_call_tool else "none",
-                )
+                with measure_turn_stage("tool_model"):
+                    response = await self._llm_client.complete_with_tools(
+                        messages=conversation,
+                        tools=tools,
+                        temperature=temperature,
+                        tool_choice="auto" if can_call_tool else "none",
+                    )
             except Exception:
                 return AgentToolLoopResult(
                     outcome=AgentToolLoopOutcome.PROVIDER_ERROR,
@@ -123,21 +125,22 @@ class AgentToolLoop:
                 )
 
             model_call = response.tool_calls[0]
-            run_result = await tool_run.execute(
-                call=ToolCall(
-                    name=model_call.name,
-                    arguments=model_call.arguments,
-                    call_id=model_call.call_id,
-                ),
-                context=context,
-            )
+            with measure_turn_stage("tool_execution"):
+                run_result = await tool_run.execute(
+                    call=ToolCall(
+                        name=model_call.name,
+                        arguments=model_call.arguments,
+                        call_id=model_call.call_id,
+                    ),
+                    context=context,
+                )
             tool_results.append(run_result)
             conversation.append(response.as_assistant_message())
             conversation.append(
                 {
                     "role": "tool",
                     "tool_call_id": model_call.call_id,
-                    "content": _tool_result_content(run_result),
+                    "content": tool_result_content(run_result),
                 }
             )
 
@@ -150,7 +153,8 @@ class AgentToolLoop:
         )
 
 
-def _tool_result_content(result: ToolCallResult) -> str:
+def tool_result_content(result: ToolCallResult) -> str:
+    """Serialize a validated Tool result for the provider continuation turn."""
     if result.output is not None:
         return result.output.model_dump_json(exclude_none=True)
     return json.dumps(

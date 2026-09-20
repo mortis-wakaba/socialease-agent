@@ -174,6 +174,214 @@ async def test_expired_conversation_command_lease_is_reclaimed(
     assert replay.completed_result == '{"response":"done"}'
 
 
+async def test_different_commands_are_serialized_per_conversation(
+    repository: PostgresConversationRepository,
+) -> None:
+    user_id = f"pg_command_serial_{uuid4().hex}"
+    conversation = await repository.create(user_id=user_id, title="Serial")
+    first, second = await asyncio.gather(
+        repository.claim_command(
+            conversation_id=conversation.conversation_id,
+            user_id=user_id,
+            idempotency_key="first-command",
+            request_hash="a" * 64,
+            lease_owner="worker-one",
+            lease_seconds=60,
+        ),
+        repository.claim_command(
+            conversation_id=conversation.conversation_id,
+            user_id=user_id,
+            idempotency_key="second-command",
+            request_hash="b" * 64,
+            lease_owner="worker-two",
+            lease_seconds=60,
+        ),
+    )
+
+    assert sum(claim.acquired for claim in (first, second)) == 1
+
+
+async def test_expired_command_can_be_abandoned_before_new_work(
+    repository: PostgresConversationRepository,
+) -> None:
+    user_id = f"pg_command_abandon_{uuid4().hex}"
+    conversation = await repository.create(user_id=user_id, title="Recovery")
+    first_key = "abandon-command-001"
+    await repository.claim_command(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key=first_key,
+        request_hash="d" * 64,
+        lease_owner="stale-worker",
+        lease_seconds=60,
+    )
+    await repository.record_command_safety_classification(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key=first_key,
+        lease_owner="stale-worker",
+        crisis=False,
+    )
+    async with repository.engine.begin() as connection:
+        await connection.execute(
+            text(
+                """UPDATE conversation_commands
+                SET lease_expires_at = :expired
+                WHERE conversation_id = :conversation_id
+                  AND idempotency_key = :idempotency_key"""
+            ),
+            {
+                "expired": datetime.now(UTC) - timedelta(seconds=1),
+                "conversation_id": conversation.conversation_id,
+                "idempotency_key": first_key,
+            },
+        )
+
+    recoverable = await repository.get_command(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key=first_key,
+    )
+    assert recoverable is not None and recoverable.status == "recoverable"
+    abandoned = await repository.abandon_command(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key=first_key,
+    )
+    assert abandoned is not None and abandoned.status == "abandoned"
+
+    next_claim = await repository.claim_command(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key="next-command-001",
+        request_hash="e" * 64,
+        lease_owner="next-worker",
+        lease_seconds=60,
+    )
+    assert next_claim.acquired is True
+    with repository.command_lease_scope(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key=first_key,
+        lease_owner="stale-worker",
+    ):
+        with pytest.raises(ConversationConcurrencyError, match="lease"):
+            await repository.append_event(
+                conversation_id=conversation.conversation_id,
+                user_id=user_id,
+                event_type=ConversationEventType.ASSISTANT_MESSAGE,
+                role=ConversationEventRole.ASSISTANT,
+                content="stale write",
+                idempotency_key="stale-abandoned-write",
+            )
+
+
+async def test_crisis_priority_claim_abandons_different_active_command(
+    repository: PostgresConversationRepository,
+) -> None:
+    user_id = f"pg_crisis_preempt_{uuid4().hex}"
+    conversation = await repository.create(user_id=user_id, title="Crisis priority")
+    await repository.claim_command(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key="ordinary-command",
+        request_hash="f" * 64,
+        lease_owner="ordinary-worker",
+        lease_seconds=60,
+    )
+    await repository.record_command_safety_classification(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key="ordinary-command",
+        lease_owner="ordinary-worker",
+        crisis=False,
+    )
+
+    crisis = await repository.claim_command(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key="crisis-command",
+        request_hash="1" * 64,
+        lease_owner="crisis-worker",
+        lease_seconds=60,
+        preempt_active=True,
+    )
+
+    assert crisis.acquired is True
+    old = await repository.get_command(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key="ordinary-command",
+    )
+    assert old is not None and old.status == "abandoned"
+    assert await repository.get_command(
+        conversation_id=conversation.conversation_id,
+        user_id="other-user",
+        idempotency_key="ordinary-command",
+    ) is None
+
+
+async def test_expired_lease_cannot_renew_or_write_after_takeover(
+    repository: PostgresConversationRepository,
+) -> None:
+    user_id = f"pg_command_fence_{uuid4().hex}"
+    conversation = await repository.create(user_id=user_id, title="Fence")
+    values = {
+        "conversation_id": conversation.conversation_id,
+        "user_id": user_id,
+        "idempotency_key": "fenced-command",
+        "request_hash": "c" * 64,
+    }
+    await repository.claim_command(
+        **values,
+        lease_owner="stale-worker",
+        lease_seconds=60,
+    )
+    async with repository.engine.begin() as connection:
+        await connection.execute(
+            text(
+                """UPDATE conversation_commands
+                SET lease_expires_at = :expired
+                WHERE conversation_id = :conversation_id
+                  AND idempotency_key = :idempotency_key"""
+            ),
+            {
+                "expired": datetime.now(UTC) - timedelta(seconds=1),
+                "conversation_id": conversation.conversation_id,
+                "idempotency_key": values["idempotency_key"],
+            },
+        )
+    assert not await repository.renew_command_lease(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key=values["idempotency_key"],
+        lease_owner="stale-worker",
+        lease_seconds=60,
+    )
+    takeover = await repository.claim_command(
+        **values,
+        lease_owner="recovery-worker",
+        lease_seconds=60,
+    )
+    assert takeover.acquired is True
+
+    with repository.command_lease_scope(
+        conversation_id=conversation.conversation_id,
+        user_id=user_id,
+        idempotency_key=values["idempotency_key"],
+        lease_owner="stale-worker",
+    ):
+        with pytest.raises(ConversationConcurrencyError, match="lease"):
+            await repository.append_event(
+                conversation_id=conversation.conversation_id,
+                user_id=user_id,
+                event_type=ConversationEventType.ASSISTANT_MESSAGE,
+                role=ConversationEventRole.ASSISTANT,
+                content="stale side effect",
+                idempotency_key="stale-side-effect",
+            )
+
+
 async def test_postgres_concurrent_append_sequence_is_contiguous(
     repository: PostgresConversationRepository,
 ) -> None:

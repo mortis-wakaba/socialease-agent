@@ -49,7 +49,7 @@ test("unified chat keeps confirmed nested modules in one durable timeline", asyn
       await route.fulfill({ json: conversation });
       return;
     }
-    if (path.endsWith("/messages")) {
+    if (path.endsWith("/messages/stream")) {
       messageCount += 1;
       const moduleType = messageCount === 1 ? "roleplay" : "exposure";
       const proposalId = `proposal_${messageCount}`;
@@ -62,20 +62,23 @@ test("unified chat keeps confirmed nested modules in one durable timeline", asyn
           "module_proposed",
           "assistant",
           "系统只提供模块选项，由用户决定是否进入。",
-          { proposal_id: proposalId }
+          { kind: "module_proposal", proposal_id: proposalId }
         )
       ];
       events.push(...appended);
       await route.fulfill({
-        json: {
+        contentType: "text/event-stream",
+        body: `event: response_completed\ndata: ${JSON.stringify({
+          type: "response_completed",
+          result: {
           conversation,
           appended_events: appended,
           active_module_stack: stack,
           pending_module_proposal: proposal(proposalId, moduleType, now),
-          response: appended[1].content,
-          safety_result: safety(),
-          context_diagnostics: diagnostics()
-        }
+          transient_response: null,
+          crisis_persistence_status: "not_applicable"
+          }
+        })}\n\n`
       });
       return;
     }

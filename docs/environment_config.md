@@ -168,31 +168,100 @@ Production auth 不允许这一内容保护降级。PostgreSQL repository adapte
 |---|---|---|
 | `SOCIALEASE_APP_VERSION` | deployment | 写入 Product/Eval Trace 的非敏感应用版本，例如 Git commit 或 release tag |
 | `LLM_ENABLED` | optional | `true` 启用 provider call；`false` 使用 deterministic fallback |
+| `SOCIALEASE_LOW_RISK_CONCISE_OUTPUT_EXPERIMENT` | experiment | 默认 `false`；仅让无显式格式要求的 LOW 普通支持回复减少重复和非必要展开，不改变 Safety、Tool 权限或 Output Guardrail |
 | `LLM_PROVIDER` | optional | 当前值：`openai_compatible` |
 | `LLM_BASE_URL` | optional | Provider base URL，例如 DeepSeek |
 | `LLM_API_KEY` | LLM enabled | Provider API key |
 | `LLM_MODEL` | optional | 模型名称 |
 | `LLM_TIMEOUT_SECONDS` | optional | Provider timeout |
 | `LLM_JSON_MODE_ENABLED` | DeepSeek structured output | `true` 时 Support Generation 使用 `response_format={"type":"json_object"}`；其他调用不变 |
+| `OUTPUT_GUARDRAIL_LLM_ENABLED` | optional | `true` 时使用同一主 Provider 做语义输出检查；主模型未完整配置时 readiness 标为 degraded，不会静默冒充已启用 |
 | `LLM_RETRY_MAX_ATTEMPTS` | optional | 非流式 provider 请求的最大尝试次数，默认 3 |
 | `LLM_RETRY_INITIAL_BACKOFF_SECONDS` | optional | 非流式 provider 重试的初始退避秒数，默认 0.25 |
 | `LLM_CIRCUIT_FAILURE_THRESHOLD` | optional | Circuit breaker 打开的连续失败阈值，默认 3 |
 | `LLM_CIRCUIT_RECOVERY_SECONDS` | optional | Circuit breaker 进入 half-open 前的恢复秒数，默认 30 |
 | `LLM_MAX_CONCURRENCY` | pilot | 进程内全局 LLM 并发上限；`0` 表示禁用 |
 | `LLM_CONCURRENCY_WAIT_SECONDS` | pilot | 等待 LLM capacity 的时间，超时后 fallback |
+| `LLM_MAX_QUEUE_SIZE` | optional | LLM 入口最多允许的排队请求数；`0` 表示不限制队列长度 |
 | `LOCAL_LLM_ENABLED` | local routing/summary | `true` 时由本地轻量模型执行意图路由和 Conversation Summary；关闭或调用失败时使用各自的确定性 fallback |
 | `LOCAL_LLM_PROVIDER` | optional | 当前值：`openai_compatible` |
-| `LOCAL_LLM_BASE_URL` | local routing/summary | 本地 OpenAI-compatible 地址，例如 Ollama 的 `http://127.0.0.1:11434/v1` |
-| `LOCAL_LLM_DOCKER_BASE_URL` | optional | Docker backend 访问宿主机模型服务的地址；默认 `http://host.docker.internal:11434/v1` |
+| `LOCAL_LLM_RUNTIME` | optional | `auto` 按本地地址识别 `ollama` 或 `llama_server`；也可显式配置。两种托管运行时都执行预热、驻留与 slots readiness |
+| `LOCAL_LLM_BASE_URL` | local routing/summary | 本地 OpenAI-compatible 地址；llama-server 默认 `http://127.0.0.1:8080/v1`，Ollama 可改为 `http://127.0.0.1:11434/v1` |
+| `LOCAL_LLM_DOCKER_BASE_URL` | optional | Docker backend 访问宿主机模型服务的地址；llama-server 默认 `http://host.docker.internal:8080/v1` |
 | `LOCAL_LLM_API_KEY` | local model enabled | 本地服务要求的占位或真实 API key |
 | `LOCAL_LLM_MODEL` | local model enabled | 本地模型名称，例如 `qwen3.5:4b` |
 | `LOCAL_LLM_TIMEOUT_SECONDS` | optional | 本地路由和摘要请求的超时，默认 10 秒 |
 | `LOCAL_LLM_JSON_MODE_ENABLED` | optional | 默认 `true`，为路由和摘要请求 JSON Object 输出 |
 | `LOCAL_LLM_REASONING_EFFORT` | optional | 默认 `none`，关闭轻量任务的思考输出 |
 | `LOCAL_LLM_RETRY_MAX_ATTEMPTS` | optional | 默认 1，避免本地服务故障放大请求延迟 |
-| `LOCAL_LLM_MAX_CONCURRENCY` | optional | 本地轻量模型的进程内并发上限，默认 2 |
+| `LOCAL_LLM_MAX_CONCURRENCY` | optional | 本地轻量模型的进程内并发上限，默认 4；应与 llama-server `--parallel` 一致 |
+| `LOCAL_LLM_CONCURRENCY_WAIT_SECONDS` | optional | 等待本地模型 slot 的独立上限，默认 5 秒；不计入模型 HTTP timeout |
+| `LOCAL_LLM_MAX_QUEUE_SIZE` | optional | 本地模型入口最多排队请求数，默认 4；队列满时立即 fallback |
+| `LOCAL_LLM_READINESS_REQUIRED` | optional | 为 `true` 时，模型未驻留、尚未通过最小推理或 slots 配置不一致会令 `/ready` 返回 503 |
+| `LOCAL_LLM_KEEP_ALIVE` | Ollama | 预热请求的驻留时间，默认 `-1`，即保持到 Ollama 进程退出 |
+| `LOCAL_LLM_READINESS_TIMEOUT_SECONDS` | Ollama | 首次加载和最小推理探针的超时，默认 30 秒 |
+| `LOCAL_LLM_RECOVERY_INTERVAL_SECONDS` | Ollama | Ollama 重启或模型被卸载后的后台恢复间隔，默认 10 秒 |
+| `LOCAL_LLM_SERVER_SLOTS` | llama-server | llama-server 的并行 slots 声明；必须和 `LOCAL_LLM_MAX_CONCURRENCY` 一致 |
+| `LOCAL_LLM_OLLAMA_SLOTS` | Ollama | Ollama 的有效并行 slots，默认 1；Qwen 3.5 在当前 Ollama 运行时会被强制为单 slot |
+| `LOCAL_LLM_CONTEXT_SIZE` | local summary | 本地模型每个 slot 的 context 上限，默认 4096；摘要器为完整 system/user 输入和输出预留预算并按最老未处理事件分批推进游标 |
 
 Provider 失败或关闭时，系统仍必须保持安全。
+
+Compose 会用项目根目录 `.env` 做 `${VAR}` 插值，但这不等于变量自动进入容器；只有 Compose
+服务 `environment` 中列出的键才会传入 Backend。开发与生产 Compose 均显式转发本节的主模型
+并发、Output Guardrail 和本地模型配置。`/ready.checks.llm_configuration` 区分 disabled、
+enabled-but-unprobed、unavailable 与 degraded；它不发送收费探针，也不返回 URL、API key 或 prompt。
+托管本地模型的实际驻留、推理与 slots 状态继续由 `/ready.checks.local_llm` 报告。
+
+开发机使用 llama-server 时，通过 `LOCAL_LLM_MODEL_PATH=/path/to/model.gguf make dev-local-llm`
+启动。该命令显式设置 4 个 slot；`LOCAL_LLM_SERVER_SLOTS`、`LOCAL_LLM_MAX_CONCURRENCY`
+应保持一致。`LOCAL_LLM_CONTEXT_SIZE` 是每个 slot 的 context 大小，默认 4096。可用
+带 Bearer token 的 `/slots` 验证实际容量。队列等待上限与 `LOCAL_LLM_TIMEOUT_SECONDS`
+相互独立：前者限制入口背压时间，后者限制获得 slot 后的模型 HTTP 请求时间。
+
+推荐的 llama-server 配置是：
+
+```dotenv
+LOCAL_LLM_RUNTIME=llama_server
+LOCAL_LLM_BASE_URL=http://127.0.0.1:8080/v1
+LOCAL_LLM_READINESS_REQUIRED=true
+LOCAL_LLM_SERVER_SLOTS=4
+LOCAL_LLM_MAX_CONCURRENCY=4
+LOCAL_LLM_MAX_QUEUE_SIZE=4
+```
+
+`make dev-local-llm` 显式启用 4 slots 和 continuous batching。Backend 启动时通过
+`/v1/chat/completions` 完成一次 1-token 真推理预热；之后 readiness 同时检查 `/health`、
+鉴权后的 `/slots` 实际数量和预热结果。llama-server 在进程存活期间天然保持模型驻留，若服务
+重启，后台恢复探针会重新执行预热。服务实际 slots 与应用并发上限不一致时 `/ready` 返回 503。
+
+使用 Ollama 时，推荐配置如下，然后分别运行 `make dev-ollama` 与 `make dev-backend`：
+
+```dotenv
+LOCAL_LLM_RUNTIME=ollama
+LOCAL_LLM_BASE_URL=http://127.0.0.1:11434/v1
+LOCAL_LLM_READINESS_REQUIRED=true
+LOCAL_LLM_KEEP_ALIVE=-1
+LOCAL_LLM_OLLAMA_SLOTS=1
+LOCAL_LLM_MAX_CONCURRENCY=1
+LOCAL_LLM_MAX_QUEUE_SIZE=4
+```
+
+`make dev-ollama` 会把上述容量映射为 `OLLAMA_NUM_PARALLEL`、`OLLAMA_MAX_QUEUE`、
+`OLLAMA_CONTEXT_LENGTH` 和 `OLLAMA_KEEP_ALIVE`。Backend 启动时发送一次只生成一个 token 的
+最小推理，确认模型不仅能被列出，而且确实可推理；之后每 10 秒检查驻留状态，Ollama 重启或
+模型被卸载时自动重新预热。本地回环请求不会读取 `HTTP_PROXY`/`HTTPS_PROXY`。
+
+`/ready` 的 `checks.local_llm` 同时暴露 `resident`、`inference_verified`、
+`slot_contract_ok` 以及应用 limiter 的 `active`、`waiting`、`available` 和
+`queue_available`，不包含 prompt 或用户数据。有限队列满或等待超时时，本地模型调用立即走
+原有确定性 fallback，并累计 `llm_concurrency_saturation` 指标。
+
+不要仅凭 `OLLAMA_NUM_PARALLEL` 的配置值推断真实 slots。Ollama 0.32.13 加载 Qwen 3.5 时会
+报告该架构暂不支持 parallel requests，并以 `-np 1` 启动内部 llama-server。因此默认将
+`LOCAL_LLM_OLLAMA_SLOTS` 和应用 `LOCAL_LLM_MAX_CONCURRENCY` 都设为 1，把最多 4 个等待请求
+留在可观测、可超时的应用队列中。若后续 Ollama 版本明确支持该模型并行，再同步提高两者并
+重新进行并发验收。直接使用项目的 llama-server 启动方式不受这个 Ollama 限制。
 
 ## Rate Limit And Reliability
 
@@ -215,6 +284,24 @@ Provider 失败或关闭时，系统仍必须保持安全。
 | `WORKSHEET_DRAFT_TTL_SECONDS` | worksheet | Worksheet 当前字段引用和草稿状态 TTL，默认 3600 秒；不复制统一 Timeline 原文 |
 | `SUPPORT_SEARCH_TTL_SECONDS` | resource | Resource Citation ID 指代状态 TTL，默认 1800 秒；不缓存任意网页正文 |
 | `SOCIALEASE_RATE_LIMIT_BACKEND` | pilot | `local` 进程内限流；`gateway` 表示网关限流；`redis` 使用共享 sliding-window |
+
+Conversation command 采用 PostgreSQL 支持的“每会话单写者”语义：同一会话已有 processing
+command 时，普通新幂等键立即拒绝；同一键在租约内返回 in-progress，完成后重放持久化结果，
+租约释放或过期后进入 recoverable，可由同一键接管。前端在当前页面保留原消息与随机键以支持
+同键重试，但 localStorage 恢复回执只保存 conversation ID、随机键，以及可选的固定安全回复，
+不复制用户消息正文。刷新后可以读取已完成结果；无法继续的过期命令可显式转为 abandoned，
+保留审计记录并允许后续新消息。输入内容改变时必须使用新键。
+
+已确定的 crisis 新命令可以原子 abandon 同会话旧 processing 命令，从而 fence 旧 worker 并优先
+返回静态安全指引；普通请求不能使用该抢占路径。续租失败会取消业务协程，conversation
+repository 的关键写事务会在同一事务内验证租约。该机制保证同一时刻仅一个租约持有者有资格
+提交受保护的数据库写，并提供幂等结果重放和旧 worker fencing；它不保证旧 worker 的进程或
+已发出的 Provider 请求会被跨实例同步取消，也不宣称外部 Provider 副作用的 exactly-once；外部动作
+仍依赖各自的 outbox、幂等键与补偿流程。
+
+SSE 的 `response_completed.result` 包含 `crisis_persistence_status`。仅当静态 crisis 指引没有对应
+的持久化 `crisis_escalated` 事件时，`transient_response` 才携带正文；前端将其标为未保存的临时
+安全指引。重试成功并收到持久化事件后会清除临时副本，避免把临时内容冒充历史或重复显示。
 
 Redis 保存加密、版本化的统一 Conversation Context Projection 和 Module Overlay，以及
 Worksheet 当前字段引用、Resource Citation ID 等允许过期的任务状态。Role-play 消息不再

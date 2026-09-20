@@ -427,9 +427,13 @@ class IntentDispatchCoordinator:
 
     async def handle(self, turn: ConversationTurn) -> IntentDispatchResult:
         """Route a turn and resolve automatic effects or module proposals."""
-        intent_result = await self._route_intent(
-            turn.message,
-            turn.safety_result,
+        intent_result = (
+            turn.intent_result
+            if turn.intent_result is not None
+            else await self._route_intent(
+                turn.message,
+                turn.safety_result,
+            )
         )
         await self._persist_execution_plan(turn, intent_result)
         primary_step = _primary_step(intent_result)

@@ -1,12 +1,12 @@
 {
   "prompts": {
     "conversation_compaction": {
-      "fingerprint": "sha256:ce26ae313f0f44ed",
-      "version": "conversation-compaction-v1"
+      "fingerprint": "sha256:e40b8c9f2fb4a965",
+      "version": "conversation-compaction-v3"
     },
     "intent_router": {
-      "fingerprint": "sha256:dd720cbdf4c8af57",
-      "version": "intent-v5"
+      "fingerprint": "sha256:052a976ddc91e0c4",
+      "version": "intent-v7"
     },
     "memory_correction_resolution": {
       "fingerprint": "sha256:8a886ce29116ee48",
@@ -25,16 +25,16 @@
       "version": "memory-grounding-v1"
     },
     "memory_tool_decision": {
-      "fingerprint": "sha256:a93123a368146743",
-      "version": "memory-tool-v5"
+      "fingerprint": "sha256:d8fbc4fbe9f3de83",
+      "version": "memory-tool-v6"
     },
     "output_guardrail": {
-      "fingerprint": "sha256:4ce10b055a55fd22",
-      "version": "output-guardrail-v7"
+      "fingerprint": "sha256:30ffad171dceb6b2",
+      "version": "output-guardrail-v10"
     },
     "output_repair": {
-      "fingerprint": "sha256:179e63e8206ebe6f",
-      "version": "output-repair-v5"
+      "fingerprint": "sha256:492cb28d4bc8475f",
+      "version": "output-repair-v7"
     },
     "resource_agent_loop": {
       "fingerprint": "sha256:9abd2bf441da79f6",
@@ -45,16 +45,16 @@
       "version": "roleplay-v10"
     },
     "safety_classifier": {
-      "fingerprint": "sha256:f435a6bfd261fa68",
-      "version": "safety-v1"
+      "fingerprint": "sha256:e43e7ccf06b6cccb",
+      "version": "safety-v3"
     },
     "support_generation": {
-      "fingerprint": "sha256:1b4dd866ef2f3e50",
-      "version": "support-v8"
+      "fingerprint": "sha256:1541f08a28b734f9",
+      "version": "support-v13"
     },
     "support_stream_generation": {
-      "fingerprint": "sha256:d92478fddc026212",
-      "version": "support-stream-v1"
+      "fingerprint": "sha256:e8978b9be5d173c4",
+      "version": "support-stream-v6"
     },
     "worksheet_extraction": {
       "fingerprint": "sha256:df5a65d4df060c09",

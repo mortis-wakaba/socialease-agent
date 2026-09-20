@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import AsyncIterator
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -53,6 +53,16 @@ class LLMToolResponse(BaseModel):
         return message
 
 
+class LLMToolStreamEvent(BaseModel):
+    """One provider-neutral text delta or completed native Tool-call batch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["content_delta", "tool_calls"]
+    content_delta: str | None = None
+    tool_calls: list[LLMToolCall] = Field(default_factory=list, max_length=10)
+
+
 class BaseLLMClient(Protocol):
     """Minimal text-generation contract used by agent modules."""
 
@@ -62,6 +72,7 @@ class BaseLLMClient(Protocol):
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate one text response from system and user prompts."""
         ...
@@ -94,8 +105,29 @@ class JSONModeLLMClient(Protocol):
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate one syntactically valid JSON object as text."""
+        ...
+
+
+@runtime_checkable
+class StructuredJSONLLMClient(Protocol):
+    """Optional provider capability for schema-constrained JSON generation."""
+
+    json_mode_enabled: bool
+
+    async def generate_structured_json_text(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        json_schema: dict[str, object],
+        schema_name: str,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Generate JSON constrained by the supplied JSON Schema."""
         ...
 
 
@@ -112,4 +144,20 @@ class ToolCallingLLMClient(Protocol):
         tool_choice: str = "auto",
     ) -> LLMToolResponse:
         """Return assistant text or native function calls."""
+        ...
+
+
+@runtime_checkable
+class StreamingToolCallingLLMClient(Protocol):
+    """Optional native function-calling capability with streamed text replies."""
+
+    def stream_with_tools(
+        self,
+        *,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]],
+        temperature: float = 0.0,
+        tool_choice: str = "auto",
+    ) -> AsyncIterator[LLMToolStreamEvent]:
+        """Yield text deltas or one completed Tool-call batch."""
         ...

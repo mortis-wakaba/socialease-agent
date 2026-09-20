@@ -9,8 +9,14 @@ from app.agents.support_generation import (
     SupportGenerationAgent,
     requests_direct_wording_v2,
 )
+from app.llm.base import LLMToolCall, LLMToolResponse, LLMToolStreamEvent
 from app.models import Intent, RiskLevel, SafetyResult
-from app.models_support_generation import PresentationConstraints
+from app.models_memory_tool import MemoryToolEvidence, MemoryToolRunResult
+from app.models_long_term_memory import MemoryType
+from app.models_memory_correction import MemoryCorrectionAutoUpdateResult
+from app.models_support_generation import PresentationConstraints, SupportGeneration
+from app.tools.practice_memory import memory_tool_registry
+from app.tools.runtime import ToolExecutionContext
 
 
 class FakeLLMClient:
@@ -70,11 +76,84 @@ class FakeStreamingLLMClient(FakeLLMClient):
         user_prompt: str,
         temperature: float = 0.2,
     ):
-        assert "plain text" in system_prompt
+        assert "纯文本" in system_prompt
         assert "User message" in user_prompt
         del temperature
         for delta in self.deltas:
             yield delta
+
+
+class FakeIntegratedToolLLM:
+    """Capture native Tool turns used by the main support generator."""
+
+    def __init__(self, responses: list[LLMToolResponse]) -> None:
+        self.responses = list(responses)
+        self.requests: list[dict[str, object]] = []
+
+    async def complete_with_tools(self, **kwargs: object) -> LLMToolResponse:
+        self.requests.append(kwargs)
+        return self.responses.pop(0)
+
+
+class FakeIntegratedStreamingToolLLM(FakeIntegratedToolLLM):
+    """Stream a direct main-model reply while exposing native Tools."""
+
+    def __init__(
+        self,
+        events: list[LLMToolStreamEvent],
+        responses: list[LLMToolResponse] | None = None,
+    ) -> None:
+        super().__init__(responses or [])
+        self.events = events
+        self.stream_requests: list[dict[str, object]] = []
+
+    async def stream_text(self, **kwargs: object):
+        del kwargs
+        if False:
+            yield ""
+
+    async def stream_with_tools(self, **kwargs: object):
+        self.stream_requests.append(kwargs)
+        for event in self.events:
+            yield event
+
+
+class ReturningSearchService:
+    """Return one bounded memory item and capture whether the Tool ran."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def search(self, **kwargs: object) -> MemoryToolRunResult:
+        self.calls.append(kwargs)
+        return MemoryToolRunResult(
+            decision_action="search_practice_memory",
+            decision_reason="explicit_cross_session_history",
+            outcome="returned",
+            evidence=[
+                MemoryToolEvidence(
+                    evidence_id="mem_ev_0123456789abcdef",
+                    memory_type=MemoryType.HELPFUL_STRATEGY,
+                    safe_summary="先准备一句开场曾经有帮助。",
+                    relevance_score=0.9,
+                )
+            ],
+        )
+
+
+class NoopUpdateService:
+    async def update(self, **kwargs: object) -> MemoryCorrectionAutoUpdateResult:
+        del kwargs
+        return MemoryCorrectionAutoUpdateResult(status="updated")
+
+
+def _tool_context(message: str) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        user_id="owner",
+        current_request=message,
+        skill_name="general_support_skill",
+        risk_level=RiskLevel.LOW,
+    )
 
 
 def _append_to(items: list[str]):
@@ -132,6 +211,7 @@ async def test_support_generation_never_streams_unsafe_sentence() -> None:
     "message",
     [
         "这次我只想准备一句很短的开场。",
+        "明天小组讨论我有点紧张，想准备一句简短开场。",
         "请只根据现在这句话，给一个不超过二十字的开场。",
         "请帮我组织一句简短拒绝。",
     ],
@@ -183,6 +263,185 @@ def _valid_generation() -> str:
         },
         ensure_ascii=False,
     )
+
+
+def _valid_support_only_generation() -> str:
+    return json.dumps(
+        {
+            "response_mode": "support_only",
+            "acknowledgement": "可以先从当前这一步慢慢处理。",
+            "pause_supported": True,
+            "needs_real_support": False,
+        },
+        ensure_ascii=False,
+    )
+
+
+@pytest.mark.anyio
+async def test_support_only_omits_empty_practice_steps_heading() -> None:
+    agent = SupportGenerationAgent(
+        llm_client=FakeLLMClient(_valid_support_only_generation())
+    )
+
+    response, data = await agent.respond(
+        message="今天有点紧张。",
+        intent=Intent.EMOTIONAL_SUPPORT,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="test"),
+    )
+
+    assert "低强度步骤" not in response
+    assert data["fallback_used"] is False
+
+
+def test_support_generation_accepts_compact_provider_contract() -> None:
+    proposal = SupportGeneration.model_validate(
+        {"m": "support_only", "a": "可以先慢一点。", "p": [], "n": False, "v": []}
+    )
+
+    assert proposal.response_mode == "support_only"
+    assert proposal.acknowledgement == "可以先慢一点。"
+
+
+@pytest.mark.anyio
+async def test_support_main_model_direct_reply_does_not_run_a_second_call() -> None:
+    llm = FakeIntegratedToolLLM(
+        [LLMToolResponse(content=_valid_support_only_generation())]
+    )
+    search = ReturningSearchService()
+    agent = SupportGenerationAgent(
+        llm_client=llm,  # type: ignore[arg-type]
+        tool_registry=memory_tool_registry(
+            search, update_service=NoopUpdateService()
+        ),
+    )
+    message = "今天小组讨论时有点紧张。"
+
+    _, metadata = await agent.respond(
+        message=message,
+        intent=Intent.EMOTIONAL_SUPPORT,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="low"),
+        tool_context=_tool_context(message),
+    )
+
+    assert len(llm.requests) == 1
+    assert len(llm.requests[0]["tools"]) == 2  # type: ignore[arg-type]
+    assert search.calls == []
+    assert metadata["memory_tool"]["decision_action"] == "skip"
+
+
+@pytest.mark.anyio
+async def test_support_main_model_continues_after_memory_tool_result() -> None:
+    llm = FakeIntegratedToolLLM(
+        [
+            LLMToolResponse(
+                tool_calls=[
+                    LLMToolCall(
+                        call_id="call-memory-1",
+                        name="search_practice_memory",
+                        arguments={"query": "以前有效的开场方法"},
+                    )
+                ]
+            ),
+            LLMToolResponse(content=_valid_support_only_generation()),
+        ]
+    )
+    search = ReturningSearchService()
+    agent = SupportGenerationAgent(
+        llm_client=llm,  # type: ignore[arg-type]
+        tool_registry=memory_tool_registry(search),
+    )
+    message = "我以前保存过什么有效的开场方法？"
+
+    _, metadata = await agent.respond(
+        message=message,
+        intent=Intent.PROGRESS_REVIEW,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="low"),
+        tool_context=_tool_context(message),
+    )
+
+    assert len(llm.requests) == 2
+    assert len(search.calls) == 1
+    assert metadata["memory_tool"]["outcome"] == "returned"
+    assert metadata["memory_evidence_count"] == 1
+    assert metadata["requires_full_output_guardrail"] is True
+
+
+@pytest.mark.anyio
+async def test_support_stream_main_model_receives_tools_without_preflight_call() -> None:
+    llm = FakeIntegratedStreamingToolLLM(
+        [
+            LLMToolStreamEvent(
+                type="content_delta",
+                content_delta="可以先准备一句简短开场。",
+            )
+        ]
+    )
+    search = ReturningSearchService()
+    agent = SupportGenerationAgent(
+        llm_client=llm,  # type: ignore[arg-type]
+        tool_registry=memory_tool_registry(search),
+    )
+    chunks: list[str] = []
+    message = "今天小组讨论时有点紧张。"
+
+    response, metadata = await agent.respond_stream(
+        message=message,
+        intent=Intent.EMOTIONAL_SUPPORT,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="low"),
+        chunk_sink=_append_to(chunks),
+        tool_context=_tool_context(message),
+    )
+
+    assert response == "可以先准备一句简短开场。"
+    assert chunks == [response]
+    assert len(llm.stream_requests) == 1
+    assert len(llm.stream_requests[0]["tools"]) == 1  # type: ignore[arg-type]
+    assert llm.requests == []
+    assert search.calls == []
+    assert metadata["memory_tool"]["decision_action"] == "skip"
+
+
+@pytest.mark.anyio
+async def test_support_stream_buffers_tool_assisted_reply_for_full_guardrail() -> None:
+    llm = FakeIntegratedStreamingToolLLM(
+        [
+            LLMToolStreamEvent(
+                type="tool_calls",
+                tool_calls=[
+                    LLMToolCall(
+                        call_id="call-memory-1",
+                        name="search_practice_memory",
+                        arguments={"query": "以前有效的开场方法"},
+                    )
+                ],
+            )
+        ],
+        responses=[LLMToolResponse(content="记录显示，先准备一句开场曾经有帮助。")],
+    )
+    search = ReturningSearchService()
+    agent = SupportGenerationAgent(
+        llm_client=llm,  # type: ignore[arg-type]
+        tool_registry=memory_tool_registry(search),
+    )
+    chunks: list[str] = []
+    message = "我以前保存过什么有效的开场方法？"
+
+    response, metadata = await agent.respond_stream(
+        message=message,
+        intent=Intent.PROGRESS_REVIEW,
+        safety_result=SafetyResult(risk_level=RiskLevel.LOW, reason="low"),
+        chunk_sink=_append_to(chunks),
+        tool_context=_tool_context(message),
+    )
+
+    assert chunks == []
+    assert response == "记录显示，先准备一句开场曾经有帮助。"
+    assert len(search.calls) == 1
+    assert len(llm.requests) == 1
+    assert llm.requests[0]["tool_choice"] == "none"
+    assert metadata["native_streaming_used"] is False
+    assert metadata["requires_full_output_guardrail"] is True
+    assert metadata["memory_evidence_count"] == 1
 
 
 @pytest.mark.anyio
@@ -458,12 +717,7 @@ async def test_direct_practice_allows_neutral_illustrative_time() -> None:
 @pytest.mark.anyio
 async def test_schema_failure_exposes_safe_field_diagnostics() -> None:
     payload = json.loads(_valid_generation())
-    payload["presentation_constraints"] = {
-        "verbosity": "very_short",
-        "max_chars": None,
-        "output_format": "plain",
-        "requested_language": None,
-    }
+    payload["response_mode"] = "very_short"
     agent = SupportGenerationAgent(
         llm_client=FakeLLMClient(json.dumps(payload, ensure_ascii=False))
     )
@@ -476,5 +730,5 @@ async def test_schema_failure_exposes_safe_field_diagnostics() -> None:
 
     assert data["fallback_reason"] == "SCHEMA_VALIDATION_ERROR"
     assert data["validation_issues"] == [
-        "presentation_constraints.verbosity:literal_error"
+        "response_mode:literal_error"
     ]

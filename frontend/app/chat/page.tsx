@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import type {
   Conversation,
+  ConversationStreamCompletedResult,
   ConversationEvent,
   ModuleProposal,
   ModuleRun,
@@ -23,6 +24,13 @@ import type {
 
 const HISTORY_NOTICE_VERSION = "2026-07-01";
 const HISTORY_NOTICE_KEY = `socialease:history-notice:${HISTORY_NOTICE_VERSION}`;
+const COMMAND_RECEIPT_KEY = "socialease:conversation-command-recovery";
+
+type PendingMessage = {
+  conversationId: string;
+  idempotencyKey: string;
+  message: string;
+};
 
 export default function ChatPage() {
   const auth = useRequireAuth();
@@ -36,6 +44,8 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streamedResponse, setStreamedResponse] = useState("");
+  const [persistenceNotice, setPersistenceNotice] = useState<string | null>(null);
+  const [pendingMessage, setPendingMessage] = useState<PendingMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showNotice, setShowNotice] = useState(false);
   const [noticeAcknowledged, setNoticeAcknowledged] = useState(false);
@@ -79,6 +89,9 @@ export default function ChatPage() {
     }
     setLoading(true);
     setError(null);
+    setStreamedResponse("");
+    setPersistenceNotice(null);
+    setPendingMessage(null);
     try {
       const detail = await api.getConversation(
         conversation.conversation_id,
@@ -89,6 +102,7 @@ export default function ChatPage() {
       setModuleStack(detail.active_module_stack);
       setProposals(detail.pending_module_proposals);
       setNextCursor(detail.events.next_cursor ?? null);
+      await recoverPendingCommand(conversation, userId);
     } catch (err) {
       setError(errorMessage(err, "无法载入这段对话"));
     } finally {
@@ -144,29 +158,190 @@ export default function ChatPage() {
     setError(null);
     setInput("");
     setStreamedResponse("");
+    setPersistenceNotice(null);
+    let receipt = readCommandReceipt(current.conversation_id);
+    let reuseUnfinishedSafetyCommand = false;
+    let reuseConfirmedMissingCommand = false;
+    const knownSameRequest =
+      pendingMessage?.conversationId === current.conversation_id &&
+      pendingMessage.idempotencyKey === receipt?.idempotencyKey &&
+      pendingMessage.message === message;
+    if (receipt && !knownSameRequest) {
+      try {
+        const recovered = await api.getConversationCommand(
+          current.conversation_id,
+          userId,
+          receipt.idempotencyKey
+        );
+        if (recovered.status === "completed" && recovered.result) {
+          applyCompletedResult(recovered.result);
+          clearCommandReceipt(current.conversation_id);
+          receipt = null;
+        } else if (recovered.status === "abandoned") {
+          clearCommandReceipt(current.conversation_id);
+          receipt = null;
+        } else if (recovered.status === "not_found") {
+          reuseConfirmedMissingCommand = true;
+        } else if (recovered.status === "recoverable" && recovered.can_abandon) {
+          await api.abandonConversationCommand(
+            current.conversation_id,
+            userId,
+            receipt.idempotencyKey
+          );
+          clearCommandReceipt(current.conversation_id);
+          receipt = null;
+        } else if (
+          recovered.safety_recovery_status === "recovery_pending" ||
+          recovered.safety_recovery_status === "classification_pending"
+        ) {
+          if (pendingMessage === null && recovered.can_retry_same_request) {
+            reuseUnfinishedSafetyCommand = true;
+          } else {
+            setInput(message);
+            setPersistenceNotice(
+              "上一条危机请求的安全状态尚未完成；请重试原消息，完成前不会开始普通请求。"
+            );
+            setLoading(false);
+            return;
+          }
+        } else {
+          setInput(message);
+          setPersistenceNotice("上一条请求状态尚未确定，暂未发送新消息。");
+          setLoading(false);
+          return;
+        }
+      } catch (err) {
+        setInput(message);
+        setError(errorMessage(err, "无法核对上一条消息的恢复状态"));
+        setLoading(false);
+        return;
+      }
+    }
+    const reusable =
+      receipt !== null &&
+      (knownSameRequest ||
+        reuseUnfinishedSafetyCommand ||
+        reuseConfirmedMissingCommand);
+    const idempotencyKey = reusable
+      ? receipt!.idempotencyKey
+      : createIdempotencyKey();
+    const pending = {
+      conversationId: current.conversation_id,
+      idempotencyKey,
+      message
+    };
+    setPendingMessage(pending);
+    writeCommandReceipt({
+      conversationId: current.conversation_id,
+      idempotencyKey
+    });
     try {
       const result = await api.sendConversationMessageStream(
         current.conversation_id,
         userId,
         message,
-        createIdempotencyKey(),
+        idempotencyKey,
         (chunk) => setStreamedResponse((value) => value + chunk)
       );
-      setEvents((items) => mergeEvents(items, result.appended_events));
-      setCurrent(result.conversation);
-      setModuleStack(result.active_module_stack);
-      if (result.pending_module_proposal) {
-        setProposals((items) =>
-          mergeProposals(items, [result.pending_module_proposal!])
+      applyCompletedResult(result);
+      if (result.crisis_persistence_status === "degraded_retry_required") {
+        setStreamedResponse(result.transient_response ?? "");
+        setInput(message);
+        setPersistenceNotice(
+          result.transient_response
+            ? "这条安全指引尚未保存；请使用相同消息重试。"
+            : "安全指引已显示，但相关状态尚未完整保存；请使用相同消息重试。"
         );
+        writeCommandReceipt({
+          conversationId: current.conversation_id,
+          idempotencyKey,
+          ...(result.transient_response
+            ? { transientResponse: result.transient_response }
+            : {})
+        });
+      } else if (
+        result.crisis_persistence_status ===
+        "safety_state_persisted_command_unconfirmed"
+      ) {
+        setStreamedResponse("");
+        setInput(message);
+        setPersistenceNotice("安全状态已保存，但请求完成状态待确认；可以重试。 ");
+      } else {
+        clearCommandReceipt(current.conversation_id);
+        setPendingMessage(null);
+        setStreamedResponse("");
       }
-      updateConversationSummary(result.conversation);
     } catch (err) {
       setInput(message);
       setError(errorMessage(err, "消息发送失败"));
     } finally {
-      setStreamedResponse("");
       setLoading(false);
+    }
+  }
+
+  function applyCompletedResult(result: ConversationStreamCompletedResult) {
+    setEvents((items) => mergeEvents(items, result.appended_events));
+    setCurrent(result.conversation);
+    setModuleStack(result.active_module_stack);
+    if (result.pending_module_proposal) {
+      setProposals((items) =>
+        mergeProposals(items, [result.pending_module_proposal!])
+      );
+    }
+    updateConversationSummary(result.conversation);
+  }
+
+  async function recoverPendingCommand(
+    conversation: Conversation,
+    effectiveUserId: string
+  ) {
+    const receipt = readCommandReceipt(conversation.conversation_id);
+    if (!receipt) {
+      return;
+    }
+    if (receipt.transientResponse) {
+      setStreamedResponse(receipt.transientResponse);
+      setPersistenceNotice("这条安全指引尚未保存；正在核对请求状态。");
+    }
+    try {
+      const recovered = await api.getConversationCommand(
+        conversation.conversation_id,
+        effectiveUserId,
+        receipt.idempotencyKey
+      );
+      if (recovered.status === "completed" && recovered.result) {
+        applyCompletedResult(recovered.result);
+        setStreamedResponse(recovered.result.transient_response ?? "");
+        setPersistenceNotice(null);
+        clearCommandReceipt(conversation.conversation_id);
+        setPendingMessage(null);
+        return;
+      }
+      if (recovered.status === "recoverable") {
+        setPersistenceNotice(
+          recovered.safety_recovery_status === "recovery_pending"
+            ? "上一条危机请求仍需恢复安全状态；请重试原消息，完成前不会开始普通请求。"
+            : recovered.safety_recovery_status === "classification_pending"
+              ? "上一条请求的安全状态尚未确认；请重试原消息，完成前不会开始普通请求。"
+              : "上一条请求未完成；下次发送前会先安全终止旧命令。"
+        );
+        return;
+      }
+      if (recovered.status === "abandoned") {
+        clearCommandReceipt(conversation.conversation_id);
+        setPendingMessage(null);
+        setPersistenceNotice("上一条命令已结束；如仍需要，请重新输入后发送。");
+        return;
+      }
+      if (recovered.status === "not_found") {
+        setPersistenceNotice(
+          "上一条请求未到达服务端；请重新输入后发送，系统会沿用原恢复键安全重试。"
+        );
+        return;
+      }
+      setPersistenceNotice("上一条请求仍在后台处理，完成后刷新即可恢复结果。");
+    } catch (err) {
+      setError(errorMessage(err, "无法核对上一条消息的恢复状态"));
     }
   }
 
@@ -504,11 +679,18 @@ export default function ChatPage() {
                       aria-live="polite"
                     >
                       <div className="mb-1 text-xs text-slate-500">
-                        SocialEase · 正在回复
+                        {persistenceNotice
+                          ? "SocialEase · 临时安全指引"
+                          : "SocialEase · 正在回复"}
                       </div>
                       <p className="whitespace-pre-wrap text-sm leading-6 text-slate-800">
                         {streamedResponse}
                       </p>
+                    </div>
+                  ) : null}
+                  {persistenceNotice ? (
+                    <div className="text-sm text-amber-800" role="status">
+                      {persistenceNotice}
                     </div>
                   ) : null}
                   {loading ? (
@@ -750,6 +932,82 @@ function createIdempotencyKey(): string {
     return crypto.randomUUID();
   }
   return `message-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+type CommandReceipt = {
+  conversationId: string;
+  idempotencyKey: string;
+  transientResponse?: string;
+};
+
+function writeCommandReceipt(receipt: CommandReceipt) {
+  const receipts = readCommandReceipts();
+  receipts[receipt.conversationId] = receipt;
+  window.localStorage.setItem(
+    COMMAND_RECEIPT_KEY,
+    JSON.stringify({ version: 2, receipts })
+  );
+}
+
+function readCommandReceipt(conversationId: string): CommandReceipt | null {
+  return readCommandReceipts()[conversationId] ?? null;
+}
+
+function readCommandReceipts(): Record<string, CommandReceipt> {
+  const raw = window.localStorage.getItem(COMMAND_RECEIPT_KEY);
+  if (!raw) {
+    return {};
+  }
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    if (isCommandReceipt(value)) {
+      return { [value.conversationId]: value };
+    }
+    if (value.version !== 2 || !isRecord(value.receipts)) {
+      throw new Error("invalid command receipt store");
+    }
+    const receipts: Record<string, CommandReceipt> = {};
+    for (const candidate of Object.values(value.receipts)) {
+      if (!isCommandReceipt(candidate)) {
+        throw new Error("invalid command receipt");
+      }
+      receipts[candidate.conversationId] = candidate;
+    }
+    return receipts;
+  } catch {
+    window.localStorage.removeItem(COMMAND_RECEIPT_KEY);
+    return {};
+  }
+}
+
+function clearCommandReceipt(conversationId: string) {
+  const receipts = readCommandReceipts();
+  delete receipts[conversationId];
+  if (Object.keys(receipts).length === 0) {
+    window.localStorage.removeItem(COMMAND_RECEIPT_KEY);
+    return;
+  }
+  window.localStorage.setItem(
+    COMMAND_RECEIPT_KEY,
+    JSON.stringify({ version: 2, receipts })
+  );
+}
+
+function isCommandReceipt(value: unknown): value is CommandReceipt {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.conversationId === "string" &&
+    typeof value.idempotencyKey === "string" &&
+    (value.transientResponse === undefined ||
+      (typeof value.transientResponse === "string" &&
+        value.transientResponse.length <= 4000))
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function downloadJson(filename: string, value: unknown) {

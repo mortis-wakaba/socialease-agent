@@ -7,11 +7,12 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from app.evals.models import (
-    E2EWorkflowEvalCase,
+    DeterministicWorkflowContractCase,
     IntentEvalCase,
     MemoryRetrievalEvalCase,
     MemoryRetrievalScaleSeed,
     OutputGuardrailEvalCase,
+    OutputGuardrailShadowTrainCase,
     ProductBoundaryEvalCase,
     RagEvalCase,
     RoleplayFeedbackEvalCase,
@@ -108,9 +109,12 @@ def load_worksheet_cases() -> list[WorksheetEvalCase]:
     return load_jsonl(DATA_DIR / "worksheet.jsonl", WorksheetEvalCase)
 
 
-def load_e2e_workflow_cases() -> list[E2EWorkflowEvalCase]:
-    """Load end-to-end harness workflow cases."""
-    return load_jsonl(DATA_DIR / "e2e_workflow.jsonl", E2EWorkflowEvalCase)
+def load_deterministic_workflow_contract_cases() -> list[DeterministicWorkflowContractCase]:
+    """Load rule-level workflow contracts; these are not application E2E."""
+    return load_jsonl(
+        DATA_DIR / "e2e_workflow.jsonl",
+        DeterministicWorkflowContractCase,
+    )
 
 
 def load_product_boundary_cases() -> list[ProductBoundaryEvalCase]:
@@ -126,4 +130,13 @@ def load_output_guardrail_cases() -> list[OutputGuardrailEvalCase]:
     return load_jsonl(
         DATA_DIR / "output_guardrail_cases.jsonl",
         OutputGuardrailEvalCase,
+    )
+
+
+def load_output_guardrail_shadow_train_cases(
+) -> list[OutputGuardrailShadowTrainCase]:
+    """Load synthetic examples reserved for local Shadow model training."""
+    return load_jsonl(
+        DATA_DIR / "output_guardrail_shadow_train.jsonl",
+        OutputGuardrailShadowTrainCase,
     )

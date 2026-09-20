@@ -36,6 +36,12 @@ class ConversationMessageRequest(StrictConversationModel):
     idempotency_key: str = Field(min_length=8, max_length=200)
 
 
+class ConversationCommandRecoveryRequest(StrictConversationModel):
+    """Owner identity for explicitly abandoning one expired command."""
+
+    user_id: str = Field(min_length=1)
+
+
 class ConversationModuleDecisionRequest(StrictConversationModel):
     """Accept or reject a proposal with its application-bound request hash."""
 
@@ -61,6 +67,12 @@ class ConversationMessageResponse(StrictConversationModel):
     safety_result: SafetyResult
     context_diagnostics: ConversationContextDiagnostics
     workflow_response: ChatResponse | None = None
+    crisis_persistence_status: Literal[
+        "not_applicable",
+        "persisted",
+        "degraded_retry_required",
+        "safety_state_persisted_command_unconfirmed",
+    ] = "not_applicable"
 
 
 class ConversationStreamChunkEvent(StrictConversationModel):
@@ -70,11 +82,44 @@ class ConversationStreamChunkEvent(StrictConversationModel):
     text: str = Field(min_length=1, max_length=1000)
 
 
+class ConversationStreamCompletedResult(StrictConversationModel):
+    """Durable state plus any explicitly non-durable safety reply."""
+
+    conversation: Conversation
+    appended_events: list[ConversationEvent] = Field(default_factory=list)
+    active_module_stack: list[ModuleRun] = Field(default_factory=list)
+    pending_module_proposal: ModuleProposal | None = None
+    transient_response: str | None = Field(default=None, min_length=1)
+    crisis_persistence_status: Literal[
+        "not_applicable",
+        "persisted",
+        "degraded_retry_required",
+        "safety_state_persisted_command_unconfirmed",
+    ] = "not_applicable"
+
+
+class ConversationCommandRecoveryResponse(StrictConversationModel):
+    """Owner-scoped command lifecycle used after retries or page refreshes."""
+
+    status: Literal[
+        "not_found", "processing", "recoverable", "completed", "abandoned"
+    ]
+    result: ConversationStreamCompletedResult | None = None
+    can_retry_same_request: bool = False
+    can_abandon: bool = False
+    safety_recovery_status: Literal[
+        "classification_pending",
+        "not_required",
+        "recovery_pending",
+        "completed",
+    ] | None = None
+
+
 class ConversationStreamCompletedEvent(StrictConversationModel):
     """Final durable response delivered after all writes complete."""
 
     type: Literal["response_completed"] = "response_completed"
-    result: ConversationMessageResponse
+    result: ConversationStreamCompletedResult
 
 
 class ConversationStreamErrorEvent(StrictConversationModel):

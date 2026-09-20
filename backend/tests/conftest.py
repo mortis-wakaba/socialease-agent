@@ -20,6 +20,7 @@ from app.models_memory import UserPracticeSummary
 from app.privacy.persistence_gate import PersistenceGate
 from app.protocols.service import ProtocolService
 from app.protocols.store import InMemoryProtocolRepository
+from app.safety.classifier import RuleBasedSafetyClassifier
 import app.services.intervention_plan_service as intervention_plan_service_module
 from app.services.intervention_plan_service import InterventionPlanService
 from app.workflow import engine as workflow_engine
@@ -97,6 +98,7 @@ def isolated_harness_factory(
     )
 
     def build(**kwargs: Any) -> AgentHarness:
+        kwargs.setdefault("safety_classifier", RuleBasedSafetyClassifier())
         kwargs.setdefault("user_profile_repository", _EmptyUserProfileRepository())
         kwargs.setdefault("memory_settings_repository", settings)
         return AgentHarness(**kwargs)

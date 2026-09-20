@@ -23,7 +23,9 @@ from app.llm.prompts import (
 from app.llm.retry import RetryPolicy
 from app.models import Intent, IntentResult
 from app.workflow.router import (
+    INTENT_ROUTER_SCHEMA_NAME,
     apply_llm_intent_policy,
+    build_intent_router_json_schema,
     compile_llm_intent_prediction,
 )
 
@@ -206,10 +208,14 @@ async def _evaluate_case(
     raw_response: str | None = None
     error_category: str | None = None
     try:
-        raw_response = await client.generate_json_text(
+        json_schema, max_tokens = build_intent_router_json_schema(case.message)
+        raw_response = await client.generate_structured_json_text(
             system_prompt=build_intent_router_system_prompt(),
             user_prompt=build_intent_router_user_prompt(case.message),
+            json_schema=json_schema,
+            schema_name=INTENT_ROUTER_SCHEMA_NAME,
             temperature=0.0,
+            max_tokens=max_tokens,
         )
     except Exception as exc:  # The benchmark records provider failures per case.
         error_category = type(exc).__name__

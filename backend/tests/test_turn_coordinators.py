@@ -60,6 +60,7 @@ def _turn(*, risk_level: RiskLevel, message: str = "继续聊聊") -> Conversati
         user_id="user-1",
         message=message,
         idempotency_key="command-1",
+        lease_owner="worker-1",
         stack=[],
         safety_result=SafetyResult(risk_level=risk_level, reason="test"),
         user_event=ConversationEvent(
@@ -110,6 +111,31 @@ async def test_dispatch_coordinator_returns_general_intent_to_fallback() -> None
     assert result.intent_result.intent is Intent.EMOTIONAL_SUPPORT
     assert result.resolution is None
     assert router.calls == 1
+
+
+@pytest.mark.anyio
+async def test_dispatch_coordinator_reuses_speculative_intent_result() -> None:
+    router = RecordingRouter(Intent.OUT_OF_SCOPE)
+    coordinator = IntentDispatchCoordinator(
+        repository=object(),  # type: ignore[arg-type]
+        route_intent=router.route,
+        context_manager=object(),  # type: ignore[arg-type]
+        module_coordinator=object(),  # type: ignore[arg-type]
+        consume_ready_steps=_unexpected_callback,  # type: ignore[arg-type]
+        create_proposal=_unexpected_callback,  # type: ignore[arg-type]
+    )
+    turn = _turn(risk_level=RiskLevel.LOW)
+    turn.intent_result = IntentResult(
+        intent=Intent.EMOTIONAL_SUPPORT,
+        confidence=1.0,
+        reason="speculative result",
+    )
+
+    result = await coordinator.handle(turn)
+
+    assert result.intent_result.intent is Intent.EMOTIONAL_SUPPORT
+    assert result.resolution is None
+    assert router.calls == 0
 
 
 @pytest.mark.anyio

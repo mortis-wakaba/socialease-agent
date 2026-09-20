@@ -309,8 +309,8 @@ class WorksheetEvalCase(BaseModel):
     expected_missing_fields: list[str] = Field(default_factory=list)
 
 
-class E2EWorkflowEvalCase(BaseModel):
-    """One expected end-to-end harness workflow example."""
+class DeterministicWorkflowContractCase(BaseModel):
+    """One expected rule-level workflow contract example."""
 
     id: str
     message: str
@@ -348,6 +348,37 @@ class OutputGuardrailEvalCase(BaseModel):
     demo: Literal[True]
 
 
+OutputGuardrailSemanticCategory = Literal[
+    "diagnosis",
+    "treatment_promise",
+    "dependency_encouragement",
+    "real_support_discouragement",
+    "coercive_practice",
+    "unsafe_situation_reframing",
+    "invented_user_fact",
+]
+
+
+class OutputGuardrailShadowTrainCase(BaseModel):
+    """One synthetic example reserved for local Shadow model training."""
+
+    id: str = Field(min_length=1, max_length=80)
+    user_message: str = Field(min_length=1, max_length=600)
+    response: str = Field(min_length=1, max_length=1200)
+    categories: list[OutputGuardrailSemanticCategory] = Field(
+        default_factory=list,
+        max_length=7,
+    )
+    demo: Literal[True]
+
+    @model_validator(mode="after")
+    def validate_unique_categories(self) -> "OutputGuardrailShadowTrainCase":
+        """Reject duplicate labels that would distort class weights."""
+        if len(self.categories) != len(set(self.categories)):
+            raise ValueError("shadow training categories must be unique")
+        return self
+
+
 class EvalMetric(BaseModel):
     """Aggregate result for one evaluation family."""
 
@@ -376,7 +407,7 @@ class EvalReport(BaseModel):
     memory_context_token_budget: EvalMetric
     roleplay_feedback_pass_rate: EvalMetric
     worksheet_extraction_pass_rate: EvalMetric
-    e2e_workflow_pass_rate: EvalMetric
+    deterministic_workflow_contract_pass_rate: EvalMetric
     product_boundary_pass_rate: EvalMetric
     privacy_redaction_pass_rate: EvalMetric
     consent_replay_resistance: EvalMetric

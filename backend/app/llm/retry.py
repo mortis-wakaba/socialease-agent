@@ -12,6 +12,8 @@ from typing import TypeVar
 
 import httpx
 
+from app.observability.turn_latency import measure_turn_stage
+
 
 T = TypeVar("T")
 
@@ -58,6 +60,30 @@ class ProviderConcurrencyLimitError(ProviderError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message, ProviderErrorCategory.TRANSIENT_PROVIDER_ERROR)
+
+
+@dataclass(frozen=True)
+class ProviderCapacitySnapshot:
+    """Non-sensitive in-process provider capacity counters."""
+
+    max_concurrency: int
+    max_queue_size: int
+    active: int
+    waiting: int
+
+    @property
+    def available(self) -> int | None:
+        """Return immediately available execution slots, or None when unlimited."""
+        if self.max_concurrency <= 0:
+            return None
+        return max(0, self.max_concurrency - self.active)
+
+    @property
+    def queue_available(self) -> int | None:
+        """Return remaining bounded queue positions, or None when unbounded."""
+        if self.max_queue_size <= 0:
+            return None
+        return max(0, self.max_queue_size - self.waiting)
 
 
 @dataclass(frozen=True)
@@ -121,13 +147,33 @@ class ProviderConcurrencyLimiter:
         *,
         max_concurrency: int,
         acquire_timeout_seconds: float = 0.25,
+        max_queue_size: int = 0,
+        latency_stage: str = "llm_queue_wait",
     ) -> None:
         self.max_concurrency = max(0, max_concurrency)
         self.acquire_timeout_seconds = max(0.0, acquire_timeout_seconds)
+        self.max_queue_size = max(0, max_queue_size)
+        self.latency_stage = latency_stage
         self._semaphore = (
             asyncio.Semaphore(self.max_concurrency)
             if self.max_concurrency > 0
             else None
+        )
+        self._admission_semaphore = (
+            asyncio.Semaphore(self.max_concurrency + self.max_queue_size)
+            if self.max_concurrency > 0 and self.max_queue_size > 0
+            else None
+        )
+        self._active = 0
+        self._waiting = 0
+
+    def snapshot(self) -> ProviderCapacitySnapshot:
+        """Return current counters without exposing request or prompt data."""
+        return ProviderCapacitySnapshot(
+            max_concurrency=self.max_concurrency,
+            max_queue_size=self.max_queue_size,
+            active=self._active,
+            waiting=self._waiting,
         )
 
     async def run(self, operation: Callable[[], Awaitable[T]]) -> T:
@@ -141,24 +187,53 @@ class ProviderConcurrencyLimiter:
         if self._semaphore is None:
             yield
             return
+        admitted = False
+        if self._admission_semaphore is not None:
+            if self._admission_semaphore.locked():
+                await self._record_saturation()
+                raise ProviderConcurrencyLimitError(
+                    "LLM provider queue capacity reached."
+                )
+            await self._admission_semaphore.acquire()
+            admitted = True
+        acquired = False
+        waiting = False
         try:
-            await asyncio.wait_for(
-                self._semaphore.acquire(),
-                timeout=self.acquire_timeout_seconds,
-            )
-        except TimeoutError as exc:
-            from app.observability.runtime_events import (
-                record_llm_concurrency_saturation,
-            )
-
-            await record_llm_concurrency_saturation()
-            raise ProviderConcurrencyLimitError(
-                "LLM provider concurrency limit reached."
-            ) from exc
-        try:
+            try:
+                if self._semaphore.locked():
+                    self._waiting += 1
+                    waiting = True
+                with measure_turn_stage(self.latency_stage):
+                    await asyncio.wait_for(
+                        self._semaphore.acquire(),
+                        timeout=self.acquire_timeout_seconds,
+                    )
+                acquired = True
+                self._active += 1
+                if waiting:
+                    self._waiting -= 1
+                    waiting = False
+            except TimeoutError as exc:
+                await self._record_saturation()
+                raise ProviderConcurrencyLimitError(
+                    "LLM provider queue wait timed out."
+                ) from exc
             yield
         finally:
-            self._semaphore.release()
+            if waiting:
+                self._waiting -= 1
+            if acquired:
+                self._active -= 1
+                self._semaphore.release()
+            if admitted and self._admission_semaphore is not None:
+                self._admission_semaphore.release()
+
+    @staticmethod
+    async def _record_saturation() -> None:
+        """Record one rejected or expired provider queue admission."""
+        from app.observability.runtime_events import record_llm_concurrency_saturation
+
+        await record_llm_concurrency_saturation()
 
 
 async def retry_async(

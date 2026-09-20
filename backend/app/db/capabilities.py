@@ -34,10 +34,9 @@ POSTGRES_CAPABILITIES = (
     "transactional_outbox",
     "owner_scoped_deletion",
     "full_text_search",
-)
-POSTGRES_UNAVAILABLE_CAPABILITIES = (
     "vector_similarity_search",
 )
+POSTGRES_UNAVAILABLE_CAPABILITIES: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,9 +77,9 @@ def database_capability_report(database_url: str | None = None) -> DatabaseCapab
             full_runtime_supported=not missing,
             notes=(
                 "PostgreSQL is the only runtime persistence provider. "
-                "Vector similarity search is not enabled because the current "
-                "large-scale memory eval does not pass its safety gate. "
-                "No SQLite or demo persistence fallback is available."
+                "pgvector similarity search is available with PostgreSQL FTS "
+                "as the configured operational fallback. No SQLite or demo "
+                "persistence fallback is available."
             ),
         )
     raise AssertionError(f"Unhandled database provider: {provider!r}")

@@ -9,7 +9,57 @@ from app.models import (
     RiskLevel,
     SafetyResult,
 )
-from app.workflow.router import LlmIntentRouter
+from app.workflow.router import (
+    LlmIntentRouter,
+    compile_llm_intent_prediction,
+    reconcile_intent_risk_policy,
+)
+
+
+def test_authoritative_high_risk_tightens_speculative_execution_plan() -> None:
+    result = compile_llm_intent_prediction(
+        {
+            "i": "calendar_planning",
+            "c": 0.95,
+            "e": True,
+            "p": True,
+            "s": [],
+        },
+        risk_level=RiskLevel.LOW,
+    )
+
+    tightened = reconcile_intent_risk_policy(result, risk_level=RiskLevel.HIGH)
+
+    assert tightened.execution_plan is not None
+    step = tightened.execution_plan.steps[0]
+    assert step.status is IntentStepStatus.AWAITING_CONSENT
+    assert step.undo_supported is False
+
+
+def test_authoritative_medium_risk_only_tightens_exposure_steps() -> None:
+    exposure = compile_llm_intent_prediction(
+        {"i": "exposure_planning", "c": 0.95, "e": True, "p": True, "s": []}
+    )
+    calendar = compile_llm_intent_prediction(
+        {"i": "calendar_planning", "c": 0.95, "e": True, "p": True, "s": []}
+    )
+
+    exposure = reconcile_intent_risk_policy(
+        exposure,
+        risk_level=RiskLevel.MEDIUM,
+    )
+    calendar = reconcile_intent_risk_policy(
+        calendar,
+        risk_level=RiskLevel.MEDIUM,
+    )
+
+    assert exposure.execution_plan is not None
+    assert calendar.execution_plan is not None
+    assert (
+        exposure.execution_plan.steps[0].status
+        is IntentStepStatus.AWAITING_CONSENT
+    )
+    assert calendar.execution_plan.steps[0].status is IntentStepStatus.READY_WITH_UNDO
 
 
 class FakeLLMClient:
@@ -52,6 +102,25 @@ class FakeJSONModeLLMClient(FakeLLMClient):
         return await super().generate_text(**kwargs)  # type: ignore[arg-type]
 
 
+class FakeStructuredJSONLLMClient(FakeJSONModeLLMClient):
+    """Record the schema and token bound selected by production routing."""
+
+    def __init__(self, response: str) -> None:
+        super().__init__(response)
+        self.structured_calls = 0
+        self.json_schema: dict[str, object] | None = None
+        self.schema_name: str | None = None
+        self.max_tokens: int | None = None
+
+    async def generate_structured_json_text(self, **kwargs: object) -> str:
+        self.structured_calls += 1
+        self.json_schema = kwargs["json_schema"]  # type: ignore[assignment]
+        self.schema_name = kwargs["schema_name"]  # type: ignore[assignment]
+        self.max_tokens = kwargs["max_tokens"]  # type: ignore[assignment]
+        self.calls += 1
+        return self.response
+
+
 @pytest.fixture
 def low_safety() -> SafetyResult:
     """Return a reusable low-risk safety fixture."""
@@ -91,6 +160,97 @@ async def test_llm_router_uses_json_mode_for_local_structured_output(
     assert result.intent == Intent.PROGRESS_REVIEW
     assert client.json_calls == 1
     assert client.text_calls == 0
+
+
+@pytest.mark.anyio
+async def test_llm_router_prefers_strict_json_schema(
+    low_safety: SafetyResult,
+) -> None:
+    client = FakeStructuredJSONLLMClient(
+        '{"intent":"progress_review","confidence":0.9,'
+        '"reason":"history request","explicitly_requested":true,'
+        '"parameters_complete":true,"secondary_intents":[]}'
+    )
+    router = LlmIntentRouter(llm_client=client)
+
+    result = await router.route("帮我回顾最近的练习", low_safety)
+
+    assert result.intent == Intent.PROGRESS_REVIEW
+    assert client.structured_calls == 1
+    assert client.json_calls == 0
+    assert client.text_calls == 0
+    assert client.schema_name == "socialease_intent_prediction"
+    assert client.max_tokens == 64
+    assert client.json_schema is not None
+    assert client.json_schema["type"] == "object"
+    properties = client.json_schema["properties"]
+    assert isinstance(properties, dict)
+    assert set(properties) == {"i", "c", "e", "p"}
+    assert "$defs" not in client.json_schema
+    assert "title" not in client.json_schema
+
+
+@pytest.mark.anyio
+async def test_llm_router_allows_secondary_for_explicit_sequenced_actions(
+    low_safety: SafetyResult,
+) -> None:
+    client = FakeStructuredJSONLLMClient(
+        """{
+            "intent":"exposure_planning",
+            "confidence":0.94,
+            "reason":"Bounded semantic match.",
+            "explicitly_requested":true,
+            "parameters_complete":false,
+            "secondary_intents":[{
+                "intent":"calendar_planning",
+                "confidence":0.9,
+                "relation":"after_primary",
+                "reason":"Bounded secondary action.",
+                "explicitly_requested":true,
+                "parameters_complete":false
+            }]
+        }"""
+    )
+    router = LlmIntentRouter(llm_client=client)
+
+    result = await router.route(
+        "先帮我制定练习阶梯，然后把第一级安排到日历里。",
+        low_safety,
+    )
+
+    assert result.intent == Intent.EXPOSURE_PLANNING
+    assert [item.intent for item in result.secondary_intents] == [
+        Intent.CALENDAR_PLANNING
+    ]
+    assert client.max_tokens == 128
+    assert client.json_schema is not None
+    properties = client.json_schema["properties"]
+    assert isinstance(properties, dict)
+    assert properties["s"]["maxItems"] == 2
+
+
+@pytest.mark.anyio
+async def test_llm_router_blocks_secondary_for_deferred_or_negated_action(
+    low_safety: SafetyResult,
+) -> None:
+    client = FakeStructuredJSONLLMClient(
+        '{"intent":"exposure_planning","confidence":0.94,'
+        '"reason":"Bounded semantic match.","explicitly_requested":true,'
+        '"parameters_complete":false,"secondary_intents":[]}'
+    )
+    router = LlmIntentRouter(llm_client=client)
+
+    result = await router.route(
+        "今天先做练习阶梯，同时日历提醒以后再说。",
+        low_safety,
+    )
+
+    assert result.intent == Intent.EXPOSURE_PLANNING
+    assert client.max_tokens == 64
+    assert client.json_schema is not None
+    properties = client.json_schema["properties"]
+    assert isinstance(properties, dict)
+    assert "s" not in properties
 
 
 @pytest.mark.anyio

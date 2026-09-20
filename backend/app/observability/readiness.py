@@ -15,6 +15,8 @@ from app.db.migration_check import validate_revision_chain
 from app.db.providers import DatabaseProvider, resolve_database_provider
 from app.db.postgres.engine import shared_postgres_async_engine
 from app.rate_limit import rate_limit_backend
+from app.llm.local_runtime import local_llm_runtime
+from app.llm.factory import LLMConfig
 from app.workflow.default_hooks import metrics_hook
 
 async def readiness_snapshot() -> tuple[int, dict[str, object]]:
@@ -28,6 +30,8 @@ async def readiness_snapshot() -> tuple[int, dict[str, object]]:
         "rate_limit": _rate_limit_config_check(),
         "calendar": _calendar_config_check(),
         "outbox": await _outbox_check(),
+        "local_llm": await local_llm_runtime.health(),
+        "llm_configuration": _llm_configuration_check(),
     }
     ready = all(check["ok"] is True for check in checks.values())
     return (
@@ -233,6 +237,56 @@ def _rate_limit_config_check() -> dict[str, object]:
         "multi_instance_safe": backend in {"gateway", "redis"},
         "warnings": warnings,
     }
+
+
+def _llm_configuration_check() -> dict[str, object]:
+    """Report effective optional-model modes without probing paid providers."""
+    hosted = LLMConfig.from_env()
+    local = LLMConfig.local_from_env()
+    semantic_enabled = _env_bool("OUTPUT_GUARDRAIL_LLM_ENABLED", False)
+    hosted_complete = _llm_config_complete(hosted)
+    local_complete = _llm_config_complete(local)
+    if hosted.enabled and not hosted_complete:
+        generation_status = "unavailable"
+    elif hosted.enabled:
+        generation_status = "enabled_unprobed"
+    else:
+        generation_status = "disabled"
+    if not semantic_enabled:
+        guardrail_status = "disabled"
+    elif not hosted.enabled or not hosted_complete:
+        guardrail_status = "degraded_unavailable"
+    else:
+        guardrail_status = "enabled_unprobed"
+    if local.enabled and not local_complete:
+        local_status = "unavailable"
+    elif local.enabled:
+        local_status = "enabled"
+    else:
+        local_status = "disabled"
+    ok = (
+        (not hosted.enabled or hosted_complete)
+        and (not local.enabled or local_complete)
+        and guardrail_status != "degraded_unavailable"
+    )
+    return {
+        "ok": ok,
+        "generation": generation_status,
+        "output_guardrail_semantic": guardrail_status,
+        "local_routing_and_summary": local_status,
+        "provider_availability_probe": "not_performed",
+    }
+
+
+def _llm_config_complete(config: LLMConfig) -> bool:
+    return bool(config.base_url and config.api_key and config.model)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def _safe_database_label(database_url: str) -> str:

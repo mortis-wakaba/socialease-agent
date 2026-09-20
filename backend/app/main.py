@@ -20,6 +20,7 @@ from app.memory.runtime_requirements import (
 from app.memory.task_state_store import TaskStateStoreUnavailable
 from app.middleware import RequestIdMiddleware
 from app.observability.readiness import readiness_snapshot
+from app.llm.local_runtime import local_llm_runtime
 from app.observability.request_logging import StructuredRequestLoggingMiddleware
 from app.rate_limit import RateLimitMiddleware
 from app.request_context import REQUEST_ID_HEADER, get_request_id
@@ -40,12 +41,16 @@ from app.services.worksheet_service import worksheet_service
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Release the shared async Redis client on application shutdown."""
-    yield
-    await worksheet_service.close()
-    await support_resource_service.close()
-    await close_conversation_service()
-    await dispose_shared_postgres_engines()
+    """Warm local inference and release shared runtime resources on shutdown."""
+    await local_llm_runtime.start()
+    try:
+        yield
+    finally:
+        await local_llm_runtime.close()
+        await worksheet_service.close()
+        await support_resource_service.close()
+        await close_conversation_service()
+        await dispose_shared_postgres_engines()
 
 app = FastAPI(
     title="SocialEase Agent API",

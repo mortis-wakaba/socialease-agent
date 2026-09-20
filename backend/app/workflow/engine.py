@@ -54,6 +54,11 @@ from app.protocols.service import protocol_service
 from app.privacy.persistence_gate import persistence_gate
 from app.privacy.policy import PersistenceKind
 from app.request_context import get_request_id
+from app.observability.turn_latency import (
+    mark_turn_flag,
+    measure_turn_stage,
+    record_turn_stage,
+)
 from app.services.intervention_plan_service import intervention_plan_service
 from app.workflow.context import ResponseChunkSink, RunContext
 from app.workflow.events import (
@@ -207,7 +212,11 @@ class AgentHarness:
         stage_started = perf_counter()
 
         harness_action = _action_for_intent(intent_result.intent)
-        permission_decision = self.permission_gate.decide(safety_result, harness_action)
+        with measure_turn_stage("permission"):
+            permission_decision = self.permission_gate.decide(
+                safety_result,
+                harness_action,
+            )
         approved_protocol_id = _optional_string(request.context.get("protocol_id"))
         protocol_request_hash = _protocol_request_hash(
             harness_action=harness_action,
@@ -215,16 +224,17 @@ class AgentHarness:
             request_context=request.context,
         )
         protocol_to_consume = None
-        if (
-            permission_decision.action == PermissionAction.ASK_CONSENT
-            and await protocol_service.claim_for_action(
-                protocol_id=approved_protocol_id,
-                user_id=request.user_id,
-                harness_action=harness_action,
-                request_hash=protocol_request_hash,
-                session_id=run_context.session_id,
-            ) is not None
-        ):
+        claimed_protocol = None
+        if permission_decision.action == PermissionAction.ASK_CONSENT:
+            with measure_turn_stage("permission_protocol"):
+                claimed_protocol = await protocol_service.claim_for_action(
+                    protocol_id=approved_protocol_id,
+                    user_id=request.user_id,
+                    harness_action=harness_action,
+                    request_hash=protocol_request_hash,
+                    session_id=run_context.session_id,
+                )
+        if claimed_protocol is not None:
             permission_decision = PermissionDecision(
                 action=PermissionAction.ALLOW,
                 reason="Approved consent protocol allowed the requested action.",
@@ -242,12 +252,15 @@ class AgentHarness:
             )
 
         skill = self.skill_registry.resolve_for_chat(intent_result.intent, safety_result)
-        run_context.active_memory = await self.memory_context_orchestrator.assemble(
-            user_id=request.user_id,
-            skill_name=skill.descriptor.name,
-            request_context=run_context.request_context,
-            current_request=request.message,
-        )
+        with measure_turn_stage("active_memory"):
+            run_context.active_memory = (
+                await self.memory_context_orchestrator.assemble(
+                    user_id=request.user_id,
+                    skill_name=skill.descriptor.name,
+                    request_context=run_context.request_context,
+                    current_request=request.message,
+                )
+            )
         run_context.skill_context = run_context.active_memory.stable_memory
         hook_decision = None
         if permission_decision.action != PermissionAction.ESCALATE:
@@ -315,27 +328,42 @@ class AgentHarness:
             intent=intent_result.intent,
             selected_skill=skill.descriptor.name,
             memory_evidence=skill_result.memory_evidence,
-        )
-        output_guardrail_result = await self.output_guardrail.evaluate(
-            user_message=request.message,
-            response=skill_result.response,
-            intent=intent_result.intent,
-            risk_level=safety_result.risk_level,
-            selected_skill=skill.descriptor.name,
-            selected_agent=skill_result.selected_agent,
-            grounding_metadata=_grounding_metadata(skill_result.structured_data),
-            memory_evidence=skill_result.memory_evidence,
-            historical_user_messages=(
-                [
-                    event.content
-                    for event in run_context.conversation_context.recent_events
-                    if event.role == ConversationEventRole.USER
-                ]
-                if run_context.conversation_context is not None
-                else None
+            requires_full_guardrail=(
+                skill_result.structured_data.get("requires_full_output_guardrail")
+                is True
             ),
-            evaluation_mode=output_policy.mode,
         )
+        with measure_turn_stage("output_guardrail"):
+            output_guardrail_result = await self.output_guardrail.evaluate(
+                user_message=request.message,
+                response=skill_result.response,
+                intent=intent_result.intent,
+                risk_level=safety_result.risk_level,
+                selected_skill=skill.descriptor.name,
+                selected_agent=skill_result.selected_agent,
+                grounding_metadata=_grounding_metadata(
+                    skill_result.structured_data
+                ),
+                memory_evidence=skill_result.memory_evidence,
+                historical_user_messages=(
+                    [
+                        event.content
+                        for event in run_context.conversation_context.recent_events
+                        if event.role == ConversationEventRole.USER
+                    ]
+                    if run_context.conversation_context is not None
+                    else None
+                ),
+                evaluation_mode=output_policy.mode,
+            )
+        if output_guardrail_result.semantic_checked:
+            mark_turn_flag("guardrail_semantic_checked")
+        if output_guardrail_result.semantic_retry_attempted:
+            mark_turn_flag("guardrail_semantic_retry")
+        if output_guardrail_result.repair_attempted:
+            mark_turn_flag("guardrail_repair_attempted")
+        if output_guardrail_result.repair_succeeded:
+            mark_turn_flag("guardrail_repair_succeeded")
         skill_result = _apply_output_guardrail_result(
             skill_result=skill_result,
             result=output_guardrail_result,
@@ -779,13 +807,15 @@ def _emit_stage_completed(
 ) -> None:
     """Emit timing for one completed stage without exposing workflow content."""
     now = perf_counter()
+    stage_latency_ms = (now - stage_started) * 1000
+    record_turn_stage(f"workflow.{stage.value}", stage_latency_ms)
     _emit_progress(
         event_sink,
         WorkflowProgressEvent(
             type="stage_completed",
             run_id=run_id,
             stage=stage,
-            stage_latency_ms=(now - stage_started) * 1000,
+            stage_latency_ms=stage_latency_ms,
             elapsed_ms=(now - run_started) * 1000,
         ),
     )

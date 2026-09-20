@@ -52,6 +52,7 @@ PROMPT_SOURCES: dict[str, tuple[PromptSource, ...]] = {
             "app/llm/prompts.py",
             (
                 "COMMON_SAFETY_INSTRUCTIONS",
+                "MEMORY_TOOL_USAGE_INSTRUCTIONS",
                 "build_support_system_prompt",
                 "build_support_user_prompt",
             ),
@@ -62,6 +63,7 @@ PROMPT_SOURCES: dict[str, tuple[PromptSource, ...]] = {
             "app/llm/prompts.py",
             (
                 "COMMON_SAFETY_INSTRUCTIONS",
+                "MEMORY_TOOL_USAGE_INSTRUCTIONS",
                 "build_support_stream_system_prompt",
                 "build_support_user_prompt",
             ),
@@ -72,6 +74,7 @@ PROMPT_SOURCES: dict[str, tuple[PromptSource, ...]] = {
             "app/llm/prompts.py",
             (
                 "COMMON_SAFETY_INSTRUCTIONS",
+                "MEMORY_TOOL_USAGE_INSTRUCTIONS",
                 "build_memory_tool_native_system_prompt",
                 "build_memory_tool_decision_user_prompt",
             ),

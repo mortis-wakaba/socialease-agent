@@ -21,9 +21,9 @@ class PresentationConstraints(BaseModel):
 class PrivacyCandidate(BaseModel):
     """One exact sensitive span proposed for application-side validation."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    text: str = Field(min_length=2, max_length=80)
+    text: str = Field(alias="t", min_length=2, max_length=80)
     category: Literal[
         "email",
         "national_id",
@@ -36,30 +36,34 @@ class PrivacyCandidate(BaseModel):
         "organization",
         "person_name",
         "third_party_identity",
-    ]
+    ] = Field(alias="c")
 
 
 class SupportGeneration(BaseModel):
     """One bounded, non-medical support response proposed by an LLM."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    response_mode: Literal["support_only", "micro_cbt", "direct_practice", "clarify"]
-    acknowledgement: str | None = Field(default=None, max_length=240)
-    situation_summary: str | None = Field(default=None, max_length=240)
-    automatic_thought: str | None = Field(default=None, max_length=240)
-    fact_prediction_distinction: str | None = Field(default=None, max_length=360)
-    balanced_thought: str | None = Field(default=None, max_length=300)
-    suggested_phrase: str | None = Field(default=None, max_length=240)
-    practice_steps: list[str] = Field(default_factory=list, max_length=3)
-    followup_question: str | None = Field(default=None, max_length=240)
-    pause_supported: Literal[True] = True
-    needs_real_support: bool = False
-    real_support_note: str | None = Field(default=None, max_length=300)
-    presentation_constraints: PresentationConstraints = Field(
-        default_factory=PresentationConstraints
+    response_mode: Literal[
+        "support_only", "micro_cbt", "direct_practice", "clarify"
+    ] = Field(alias="m")
+    acknowledgement: str | None = Field(default=None, alias="a", max_length=240)
+    situation_summary: str | None = Field(default=None, alias="s", max_length=240)
+    automatic_thought: str | None = Field(default=None, alias="t", max_length=240)
+    fact_prediction_distinction: str | None = Field(
+        default=None, alias="d", max_length=360
     )
-    privacy_candidates: list[PrivacyCandidate] = Field(default_factory=list, max_length=8)
+    balanced_thought: str | None = Field(default=None, alias="b", max_length=300)
+    suggested_phrase: str | None = Field(default=None, alias="q", max_length=240)
+    practice_steps: list[str] = Field(default_factory=list, alias="p", max_length=3)
+    followup_question: str | None = Field(default=None, alias="f", max_length=240)
+    needs_real_support: bool = Field(default=False, alias="n")
+    real_support_note: str | None = Field(default=None, alias="r", max_length=300)
+    privacy_candidates: list[PrivacyCandidate] = Field(
+        default_factory=list,
+        alias="v",
+        max_length=8,
+    )
 
     @model_validator(mode="after")
     def validate_mode_fields(self) -> "SupportGeneration":

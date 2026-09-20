@@ -5,6 +5,8 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 import json
+import logging
+from collections.abc import Callable
 from uuid import uuid4
 
 from app.conversation.context_manager import ConversationContextManager
@@ -30,9 +32,16 @@ from app.conversation.intent_step_runner import (
     IntentStepRunner,
     conversation_workflow_context,
 )
-from app.conversation.repository import ConversationRepository, ModuleStartJob
+from app.conversation.repository import (
+    ConversationCommandRecord,
+    ConversationConcurrencyError,
+    ConversationRepository,
+    ModuleStartJob,
+)
 from app.conversation.reversible_actions import ReversibleCalendarExecutor
 from app.conversation.turns import ConversationTurn
+from app.conversation.turn_classification import ConcurrentTurnClassifier
+from app.conversation.turn_classification import TurnClassification
 from app.conversation.turn_coordinators import (
     IntentDispatchCoordinator,
     IntentQueueCoordinator,
@@ -71,11 +80,21 @@ from app.models_conversation_api import (
     ConversationExportResponse,
 )
 from app.models_conversation_context import (
+    ConversationContextDiagnostics,
+    ConversationContextProfile,
     ConversationWorkingContext,
     build_conversation_prompt_context,
+    conversation_id_hash,
 )
 from app.safety.classifier import BaseSafetyClassifier
 from app.safety.crisis import crisis_escalation_response
+from app.observability.turn_latency import (
+    ConversationTurnLatencySink,
+    mark_first_turn_output,
+    measure_turn_stage,
+    reset_turn_latency,
+    start_turn_latency,
+)
 from app.workflow.engine import AgentHarness
 from app.workflow.context import ResponseChunkSink
 from app.workflow.router import BaseIntentRouter
@@ -91,6 +110,13 @@ class ConversationProposalError(ValueError):
 
 class ConversationCommandInProgressError(RuntimeError):
     """Raised while another worker owns the same logical message command."""
+
+
+class ConversationLeaseLostError(ConversationCommandInProgressError):
+    """Raised when a worker must stop because its durable lease was lost."""
+
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationService:
@@ -109,6 +135,7 @@ class ConversationService:
         reversible_calendar_executor: ReversibleCalendarExecutor,
         proposal_ttl: timedelta = timedelta(minutes=15),
         command_lease_seconds: int = 90,
+        latency_sink: ConversationTurnLatencySink | None = None,
     ) -> None:
         self._harness = harness
         self._repository = repository
@@ -120,6 +147,11 @@ class ConversationService:
         self._module_coordinator = module_coordinator
         self._proposal_ttl = proposal_ttl
         self._command_lease_seconds = max(15, command_lease_seconds)
+        self._latency_sink = latency_sink
+        self._turn_classifier = ConcurrentTurnClassifier(
+            classify_safety=self._classify_safety,
+            route_intent=self._route_intent,
+        )
         self._intent_queue_coordinator = IntentQueueCoordinator(
             repository=self._repository,
             safety_classifier=self._safety_classifier,
@@ -155,7 +187,13 @@ class ConversationService:
         safety_result: SafetyResult,
     ) -> IntentResult:
         """Route through the service's current strategy."""
-        return await self._intent_router.route(message, safety_result)
+        with measure_turn_stage("routing"):
+            return await self._intent_router.route(message, safety_result)
+
+    async def _classify_safety(self, message: str) -> SafetyResult:
+        """Classify input risk with request-local stage timing."""
+        with measure_turn_stage("safety"):
+            return await self._safety_classifier.classify(message)
 
     async def create_conversation(
         self,
@@ -447,6 +485,34 @@ class ConversationService:
         overlay_ready = await self._module_coordinator.health()
         return context_ready and overlay_ready
 
+    async def get_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationCommandRecord | None:
+        """Return owner-scoped command recovery state without request content."""
+        return await self._repository.get_command(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+        )
+
+    async def abandon_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationCommandRecord | None:
+        """Terminally abandon an expired command through the repository fence."""
+        return await self._repository.abandon_command(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+        )
+
     async def send_message(
         self,
         *,
@@ -458,6 +524,18 @@ class ConversationService:
         response_chunk_sink: ResponseChunkSink | None = None,
     ) -> ConversationMessageResponse:
         """Execute one logical turn once and durably replay its final result."""
+        recorder, latency_token = start_turn_latency(
+            streaming_requested=streaming_requested,
+        )
+        original_chunk_sink = response_chunk_sink
+
+        async def measured_chunk_sink(text: str) -> None:
+            mark_first_turn_output()
+            if original_chunk_sink is not None:
+                await original_chunk_sink(text)
+
+        if response_chunk_sink is not None:
+            response_chunk_sink = measured_chunk_sink
         request_hash = sha256(
             json.dumps(
                 {
@@ -471,51 +549,252 @@ class ConversationService:
             ).encode("utf-8")
         ).hexdigest()
         lease_owner = uuid4().hex
-        claim = await self._repository.claim_command(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            idempotency_key=idempotency_key,
-            request_hash=request_hash,
-            lease_owner=lease_owner,
-            lease_seconds=self._command_lease_seconds,
-        )
-        if claim.completed_result is not None:
-            return ConversationMessageResponse.model_validate_json(
-                claim.completed_result
-            )
-        if not claim.acquired:
-            raise ConversationCommandInProgressError(
-                "conversation command is already processing"
-            )
-        lease_task = asyncio.create_task(
-            self._maintain_command_lease(
-                conversation_id=conversation_id,
-                user_id=user_id,
-                idempotency_key=idempotency_key,
-                lease_owner=lease_owner,
-            )
-        )
+        crisis_turn: ConversationTurn | None = None
+        classification_override: TurnClassification | None = None
+
+        def remember_crisis_turn(turn: ConversationTurn) -> None:
+            nonlocal crisis_turn
+            crisis_turn = turn
+
         try:
-            response = await self._execute_message(
-                conversation_id=conversation_id,
-                user_id=user_id,
-                message=message,
-                idempotency_key=idempotency_key,
-                streaming_requested=streaming_requested,
-                response_chunk_sink=response_chunk_sink,
+            with measure_turn_stage("command_claim"):
+                claim = await self._repository.claim_command(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    lease_owner=lease_owner,
+                    lease_seconds=self._command_lease_seconds,
+                )
+            if claim.completed_result is not None:
+                return ConversationMessageResponse.model_validate_json(
+                    claim.completed_result
+                )
+            if not claim.acquired:
+                busy_safety = await self._classify_safety(message)
+                if busy_safety.risk_level is not RiskLevel.CRISIS:
+                    raise ConversationCommandInProgressError(
+                        "conversation command is already processing"
+                    )
+                classification_override = TurnClassification(
+                    safety_result=busy_safety,
+                    intent_result=None,
+                )
+                if claim.conversation is None:
+                    raise ConversationConcurrencyError(
+                        "owner-validated command claim omitted conversation state"
+                    )
+                crisis_turn = await self._unclaimed_crisis_turn(
+                    conversation=claim.conversation,
+                    message=message,
+                    idempotency_key=idempotency_key,
+                    lease_owner=lease_owner,
+                    safety_result=busy_safety,
+                    streaming_requested=streaming_requested,
+                    response_chunk_sink=response_chunk_sink,
+                )
+                try:
+                    claim = await self._repository.claim_command(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        idempotency_key=idempotency_key,
+                        request_hash=request_hash,
+                        lease_owner=lease_owner,
+                        lease_seconds=self._command_lease_seconds,
+                        preempt_active=True,
+                    )
+                except BaseException as exc:
+                    _reraise_external_cancellation(exc)
+                    logger.error(
+                        "Crisis priority command claim failed: %s",
+                        type(exc).__name__,
+                    )
+                    mark_first_turn_output()
+                    return _degraded_crisis_response(crisis_turn)
+                if claim.completed_result is not None:
+                    return ConversationMessageResponse.model_validate_json(
+                        claim.completed_result
+                    )
+                if not claim.acquired:
+                    mark_first_turn_output()
+                    return _degraded_crisis_response(crisis_turn)
+            safety_recovery_already_completed = (
+                claim.safety_recovery_status == "completed"
             )
-            await self._repository.complete_command(
-                conversation_id=conversation_id,
-                user_id=user_id,
-                idempotency_key=idempotency_key,
-                lease_owner=lease_owner,
-                result=response.model_dump_json(),
-            )
-            return response
+            if safety_recovery_already_completed:
+                classification_override = TurnClassification(
+                    safety_result=SafetyResult(
+                        risk_level=RiskLevel.CRISIS,
+                        reason="durable completed crisis safety recovery",
+                    ),
+                    intent_result=None,
+                )
+            execution_task: asyncio.Task[ConversationMessageResponse] | None = None
+            lease_task: asyncio.Task[None] | None = None
+            try:
+                with self._repository.command_lease_scope(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    idempotency_key=idempotency_key,
+                    lease_owner=lease_owner,
+                ):
+                    async def execute_turn() -> ConversationMessageResponse:
+                        with measure_turn_stage("turn_execution"):
+                            return await self._execute_message(
+                                conversation_id=conversation_id,
+                                user_id=user_id,
+                                message=message,
+                                idempotency_key=idempotency_key,
+                                lease_owner=lease_owner,
+                                streaming_requested=streaming_requested,
+                                response_chunk_sink=response_chunk_sink,
+                                classification_override=classification_override,
+                                on_crisis_identified=remember_crisis_turn,
+                                safety_recovery_already_completed=(
+                                    safety_recovery_already_completed
+                                ),
+                            )
+
+                    execution_task = asyncio.create_task(execute_turn())
+                    lease_task = asyncio.create_task(
+                        self._maintain_command_lease(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            idempotency_key=idempotency_key,
+                            lease_owner=lease_owner,
+                        )
+                    )
+                    done, _ = await asyncio.wait(
+                        {execution_task, lease_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if lease_task in done:
+                        lease_error = lease_task.exception()
+                        execution_task.cancel()
+                        try:
+                            response = await execution_task
+                        except asyncio.CancelledError:
+                            if lease_error is not None and crisis_turn is not None:
+                                response = _degraded_crisis_response(crisis_turn)
+                            elif lease_error is not None:
+                                raise lease_error
+                            else:
+                                raise ConversationLeaseLostError(
+                                    "conversation command lease maintenance stopped"
+                                )
+                        if response.crisis_persistence_status != (
+                            "degraded_retry_required"
+                        ):
+                            if lease_error is not None:
+                                raise lease_error
+                            raise ConversationLeaseLostError(
+                                "conversation command lease maintenance stopped"
+                            )
+                    else:
+                        response = await execution_task
+                if response.crisis_persistence_status == "degraded_retry_required":
+                    try:
+                        await self._repository.release_command_lease(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            idempotency_key=idempotency_key,
+                            lease_owner=lease_owner,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Crisis command release failed: %s",
+                            type(exc).__name__,
+                        )
+                    mark_first_turn_output()
+                    return response
+                try:
+                    await self._repository.assert_command_lease(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        idempotency_key=idempotency_key,
+                        lease_owner=lease_owner,
+                    )
+                except BaseException as exc:
+                    _reraise_external_cancellation(exc)
+                    if response.crisis_persistence_status != "persisted":
+                        raise
+                    response.crisis_persistence_status = (
+                        "safety_state_persisted_command_unconfirmed"
+                    )
+                    with suppress(Exception):
+                        await self._repository.release_command_lease(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            idempotency_key=idempotency_key,
+                            lease_owner=lease_owner,
+                        )
+                    mark_first_turn_output()
+                    return response
+                with measure_turn_stage("command_complete"):
+                    try:
+                        await self._repository.complete_command(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            idempotency_key=idempotency_key,
+                            lease_owner=lease_owner,
+                            result=response.model_dump_json(),
+                        )
+                    except BaseException as exc:
+                        _reraise_external_cancellation(exc)
+                        if response.crisis_persistence_status != "persisted":
+                            raise
+                        response.crisis_persistence_status = (
+                            "safety_state_persisted_command_unconfirmed"
+                        )
+                        with suppress(Exception):
+                            await self._repository.release_command_lease(
+                                conversation_id=conversation_id,
+                                user_id=user_id,
+                                idempotency_key=idempotency_key,
+                                lease_owner=lease_owner,
+                            )
+                mark_first_turn_output()
+                return response
+            except BaseException as exc:
+                with suppress(Exception):
+                    await self._repository.release_command_lease(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        idempotency_key=idempotency_key,
+                        lease_owner=lease_owner,
+                    )
+                _reraise_external_cancellation(exc)
+                if crisis_turn is not None:
+                    logger.error(
+                        "Claimed crisis turn execution failed before safe completion: %s",
+                        type(exc).__name__,
+                    )
+                    mark_first_turn_output()
+                    return _degraded_crisis_response(crisis_turn)
+                raise
+            finally:
+                for task in (execution_task, lease_task):
+                    if task is not None and not task.done():
+                        task.cancel()
+                for task in (execution_task, lease_task):
+                    if task is not None:
+                        # The primary await above has already propagated or
+                        # deliberately converted the task outcome. Cleanup
+                        # must not re-raise that same observed exception and
+                        # override a crisis fallback response.
+                        with suppress(asyncio.CancelledError, Exception):
+                            await task
         finally:
-            lease_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await lease_task
+            report = recorder.finish()
+            reset_turn_latency(latency_token)
+            if self._latency_sink is not None:
+                try:
+                    self._latency_sink(report)
+                except Exception as exc:
+                    logger.warning(
+                        "Conversation latency sink failed: %s",
+                        exc.__class__.__name__,
+                    )
 
     async def _maintain_command_lease(
         self,
@@ -526,7 +805,7 @@ class ConversationService:
         lease_owner: str,
     ) -> None:
         """Renew a command lease while its potentially long turn is running."""
-        interval = max(5, self._command_lease_seconds // 3)
+        interval = max(0.1, min(5.0, self._command_lease_seconds / 3))
         while True:
             await asyncio.sleep(interval)
             try:
@@ -537,10 +816,56 @@ class ConversationService:
                     lease_owner=lease_owner,
                     lease_seconds=self._command_lease_seconds,
                 )
-            except Exception:
-                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                raise ConversationLeaseLostError(
+                    "conversation command lease renewal failed"
+                ) from exc
             if not renewed:
-                return
+                raise ConversationLeaseLostError(
+                    "conversation command lease was lost"
+                )
+
+    async def _unclaimed_crisis_turn(
+        self,
+        *,
+        conversation: Conversation,
+        message: str,
+        idempotency_key: str,
+        lease_owner: str,
+        safety_result: SafetyResult,
+        streaming_requested: bool,
+        response_chunk_sink: ResponseChunkSink | None,
+    ) -> ConversationTurn:
+        """Build a transient crisis response after owner validation but before claim."""
+        try:
+            stack = await self._repository.list_module_stack(
+                conversation_id=conversation.conversation_id,
+                user_id=conversation.user_id,
+            )
+        except BaseException as exc:
+            _reraise_external_cancellation(exc)
+            logger.error(
+                "Transient crisis module state read failed: %s",
+                type(exc).__name__,
+            )
+            stack = []
+        return ConversationTurn(
+            conversation=conversation,
+            conversation_id=conversation.conversation_id,
+            user_id=conversation.user_id,
+            message=message,
+            idempotency_key=idempotency_key,
+            lease_owner=lease_owner,
+            stack=stack,
+            safety_result=safety_result,
+            user_event=None,
+            intent_plan=None,
+            streaming_requested=streaming_requested,
+            response_chunk_sink=response_chunk_sink,
+            crisis_persistence_failed=True,
+        )
 
     async def _execute_message(
         self,
@@ -549,21 +874,34 @@ class ConversationService:
         user_id: str,
         message: str,
         idempotency_key: str,
+        lease_owner: str,
         streaming_requested: bool,
         response_chunk_sink: ResponseChunkSink | None,
+        classification_override: TurnClassification | None = None,
+        on_crisis_identified: Callable[[ConversationTurn], None] | None = None,
+        safety_recovery_already_completed: bool = False,
     ) -> ConversationMessageResponse:
         """Dispatch one claimed turn through ordered, typed handlers."""
-        turn = await self._start_turn(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            message=message,
-            idempotency_key=idempotency_key,
-            streaming_requested=streaming_requested,
-            response_chunk_sink=response_chunk_sink,
-        )
+        with measure_turn_stage("turn_preparation"):
+            turn = await self._start_turn(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                message=message,
+                idempotency_key=idempotency_key,
+                lease_owner=lease_owner,
+                streaming_requested=streaming_requested,
+                response_chunk_sink=response_chunk_sink,
+                classification_override=classification_override,
+                on_crisis_identified=on_crisis_identified,
+                safety_recovery_already_completed=(
+                    safety_recovery_already_completed
+                ),
+            )
         if turn.safety_result.risk_level == RiskLevel.CRISIS:
-            return await self._handle_crisis_turn(turn)
-        return await self._handle_non_crisis_turn(turn)
+            with measure_turn_stage("turn_dispatch"):
+                return await self._handle_crisis_turn(turn)
+        with measure_turn_stage("turn_dispatch"):
+            return await self._handle_non_crisis_turn(turn)
 
     async def _start_turn(
         self,
@@ -572,118 +910,262 @@ class ConversationService:
         user_id: str,
         message: str,
         idempotency_key: str,
+        lease_owner: str,
         streaming_requested: bool,
         response_chunk_sink: ResponseChunkSink | None,
+        classification_override: TurnClassification | None = None,
+        on_crisis_identified: Callable[[ConversationTurn], None] | None = None,
+        safety_recovery_already_completed: bool = False,
     ) -> ConversationTurn:
         """Load and append the authoritative input state for one claimed turn."""
-        conversation = await self._repository.get_for_user(
-            conversation_id,
-            user_id,
-        )
+        with measure_turn_stage("state_load"):
+            conversation = await self._repository.get_for_user(
+                conversation_id,
+                user_id,
+            )
         if conversation is None:
             raise LookupError("conversation not found")
 
-        stack = await self._repository.list_module_stack(
-            conversation_id=conversation_id,
-            user_id=user_id,
-        )
+        with measure_turn_stage("state_load"):
+            stack = await self._repository.list_module_stack(
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
         active_run = stack[-1] if stack else None
-        safety_result = await self._safety_classifier.classify(message)
-        user_event = await self._repository.append_event(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            event_type=(
-                ConversationEventType.CRISIS_INPUT
-                if safety_result.risk_level == RiskLevel.CRISIS
-                else (
-                    ConversationEventType.MODULE_MESSAGE
-                    if active_run
-                    else ConversationEventType.USER_MESSAGE
-                )
-            ),
-            role=ConversationEventRole.USER,
-            content=message,
-            module_run_id=(
-                active_run.module_run_id if active_run else None
-            ),
-            parent_module_run_id=(
-                active_run.parent_module_run_id if active_run else None
-            ),
-            idempotency_key=f"user:{idempotency_key}",
+        classification = (
+            classification_override
+            if classification_override is not None
+            else await self._turn_classifier.classify(message)
         )
-        return ConversationTurn(
+        safety_result = classification.safety_result
+        crisis_persistence_failed = False
+        try:
+            await self._repository.record_command_safety_classification(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                idempotency_key=idempotency_key,
+                lease_owner=lease_owner,
+                crisis=safety_result.risk_level is RiskLevel.CRISIS,
+            )
+        except BaseException as exc:
+            _reraise_external_cancellation(exc)
+            if safety_result.risk_level is not RiskLevel.CRISIS:
+                raise
+            crisis_persistence_failed = True
+            logger.error(
+                "Crisis command classification persistence failed: %s",
+                type(exc).__name__,
+            )
+        if (
+            safety_result.risk_level is RiskLevel.CRISIS
+            and on_crisis_identified is not None
+        ):
+            on_crisis_identified(
+                ConversationTurn(
+                    conversation=conversation,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    message=message,
+                    idempotency_key=idempotency_key,
+                    lease_owner=lease_owner,
+                    stack=stack,
+                    safety_result=safety_result,
+                    user_event=None,
+                    intent_plan=None,
+                    streaming_requested=streaming_requested,
+                    response_chunk_sink=response_chunk_sink,
+                    intent_result=classification.intent_result,
+                    safety_recovery_already_completed=(
+                        safety_recovery_already_completed
+                    ),
+                )
+            )
+        try:
+            with measure_turn_stage("input_persistence"):
+                user_event = await self._repository.append_event(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                event_type=(
+                    ConversationEventType.CRISIS_INPUT
+                    if safety_result.risk_level == RiskLevel.CRISIS
+                    else (
+                        ConversationEventType.MODULE_MESSAGE
+                        if active_run
+                        else ConversationEventType.USER_MESSAGE
+                    )
+                ),
+                role=ConversationEventRole.USER,
+                content=message,
+                module_run_id=(
+                    active_run.module_run_id if active_run else None
+                ),
+                parent_module_run_id=(
+                    active_run.parent_module_run_id if active_run else None
+                ),
+                idempotency_key=f"user:{idempotency_key}",
+                )
+        except BaseException as exc:
+            _reraise_external_cancellation(exc)
+            if safety_result.risk_level != RiskLevel.CRISIS:
+                raise
+            user_event = None
+            crisis_persistence_failed = True
+            logger.error("Crisis input persistence failed: %s", type(exc).__name__)
+        try:
+            with measure_turn_stage("state_load"):
+                intent_plan = await self._repository.get_intent_plan(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+        except BaseException as exc:
+            _reraise_external_cancellation(exc)
+            if safety_result.risk_level != RiskLevel.CRISIS:
+                raise
+            intent_plan = None
+            crisis_persistence_failed = True
+            logger.error("Crisis intent state load failed: %s", type(exc).__name__)
+        turn = ConversationTurn(
             conversation=conversation,
             conversation_id=conversation_id,
             user_id=user_id,
             message=message,
             idempotency_key=idempotency_key,
+            lease_owner=lease_owner,
             stack=stack,
             safety_result=safety_result,
             user_event=user_event,
-            intent_plan=await self._repository.get_intent_plan(
-                conversation_id=conversation_id,
-                user_id=user_id,
-            ),
+            intent_plan=intent_plan,
             streaming_requested=streaming_requested,
             response_chunk_sink=response_chunk_sink,
+            intent_result=classification.intent_result,
+            crisis_persistence_failed=crisis_persistence_failed,
+            safety_recovery_already_completed=(
+                safety_recovery_already_completed
+            ),
         )
+        if safety_result.risk_level is RiskLevel.CRISIS and on_crisis_identified:
+            on_crisis_identified(turn)
+        return turn
 
     async def _handle_crisis_turn(
         self,
         turn: ConversationTurn,
     ) -> ConversationMessageResponse:
-        """Preempt every ordinary flow before returning crisis guidance."""
-        context = await self._context_manager.assemble(
-            conversation_id=turn.conversation_id,
-            user_id=turn.user_id,
-            current_user_message=turn.message,
-            current_event_id=turn.user_event.event_id,
-        )
-        preemption_events = await self._module_coordinator.preempt_for_crisis(
-            conversation_id=turn.conversation_id,
-            user_id=turn.user_id,
-        )
-        if turn.intent_plan is not None:
-            cancelled_plan, _ = apply_intent_queue_control(
-                turn.intent_plan,
-                IntentQueueControl(action=IntentQueueControlAction.CANCEL_ALL),
-            )
-            if cancelled_plan is not turn.intent_plan:
-                turn.intent_plan = await self._repository.update_intent_plan(
-                    cancelled_plan,
-                    expected_version=turn.intent_plan.version,
-                )
+        """Preempt ordinary state without invoking context, memory, or generation."""
         response = crisis_escalation_response(paused_activity="当前对话和练习")
-        crisis_event = await self._repository.get_event_by_idempotency(
-            conversation_id=turn.conversation_id,
-            user_id=turn.user_id,
-            idempotency_key=f"crisis:{turn.idempotency_key}",
-        )
-        if crisis_event is None:
-            crisis_event = await self._repository.append_event(
+        appended_events = [turn.user_event] if turn.user_event is not None else []
+        persistence_failed = turn.crisis_persistence_failed
+        if not turn.safety_recovery_already_completed:
+            try:
+                appended_events.extend(
+                    await self._module_coordinator.preempt_for_crisis(
+                        conversation_id=turn.conversation_id,
+                        user_id=turn.user_id,
+                    )
+                )
+            except BaseException as exc:
+                _reraise_external_cancellation(exc)
+                persistence_failed = True
+                logger.error(
+                    "Crisis module preemption persistence failed: %s",
+                    type(exc).__name__,
+                )
+            try:
+                if turn.intent_plan is not None:
+                    cancelled_plan, _ = apply_intent_queue_control(
+                        turn.intent_plan,
+                        IntentQueueControl(action=IntentQueueControlAction.CANCEL_ALL),
+                    )
+                    if cancelled_plan is not turn.intent_plan:
+                        turn.intent_plan = await self._repository.update_intent_plan(
+                            cancelled_plan,
+                            expected_version=turn.intent_plan.version,
+                        )
+            except BaseException as exc:
+                _reraise_external_cancellation(exc)
+                persistence_failed = True
+                logger.error(
+                    "Crisis intent cancellation persistence failed: %s",
+                    type(exc).__name__,
+                )
+        try:
+            crisis_event = await self._repository.get_event_by_idempotency(
                 conversation_id=turn.conversation_id,
                 user_id=turn.user_id,
-                event_type=ConversationEventType.CRISIS_ESCALATED,
-                role=ConversationEventRole.SYSTEM,
-                content=response,
-                structured_payload=CrisisEscalatedEventPayload(),
-                module_run_id=(
-                    turn.active_run.module_run_id if turn.active_run else None
-                ),
-                parent_module_run_id=(
-                    turn.active_run.parent_module_run_id if turn.active_run else None
-                ),
                 idempotency_key=f"crisis:{turn.idempotency_key}",
             )
-        return await self._response(
-            conversation_id=turn.conversation_id,
-            user_id=turn.user_id,
-            appended_events=[turn.user_event, *preemption_events, crisis_event],
-            response=response,
-            safety_result=turn.safety_result,
-            context_diagnostics=context.diagnostics,
-            intent_plan=turn.intent_plan,
-        )
+            if crisis_event is None and turn.safety_recovery_already_completed:
+                raise ConversationConcurrencyError(
+                    "completed crisis safety recovery has no durable event"
+                )
+            if crisis_event is None:
+                crisis_event = await self._repository.append_event(
+                    conversation_id=turn.conversation_id,
+                    user_id=turn.user_id,
+                    event_type=ConversationEventType.CRISIS_ESCALATED,
+                    role=ConversationEventRole.SYSTEM,
+                    content=response,
+                    structured_payload=CrisisEscalatedEventPayload(),
+                    module_run_id=(
+                        turn.active_run.module_run_id if turn.active_run else None
+                    ),
+                    parent_module_run_id=(
+                        turn.active_run.parent_module_run_id if turn.active_run else None
+                    ),
+                    idempotency_key=f"crisis:{turn.idempotency_key}",
+                )
+            appended_events.append(crisis_event)
+        except BaseException as exc:
+            _reraise_external_cancellation(exc)
+            persistence_failed = True
+            logger.error("Crisis escalation event persistence failed: %s", type(exc).__name__)
+
+        diagnostics = _crisis_bypass_diagnostics(turn.conversation_id)
+        if persistence_failed:
+            return _degraded_crisis_response(
+                turn,
+                appended_events=appended_events,
+            )
+        if not turn.safety_recovery_already_completed:
+            try:
+                await self._repository.complete_command_safety_recovery(
+                    conversation_id=turn.conversation_id,
+                    user_id=turn.user_id,
+                    idempotency_key=turn.idempotency_key,
+                    lease_owner=turn.lease_owner,
+                )
+            except BaseException as exc:
+                _reraise_external_cancellation(exc)
+                logger.error(
+                    "Crisis command recovery completion failed: %s",
+                    type(exc).__name__,
+                )
+                return _degraded_crisis_response(
+                    turn,
+                    appended_events=appended_events,
+                )
+        try:
+            return await self._response(
+                conversation_id=turn.conversation_id,
+                user_id=turn.user_id,
+                appended_events=appended_events,
+                response=response,
+                safety_result=turn.safety_result,
+                context_diagnostics=diagnostics,
+                intent_plan=turn.intent_plan,
+                crisis_persistence_status="persisted",
+            )
+        except BaseException as exc:
+            _reraise_external_cancellation(exc)
+            logger.error("Crisis response state read failed: %s", type(exc).__name__)
+            return _degraded_crisis_response(
+                turn,
+                appended_events=appended_events,
+                # The crisis event and all preceding safety-state writes were
+                # confirmed.  Only the read used to enrich the response failed;
+                # command completion can still durably capture this safe result.
+                persistence_status="persisted",
+            )
 
     async def _handle_non_crisis_turn(
         self,
@@ -732,7 +1214,7 @@ class ConversationService:
             message=turn.message,
             module_type=active_run.module_type,
             module_parameters=active_run.module_parameters,
-            current_event_id=turn.user_event.event_id,
+            current_event_id=turn.required_user_event.event_id,
         )
         result, module_event, context = await self._module_coordinator.handle_message(
             conversation_id=turn.conversation_id,
@@ -784,7 +1266,7 @@ class ConversationService:
         return await self._response(
             conversation_id=turn.conversation_id,
             user_id=turn.user_id,
-            appended_events=[turn.user_event, module_event, *completion_events],
+            appended_events=[turn.required_user_event, module_event, *completion_events],
             response=combined_response,
             safety_result=turn.safety_result,
             context_diagnostics=context.diagnostics,
@@ -802,7 +1284,7 @@ class ConversationService:
             conversation_id=turn.conversation_id,
             user_id=turn.user_id,
             current_user_message=turn.message,
-            current_event_id=turn.user_event.event_id,
+            current_event_id=turn.required_user_event.event_id,
         )
         replay = await self._repository.get_event_by_idempotency(
             conversation_id=turn.conversation_id,
@@ -821,25 +1303,27 @@ class ConversationService:
             }
             if turn.response_chunk_sink is not None:
                 harness_kwargs["response_chunk_sink"] = turn.response_chunk_sink
-            workflow_response = await self._harness.run(
-                ChatRequest(
-                    user_id=turn.user_id,
-                    message=turn.message,
-                    context=conversation_workflow_context(
-                        context,
-                        source_event_id=turn.user_event.event_id,
+            with measure_turn_stage("workflow"):
+                workflow_response = await self._harness.run(
+                    ChatRequest(
+                        user_id=turn.user_id,
+                        message=turn.message,
+                        context=conversation_workflow_context(
+                            context,
+                            source_event_id=turn.required_user_event.event_id,
+                        ),
                     ),
-                ),
-                **harness_kwargs,
-            )
-            replay = await self._repository.append_event(
-                conversation_id=turn.conversation_id,
-                user_id=turn.user_id,
-                event_type=ConversationEventType.ASSISTANT_MESSAGE,
-                role=ConversationEventRole.ASSISTANT,
-                content=workflow_response.response,
-                idempotency_key=assistant_key,
-            )
+                    **harness_kwargs,
+                )
+            with measure_turn_stage("response_persistence"):
+                replay = await self._repository.append_event(
+                    conversation_id=turn.conversation_id,
+                    user_id=turn.user_id,
+                    event_type=ConversationEventType.ASSISTANT_MESSAGE,
+                    role=ConversationEventRole.ASSISTANT,
+                    content=workflow_response.response,
+                    idempotency_key=assistant_key,
+                )
         progression_events: list[ConversationEvent] = []
         progression_responses: list[str] = []
         if turn.intent_plan is not None:
@@ -850,7 +1334,7 @@ class ConversationService:
             ) = await self._complete_and_consume_intent_plan(
                 plan=turn.intent_plan,
                 completed_intent=intent_result.intent,
-                source_event=turn.user_event,
+                source_event=turn.required_user_event,
                 safety_result=turn.safety_result,
                 context=context,
             )
@@ -862,7 +1346,7 @@ class ConversationService:
         return await self._response(
             conversation_id=turn.conversation_id,
             user_id=turn.user_id,
-            appended_events=[turn.user_event, replay, *progression_events],
+            appended_events=[turn.required_user_event, replay, *progression_events],
             response=combined_response,
             safety_result=turn.safety_result,
             context_diagnostics=context.diagnostics,
@@ -879,6 +1363,10 @@ class ConversationService:
         request_hash: str,
     ) -> ModuleProposal:
         """Reject a pending, unexpired, untampered proposal."""
+        await self._assert_no_unfinished_safety_recovery(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
         proposal = await self._validated_pending_proposal(
             conversation_id=conversation_id,
             proposal_id=proposal_id,
@@ -905,6 +1393,10 @@ class ConversationService:
         request_hash: str,
     ) -> ModuleControlResponse:
         """Accept one proposal and delegate the confirmed stack push."""
+        await self._assert_no_unfinished_safety_recovery(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
         proposal = await self._repository.get_proposal_for_user(
             proposal_id=proposal_id,
             conversation_id=conversation_id,
@@ -961,6 +1453,10 @@ class ConversationService:
         job: ModuleStartJob,
     ) -> ModuleControlResponse:
         """Reconcile one lease-owned module startup without a client retry."""
+        await self._assert_no_unfinished_safety_recovery(
+            conversation_id=job.conversation_id,
+            user_id=job.user_id,
+        )
         run = await self._repository.get_module_run_for_user(
             module_run_id=job.module_run_id,
             conversation_id=job.conversation_id,
@@ -995,6 +1491,10 @@ class ConversationService:
         user_id: str,
     ) -> ModuleControlResponse:
         """Explicitly terminate the active top module."""
+        await self._assert_no_unfinished_safety_recovery(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
         run = await self._repository.get_module_run_for_user(
             module_run_id=module_run_id,
             conversation_id=conversation_id,
@@ -1072,6 +1572,10 @@ class ConversationService:
         user_id: str,
     ) -> ModuleControlResponse:
         """Explicitly terminate all active and suspended frames."""
+        await self._assert_no_unfinished_safety_recovery(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
         result = await self._module_coordinator.terminate_all(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -1093,6 +1597,21 @@ class ConversationService:
                     expected_version=plan.version,
                 )
         return result.model_copy(update={"intent_plan": plan})
+
+    async def _assert_no_unfinished_safety_recovery(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> None:
+        """Fence ordinary module control while a crisis obligation is pending."""
+        if await self._repository.has_unfinished_command_safety_recovery(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        ):
+            raise ConversationCommandInProgressError(
+                "conversation crisis safety recovery is still pending"
+            )
 
     async def _assemble_module_context(
         self,
@@ -1243,34 +1762,84 @@ class ConversationService:
         pending_proposal: ModuleProposal | None = None,
         workflow_response=None,
         intent_plan: ConversationIntentPlan | None = None,
+        crisis_persistence_status: str = "not_applicable",
     ) -> ConversationMessageResponse:
-        conversation = await self._repository.get_for_user(
-            conversation_id,
-            user_id,
-        )
-        if conversation is None:
-            raise LookupError("conversation not found")
-        return ConversationMessageResponse(
-            conversation=conversation,
-            appended_events=appended_events,
-            active_module_stack=await self._repository.list_module_stack(
-                conversation_id=conversation_id,
-                user_id=user_id,
-            ),
-            pending_module_proposal=pending_proposal,
-            intent_plan=(
-                intent_plan
-                if intent_plan is not None
-                else await self._repository.get_intent_plan(
+        with measure_turn_stage("response_assembly"):
+            conversation = await self._repository.get_for_user(
+                conversation_id,
+                user_id,
+            )
+            if conversation is None:
+                raise LookupError("conversation not found")
+            return ConversationMessageResponse(
+                conversation=conversation,
+                appended_events=appended_events,
+                active_module_stack=await self._repository.list_module_stack(
                     conversation_id=conversation_id,
                     user_id=user_id,
-                )
-            ),
-            response=response,
-            safety_result=safety_result,
-            context_diagnostics=context_diagnostics,
-            workflow_response=workflow_response,
-        )
+                ),
+                pending_module_proposal=pending_proposal,
+                intent_plan=(
+                    intent_plan
+                    if intent_plan is not None
+                    else await self._repository.get_intent_plan(
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                    )
+                ),
+                response=response,
+                safety_result=safety_result,
+                context_diagnostics=context_diagnostics,
+                workflow_response=workflow_response,
+                crisis_persistence_status=crisis_persistence_status,
+            )
+
+
+def _crisis_bypass_diagnostics(
+    conversation_id: str,
+) -> ConversationContextDiagnostics:
+    """Describe the intentional no-context crisis path without user content."""
+    return ConversationContextDiagnostics(
+        conversation_id_hash=conversation_id_hash(conversation_id),
+        recent_event_count=0,
+        active_module_count=0,
+        selected_memory_count=0,
+        estimated_tokens=0,
+        total_token_budget=1,
+        budget_profile=ConversationContextProfile.ORDINARY,
+        dropped_sections=["crisis_bypass"],
+        tokenizer_backend="not_used",
+        context_backend="crisis_bypass",
+        cache_status="bypassed",
+    )
+
+
+def _degraded_crisis_response(
+    turn: ConversationTurn,
+    *,
+    appended_events: list[ConversationEvent] | None = None,
+    persistence_status: str = "degraded_retry_required",
+) -> ConversationMessageResponse:
+    """Return static safety guidance while accurately flagging unconfirmed state."""
+    return ConversationMessageResponse(
+        conversation=turn.conversation,
+        appended_events=appended_events or [],
+        active_module_stack=turn.stack,
+        intent_plan=turn.intent_plan,
+        response=crisis_escalation_response(paused_activity="当前对话和练习"),
+        safety_result=turn.safety_result,
+        context_diagnostics=_crisis_bypass_diagnostics(turn.conversation_id),
+        crisis_persistence_status=persistence_status,
+    )
+
+
+def _reraise_external_cancellation(exc: BaseException) -> None:
+    """Preserve real task cancellation while allowing injected I/O cancellation fallback."""
+    if not isinstance(exc, asyncio.CancelledError):
+        return
+    task = asyncio.current_task()
+    if task is not None and task.cancelling():
+        raise exc
 
 
 def _proposal_request_hash(

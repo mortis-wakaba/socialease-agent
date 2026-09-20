@@ -30,8 +30,8 @@ def test_manifest_detects_changed_prompt_source(tmp_path: Path) -> None:
     original = source_backend / "app" / "llm" / "prompts.py"
     (prompt_path / "prompts.py").write_text(
         original.read_text(encoding="utf-8").replace(
-            "Return JSON only. Be conservative",
-            "Return JSON only. Always be conservative",
+            "不要进行诊断，只判断当前消息所呈现的操作性风险。",
+            "不要进行诊断，只判断当前消息所呈现的操作性风险，并保持保守。",
         ),
         encoding="utf-8",
     )
@@ -88,7 +88,7 @@ def test_changed_fingerprint_requires_changed_version() -> None:
 
     assert errors == [
         "support_generation: Prompt fingerprint changed but version stayed at "
-        "'support-v8'."
+        "'support-v13'."
     ]
 
 
@@ -97,7 +97,7 @@ def test_changed_fingerprint_passes_after_version_bump() -> None:
     current = deepcopy(previous)
     current["prompts"]["support_generation"] = {
         "fingerprint": "sha256:changed",
-        "version": "support-v9",
+        "version": "support-v14",
     }
 
     assert validate_version_bumps(current=current, previous=previous) == []

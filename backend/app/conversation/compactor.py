@@ -31,10 +31,17 @@ class ConversationCompactor:
         llm_client: BaseLLMClient | None = None,
         token_estimator: TokenEstimator | None = None,
         target_tokens: int = 1000,
+        model_context_tokens: int = 4096,
+        output_reserve_tokens: int = 1000,
     ) -> None:
         self._llm_client = llm_client
         self._token_estimator = token_estimator or ConservativeTokenEstimator()
         self._target_tokens = min(max(target_tokens, 128), 4000)
+        self._model_context_tokens = max(model_context_tokens, 1024)
+        self._output_reserve_tokens = min(
+            max(output_reserve_tokens, 256),
+            self._model_context_tokens // 2,
+        )
 
     async def compact(
         self,
@@ -45,16 +52,23 @@ class ConversationCompactor:
         events: list[ConversationEvent],
     ) -> ConversationCompactSummary:
         """Compact safe event projections and never retain crisis content."""
-        safe_events = [
-            event
-            for event in events
-            if _event_is_compactable(event)
-            and event.sequence_no
-            > (previous.compacted_through_sequence if previous else 0)
-        ]
+        pending_events = sorted(
+            (
+                event
+                for event in events
+                if event.sequence_no
+                > (previous.compacted_through_sequence if previous else 0)
+            ),
+            key=lambda event: event.sequence_no,
+        )
+        processed_events, safe_events, use_model = self._select_input_batch(
+            previous=previous,
+            events=pending_events,
+        )
         payload = await self._generate_payload(
             previous=previous,
             events=safe_events,
+            use_model=use_model,
         )
         payload = _fit_to_budget(
             _sanitize_payload(payload),
@@ -64,9 +78,7 @@ class ConversationCompactor:
         compacted_through = max(
             (
                 event.sequence_no
-                for event in events
-                if event.sequence_no
-                > (previous.compacted_through_sequence if previous else 0)
+                for event in processed_events
             ),
             default=previous.compacted_through_sequence if previous else 0,
         )
@@ -81,16 +93,81 @@ class ConversationCompactor:
             updated_at=datetime.now(UTC),
         )
 
+    def _select_input_batch(
+        self,
+        *,
+        previous: ConversationCompactSummary | None,
+        events: list[ConversationEvent],
+    ) -> tuple[list[ConversationEvent], list[ConversationEvent], bool]:
+        """Select an oldest-first prefix whose complete model request fits."""
+        processed: list[ConversationEvent] = []
+        safe: list[ConversationEvent] = []
+        input_budget = self._model_context_tokens - self._output_reserve_tokens
+        system_prompt = _compact_system_prompt()
+        for event in events:
+            if not _event_is_compactable(event):
+                processed.append(event)
+                continue
+            candidate_safe = [*safe, event]
+            request_tokens = (
+                self._token_estimator.count(system_prompt)
+                + _CHAT_PROTOCOL_OVERHEAD_TOKENS
+                + self._token_estimator.count(
+                    self._model_user_prompt(previous, candidate_safe)
+                )
+            )
+            if request_tokens > input_budget:
+                if safe:
+                    break
+                # The event is still processed by the bounded deterministic path.
+                # No over-budget model request is sent and the cursor advances only
+                # across this explicitly degraded event.
+                processed.append(event)
+                safe.append(event)
+                return processed, safe, False
+            safe = candidate_safe
+            processed.append(event)
+        return processed, safe, bool(safe)
+
+    def _model_user_prompt(
+        self,
+        previous: ConversationCompactSummary | None,
+        events: list[ConversationEvent],
+    ) -> str:
+        """Project old summary into a small, explicit share of model input."""
+        projected_previous = previous
+        if previous is not None:
+            payload = ConversationCompactPayload.model_validate(
+                previous.model_dump(
+                    include={
+                        "user_stated_goals",
+                        "current_topics",
+                        "open_questions",
+                        "module_outcomes",
+                    }
+                )
+            )
+            bounded = _fit_to_budget(
+                payload,
+                token_estimator=self._token_estimator,
+                target_tokens=min(128, max(32, self._output_reserve_tokens // 4)),
+            )
+            projected_previous = previous.model_copy(
+                update=bounded.model_dump()
+            )
+        return _compact_user_prompt(projected_previous, events)
+
     async def _generate_payload(
         self,
         *,
         previous: ConversationCompactSummary | None,
         events: list[ConversationEvent],
+        use_model: bool,
     ) -> ConversationCompactPayload:
-        if self._llm_client is not None and events:
+        if self._llm_client is not None and events and use_model:
             try:
                 system_prompt = _compact_system_prompt()
-                user_prompt = _compact_user_prompt(previous, events)
+                user_prompt = self._model_user_prompt(previous, events)
                 if (
                     isinstance(self._llm_client, JSONModeLLMClient)
                     and self._llm_client.json_mode_enabled
@@ -99,18 +176,31 @@ class ConversationCompactor:
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
                         temperature=0.0,
+                        max_tokens=self._output_reserve_tokens,
                     )
                 else:
                     raw = await self._llm_client.generate_text(
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
                         temperature=0.0,
+                        max_tokens=self._output_reserve_tokens,
                     )
                 payload = ConversationCompactPayload.model_validate(
                     json.loads(_strip_json_fence(raw))
                 )
                 if not _contains_prohibited_content(payload):
-                    return payload
+                    fallback = _deterministic_payload(
+                        previous=previous,
+                        events=events,
+                    )
+                    return payload.model_copy(
+                        update={
+                            "current_topics": _merge_dynamic(
+                                payload.current_topics,
+                                fallback.current_topics[:1],
+                            )
+                        }
+                    )
             except (
                 json.JSONDecodeError,
                 ValidationError,
@@ -121,6 +211,9 @@ class ConversationCompactor:
             except Exception:
                 pass
         return _deterministic_payload(previous=previous, events=events)
+
+
+_CHAT_PROTOCOL_OVERHEAD_TOKENS = 16
 
 
 def _compact_system_prompt() -> str:
@@ -162,7 +255,7 @@ def _compact_user_prompt(
             "role": event.role.value,
             "content": event.content[:1200],
         }
-        for event in events[-100:]
+        for event in events
     ]
     return (
         "Previous validated summary (data):\n"
@@ -222,29 +315,21 @@ def _deterministic_payload(
         }
     ]
     return ConversationCompactPayload(
-        user_stated_goals=_dedupe(
-            [
-                *(previous.user_stated_goals if previous else []),
-                *user_text[:2],
-            ]
+        user_stated_goals=_merge_stable(
+            previous.user_stated_goals if previous else [],
+            user_text[:2],
         ),
-        current_topics=_dedupe(
-            [
-                *(previous.current_topics if previous else []),
-                *user_text[-3:],
-            ]
+        current_topics=_merge_dynamic(
+            previous.current_topics if previous else [],
+            user_text[-3:],
         ),
-        open_questions=_dedupe(
-            [
-                *(previous.open_questions if previous else []),
-                *assistant_questions[-3:],
-            ]
+        open_questions=_merge_dynamic(
+            previous.open_questions if previous else [],
+            assistant_questions[-3:],
         ),
-        module_outcomes=_dedupe(
-            [
-                *(previous.module_outcomes if previous else []),
-                *module_outcomes[-3:],
-            ]
+        module_outcomes=_merge_dynamic(
+            previous.module_outcomes if previous else [],
+            module_outcomes[-3:],
         ),
     )
 
@@ -316,6 +401,22 @@ def _dedupe(values: list[str], *, limit: int = 5) -> list[str]:
         if len(result) >= limit:
             break
     return result
+
+
+def _merge_stable(previous: list[str], current: list[str]) -> list[str]:
+    """Keep durable goals while reserving room for newly stated goals."""
+    combined = _dedupe([*previous, *current], limit=len(previous) + len(current))
+    if len(combined) <= 5:
+        return combined
+    newest = _dedupe(current, limit=1)
+    if not newest:
+        return combined[:5]
+    return _dedupe([*combined[:4], newest[-1]])
+
+
+def _merge_dynamic(previous: list[str], current: list[str]) -> list[str]:
+    """Prefer current topics/questions/outcomes over stale saturated values."""
+    return _dedupe([*reversed(current), *reversed(previous)])
 
 
 def _strip_json_fence(value: str) -> str:

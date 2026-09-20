@@ -13,7 +13,10 @@ from app.auth.dependencies import (
     resolve_optional_user_id,
     resolve_request_user_id,
 )
-from app.conversation.repository import ConversationIdempotencyError
+from app.conversation.repository import (
+    ConversationCommandRecord,
+    ConversationIdempotencyError,
+)
 from app.models_conversation import (
     Conversation,
     ConversationPage,
@@ -21,6 +24,8 @@ from app.models_conversation import (
 )
 from app.models_conversation_api import (
     ConversationCreateRequest,
+    ConversationCommandRecoveryRequest,
+    ConversationCommandRecoveryResponse,
     ConversationDeleteRequest,
     ConversationDeleteResponse,
     ConversationDetailResponse,
@@ -30,6 +35,7 @@ from app.models_conversation_api import (
     ConversationMessageResponse,
     ConversationStreamChunkEvent,
     ConversationStreamCompletedEvent,
+    ConversationStreamCompletedResult,
     ConversationStreamErrorEvent,
     ConversationStreamHeartbeatEvent,
     ConversationModuleDecisionRequest,
@@ -322,7 +328,9 @@ async def stream_conversation_message(
                             ConversationStreamChunkEvent(text=chunk)
                         )
                 yield conversation_sse_event(
-                    ConversationStreamCompletedEvent(result=payload)
+                    ConversationStreamCompletedEvent(
+                        result=_stream_completed_result(payload)
+                    )
                 )
                 break
             if kind == "error" and isinstance(payload, str):
@@ -341,6 +349,110 @@ async def stream_conversation_message(
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.get(
+    "/{conversation_id}/commands/{idempotency_key}",
+    response_model=ConversationCommandRecoveryResponse,
+)
+async def get_conversation_command(
+    conversation_id: str,
+    idempotency_key: str,
+    user_id: str | None = None,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ConversationCommandRecoveryResponse:
+    """Recover completed output or inspect an owner-scoped pending command."""
+    effective_user_id = resolve_optional_user_id(user_id, current_user)
+    service = conversation_service()
+    record = await service.get_command(
+        conversation_id=conversation_id,
+        user_id=effective_user_id,
+        idempotency_key=idempotency_key,
+    )
+    if record is None:
+        conversation = await service.get_conversation(
+            conversation_id=conversation_id,
+            user_id=effective_user_id,
+        )
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return ConversationCommandRecoveryResponse(
+            status="not_found",
+            can_retry_same_request=True,
+            can_abandon=False,
+        )
+    return _command_recovery_response(record)
+
+
+@router.post(
+    "/{conversation_id}/commands/{idempotency_key}/abandon",
+    response_model=ConversationCommandRecoveryResponse,
+)
+async def abandon_conversation_command(
+    conversation_id: str,
+    idempotency_key: str,
+    request: ConversationCommandRecoveryRequest,
+    current_user: AuthContext = Depends(get_current_user),
+) -> ConversationCommandRecoveryResponse:
+    """Abandon an expired command without deleting its audit record."""
+    user_id = resolve_request_user_id(request.user_id, current_user)
+    record = await conversation_service().abandon_command(
+        conversation_id=conversation_id,
+        user_id=user_id,
+        idempotency_key=idempotency_key,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Conversation command not found")
+    if record.status in {"processing", "recoverable"}:
+        raise HTTPException(status_code=409, detail="Conversation command is still processing")
+    return _command_recovery_response(record)
+
+
+def _stream_completed_result(
+    response: ConversationMessageResponse,
+) -> ConversationStreamCompletedResult:
+    """Project a service response without presenting temporary text as history."""
+    response_is_persisted = any(
+        event.event_type.value == "crisis_escalated"
+        and event.content == response.response
+        for event in response.appended_events
+    )
+    transient_response = (
+        response.response
+        if response.crisis_persistence_status == "degraded_retry_required"
+        and not response_is_persisted
+        else None
+    )
+    return ConversationStreamCompletedResult(
+        conversation=response.conversation,
+        appended_events=response.appended_events,
+        active_module_stack=response.active_module_stack,
+        pending_module_proposal=response.pending_module_proposal,
+        transient_response=transient_response,
+        crisis_persistence_status=response.crisis_persistence_status,
+    )
+
+
+def _command_recovery_response(
+    record: ConversationCommandRecord,
+) -> ConversationCommandRecoveryResponse:
+    """Convert a repository command record into its public recovery contract."""
+    result = None
+    if record.completed_result is not None:
+        response = ConversationMessageResponse.model_validate_json(
+            record.completed_result
+        )
+        result = _stream_completed_result(response)
+    return ConversationCommandRecoveryResponse(
+        status=record.status,
+        result=result,
+        can_retry_same_request=record.status == "recoverable",
+        can_abandon=(
+            record.status == "recoverable"
+            and record.safety_recovery_status in {"not_required", "completed"}
+        ),
+        safety_recovery_status=record.safety_recovery_status,
     )
 
 
@@ -398,7 +510,7 @@ async def accept_module_proposal(
             user_id=user_id,
             request_hash=request.request_hash,
         )
-    except ConversationProposalError as exc:
+    except (ConversationProposalError, ConversationCommandInProgressError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
@@ -423,7 +535,7 @@ async def reject_module_proposal(
             user_id=user_id,
             request_hash=request.request_hash,
         )
-    except ConversationProposalError as exc:
+    except (ConversationProposalError, ConversationCommandInProgressError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -445,6 +557,8 @@ async def terminate_current_module(
             module_run_id=module_run_id,
             user_id=user_id,
         )
+    except ConversationCommandInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Active module not found") from exc
 
@@ -465,5 +579,7 @@ async def terminate_all_modules(
             conversation_id=conversation_id,
             user_id=user_id,
         )
+    except ConversationCommandInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc

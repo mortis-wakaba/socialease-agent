@@ -65,7 +65,11 @@ export type TraceRecord = {
     outcome: string;
   }>;
   output_guardrail_action?: "allow" | "augment" | "repair" | "replace" | null;
-  output_guardrail_evaluation_mode?: "deterministic_only" | "full" | null;
+  output_guardrail_evaluation_mode?:
+    | "deterministic_only"
+    | "local_triage"
+    | "full"
+    | null;
   output_guardrail_categories?: string[];
   output_guardrail_semantic_checked?: boolean;
   output_guardrail_semantic_failed?: boolean;
@@ -327,15 +331,47 @@ export type ConversationMessageResponse = {
   appended_events: ConversationEvent[];
   active_module_stack: ModuleRun[];
   pending_module_proposal: ModuleProposal | null;
+  intent_plan: Record<string, unknown> | null;
   response: string;
   safety_result: SafetyResult;
   context_diagnostics: ConversationContextDiagnostics;
   workflow_response: ChatResponse | null;
 };
 
+export type ConversationStreamCompletedResult = {
+  conversation: Conversation;
+  appended_events: ConversationEvent[];
+  active_module_stack: ModuleRun[];
+  pending_module_proposal: ModuleProposal | null;
+  transient_response: string | null;
+  crisis_persistence_status:
+    | "not_applicable"
+    | "persisted"
+    | "degraded_retry_required"
+    | "safety_state_persisted_command_unconfirmed";
+};
+
+export type ConversationCommandRecoveryResponse = {
+  status:
+    | "not_found"
+    | "processing"
+    | "recoverable"
+    | "completed"
+    | "abandoned";
+  result: ConversationStreamCompletedResult | null;
+  can_retry_same_request: boolean;
+  can_abandon: boolean;
+  safety_recovery_status:
+    | "classification_pending"
+    | "not_required"
+    | "recovery_pending"
+    | "completed"
+    | null;
+};
+
 export type ConversationStreamPayload =
   | { type: "response_chunk"; text: string }
-  | { type: "response_completed"; result: ConversationMessageResponse }
+  | { type: "response_completed"; result: ConversationStreamCompletedResult }
   | { type: "response_heartbeat" }
   | { type: "response_error"; detail: string };
 

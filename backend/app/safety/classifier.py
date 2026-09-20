@@ -3,9 +3,9 @@
 import json
 from typing import Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.llm.base import BaseLLMClient
+from app.llm.base import BaseLLMClient, JSONModeLLMClient
 from app.llm.factory import create_llm_client
 from app.llm.retry import ProviderError
 from app.llm.prompts import build_safety_system_prompt, build_safety_user_prompt
@@ -22,7 +22,7 @@ class BaseSafetyClassifier(Protocol):
 
 
 class RuleBasedSafetyClassifier:
-    """Classify user messages into conservative safety risk levels."""
+    """Provide a deterministic crisis floor before semantic classification."""
 
     crisis_terms: tuple[str, ...] = (
         "自杀",
@@ -57,60 +57,64 @@ class RuleBasedSafetyClassifier:
         "hurt someone",
         "kill someone",
     )
-    high_terms: tuple[str, ...] = (
-        "被威胁",
-        "威胁我",
-        "霸凌",
-        "跟踪我",
-        "尾随我",
-        "恐吓",
-        "想打人",
-        "控制不住自己",
-        "未成年人被成年人约",
-        "被成年人约去见面",
-        "panic attack",
-        "can't breathe",
-        "cannot breathe",
-    )
-    medium_terms: tuple[str, ...] = (
-        "崩溃",
-        "焦虑到",
-        "喘不过气",
-        "很害怕",
-        "害怕出门",
-        "睡不着",
-        "panic",
-        "overwhelmed",
-    )
+    high_terms: tuple[str, ...] = ()
+    medium_terms: tuple[str, ...] = ()
 
     async def classify(self, message: str) -> SafetyResult:
         """Return the highest matched risk level and a short reason."""
         normalized = message.casefold()
 
-        crisis_hit = self._first_match(normalized, self.crisis_terms)
+        crisis_hit = self._first_unnegated_match(normalized, self.crisis_terms)
         if crisis_hit is not None:
             return SafetyResult(
                 risk_level=RiskLevel.CRISIS,
                 reason=f"Matched crisis safety term: {crisis_hit}",
             )
 
-        high_hit = self._first_match(normalized, self.high_terms)
-        if high_hit is not None:
-            return SafetyResult(
-                risk_level=RiskLevel.HIGH,
-                reason=f"Matched high-risk safety term: {high_hit}",
-            )
-
-        medium_hit = self._first_match(normalized, self.medium_terms)
-        if medium_hit is not None:
-            return SafetyResult(
-                risk_level=RiskLevel.MEDIUM,
-                reason=f"Matched medium-risk stress term: {medium_hit}",
-            )
-
         return SafetyResult(
             risk_level=RiskLevel.LOW,
-            reason="No high-risk or crisis terms detected by MVP rules.",
+            reason="No deterministic crisis expression detected; defer to semantic safety classification.",
+        )
+
+    @classmethod
+    def _first_unnegated_match(
+        cls,
+        message: str,
+        terms: tuple[str, ...],
+    ) -> str | None:
+        """Return the first crisis term not explicitly denied by nearby text."""
+        for term in terms:
+            start = 0
+            while True:
+                index = message.find(term, start)
+                if index < 0:
+                    break
+                prefix = message[max(0, index - 20) : index]
+                if not cls._explicitly_negated(prefix):
+                    return term
+                start = index + len(term)
+        return None
+
+    @staticmethod
+    def _explicitly_negated(prefix: str) -> bool:
+        return prefix.endswith(
+            (
+                "不是想",
+                "并不是想",
+                "并非想",
+                "并非要",
+                "不想",
+                "不会",
+                "不打算",
+                "不准备",
+                "没有想过",
+                "没想过",
+                "从没想过",
+                "don't want to ",
+                "do not want to ",
+                "not going to ",
+                "never considered ",
+            )
         )
 
     @staticmethod
@@ -129,28 +133,40 @@ class LlmSafetyClassifier:
 
     async def classify(self, message: str) -> SafetyResult:
         """Return one validated semantic safety classification."""
-        response = await self.llm_client.generate_text(
-            system_prompt=build_safety_system_prompt(),
-            user_prompt=build_safety_user_prompt(message),
-            temperature=0.0,
+        kwargs = {
+            "system_prompt": build_safety_system_prompt(),
+            "user_prompt": build_safety_user_prompt(message),
+            "temperature": 0.0,
+        }
+        response = (
+            await self.llm_client.generate_json_text(**kwargs)
+            if isinstance(self.llm_client, JSONModeLLMClient)
+            and self.llm_client.json_mode_enabled
+            else await self.llm_client.generate_text(**kwargs)
         )
         payload = json.loads(response)
         if not isinstance(payload, dict):
             raise ValueError("Safety classifier response must be an object.")
-        return SafetyResult.model_validate(payload).model_copy(
-            update={"llm_usage": LLMUsage(used=True)}
+        normalized = dict(payload)
+        normalized.pop("reason", None)  # Accept the previous verbose contract.
+        prediction = _CompactSafetyPrediction.model_validate(normalized)
+        return SafetyResult(
+            risk_level=prediction.risk_level,
+            reason=f"Semantic classifier selected {prediction.risk_level.value} risk.",
+            llm_usage=LLMUsage(used=True),
         )
 
 
-class HybridSafetyClassifier:
-    """Use deterministic rules as a floor and let LLM raise risk when needed."""
+class _CompactSafetyPrediction(BaseModel):
+    """Minimal provider contract; audit wording remains application-owned."""
 
-    risk_rank: dict[RiskLevel, int] = {
-        RiskLevel.LOW: 0,
-        RiskLevel.MEDIUM: 1,
-        RiskLevel.HIGH: 2,
-        RiskLevel.CRISIS: 3,
-    }
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    risk_level: RiskLevel = Field(alias="r")
+
+
+class HybridSafetyClassifier:
+    """Use a crisis rule floor and delegate every other level to the LLM."""
 
     def __init__(
         self,
@@ -167,35 +183,46 @@ class HybridSafetyClassifier:
         if rule_result.risk_level == RiskLevel.CRISIS:
             return rule_result
         if self.llm_classifier is None:
-            return rule_result
+            return _semantic_safety_failure_result("LLM_DISABLED")
         try:
             llm_result = await self.llm_classifier.classify(message)
         except (ValueError, json.JSONDecodeError, ValidationError):
-            return rule_result.model_copy(
-                update={
-                    "llm_usage": LLMUsage(
-                        fallback_used=True,
-                        error_category="INVALID_JSON",
-                    )
-                }
-            )
+            return _semantic_safety_failure_result("INVALID_JSON")
         except Exception as exc:
             category = (
                 exc.category.value
                 if isinstance(exc, ProviderError)
                 else "TRANSIENT_PROVIDER_ERROR"
             )
-            return rule_result.model_copy(
-                update={
-                    "llm_usage": LLMUsage(
-                        fallback_used=True,
-                        error_category=category,
-                    )
-                }
-            )
-        if self.risk_rank[llm_result.risk_level] > self.risk_rank[rule_result.risk_level]:
-            return llm_result
-        return rule_result.model_copy(update={"llm_usage": llm_result.llm_usage})
+            return _semantic_safety_failure_result(category)
+        return llm_result
+
+
+def _semantic_safety_failure_result(error_category: str) -> SafetyResult:
+    """Preserve opt-out fallback but fail closed on configured-provider errors."""
+    if error_category == "LLM_DISABLED":
+        return SafetyResult(
+            risk_level=RiskLevel.LOW,
+            reason=(
+                "Semantic safety classification is intentionally disabled; "
+                "using the deterministic crisis floor."
+            ),
+            llm_usage=LLMUsage(
+                fallback_used=True,
+                error_category=error_category,
+            ),
+        )
+    return SafetyResult(
+        risk_level=RiskLevel.HIGH,
+        reason=(
+            "Semantic safety classification was unavailable; using a conservative "
+            "high-risk fallback instead of low-risk streaming."
+        ),
+        llm_usage=LLMUsage(
+            fallback_used=True,
+            error_category=error_category,
+        ),
+    )
 
 
 def create_safety_classifier() -> BaseSafetyClassifier:

@@ -6,7 +6,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from dataclasses import dataclass
 from datetime import datetime
 import json
-from typing import AsyncContextManager, Protocol
+from typing import AsyncContextManager, ContextManager, Literal, Protocol
 
 from app.models_conversation import (
     HISTORY_NOTICE_VERSION,
@@ -29,6 +29,14 @@ from app.models_intent_plan import ConversationIntentPlan
 from app.models_intent_effect import IntentEffectLedgerRecord
 
 
+CommandSafetyRecoveryStatus = Literal[
+    "classification_pending",
+    "not_required",
+    "recovery_pending",
+    "completed",
+]
+
+
 class ConversationConcurrencyError(RuntimeError):
     """Raised when an optimistic version or expected state no longer matches."""
 
@@ -44,6 +52,18 @@ class ConversationCommandClaim:
     acquired: bool
     completed_result: str | None = None
     attempt_count: int = 0
+    conversation: Conversation | None = None
+    safety_recovery_status: CommandSafetyRecoveryStatus = "classification_pending"
+
+
+@dataclass(frozen=True)
+class ConversationCommandRecord:
+    """Owner-scoped durable command state without request-body disclosure."""
+
+    status: Literal["processing", "recoverable", "completed", "abandoned"]
+    completed_result: str | None = None
+    attempt_count: int = 0
+    safety_recovery_status: CommandSafetyRecoveryStatus = "classification_pending"
 
 
 @dataclass(frozen=True)
@@ -151,7 +171,50 @@ class ConversationRepository(Protocol):
         request_hash: str,
         lease_owner: str,
         lease_seconds: int,
+        preempt_active: bool = False,
     ) -> ConversationCommandClaim: ...
+
+    async def get_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationCommandRecord | None: ...
+
+    async def abandon_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationCommandRecord | None: ...
+
+    async def record_command_safety_classification(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+        crisis: bool,
+    ) -> None: ...
+
+    async def complete_command_safety_recovery(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+    ) -> None: ...
+
+    async def has_unfinished_command_safety_recovery(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> bool: ...
 
     async def renew_command_lease(
         self,
@@ -172,6 +235,33 @@ class ConversationRepository(Protocol):
         lease_owner: str,
         result: str,
     ) -> None: ...
+
+    async def assert_command_lease(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+    ) -> None: ...
+
+    async def release_command_lease(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+    ) -> None: ...
+
+    def command_lease_scope(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+    ) -> ContextManager[None]: ...
 
     async def save_intent_plan(
         self,

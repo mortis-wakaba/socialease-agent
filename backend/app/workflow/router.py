@@ -6,7 +6,11 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.llm.base import BaseLLMClient, JSONModeLLMClient
+from app.llm.base import (
+    BaseLLMClient,
+    JSONModeLLMClient,
+    StructuredJSONLLMClient,
+)
 from app.llm.retry import ProviderError
 from app.llm.prompts import (
     build_intent_router_system_prompt,
@@ -25,6 +29,7 @@ from app.models import (
     SecondaryIntent,
 )
 from app.models_llm import LLMUsage
+from app.observability.turn_latency import mark_turn_flag
 
 
 class BaseIntentRouter(Protocol):
@@ -38,27 +43,59 @@ class BaseIntentRouter(Protocol):
 class LLMSecondaryIntentPrediction(BaseModel):
     """One untrusted secondary intent emitted by the semantic router."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    intent: Intent
-    confidence: float = Field(ge=0.0, le=1.0)
-    relation: IntentRelation
-    reason: str = Field(min_length=1, max_length=240)
-    explicitly_requested: bool
-    parameters_complete: bool
+    intent: Intent = Field(alias="i")
+    confidence: float = Field(alias="c", ge=0.0, le=1.0)
+    relation: IntentRelation = Field(alias="r")
+    explicitly_requested: bool = Field(alias="e")
+    parameters_complete: bool = Field(alias="p")
 
 
 class LLMIntentPrediction(BaseModel):
     """Strict provider response before application-owned plan compilation."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    intent: Intent
-    confidence: float = Field(ge=0.0, le=1.0)
-    reason: str = Field(min_length=1, max_length=240)
-    explicitly_requested: bool
-    parameters_complete: bool
-    secondary_intents: list[LLMSecondaryIntentPrediction] = Field(max_length=2)
+    intent: Intent = Field(alias="i")
+    confidence: float = Field(alias="c", ge=0.0, le=1.0)
+    explicitly_requested: bool = Field(alias="e")
+    parameters_complete: bool = Field(alias="p")
+    secondary_intents: list[LLMSecondaryIntentPrediction] = Field(
+        default_factory=list,
+        alias="s",
+        max_length=2,
+    )
+
+
+INTENT_ROUTER_SCHEMA_NAME = "socialease_intent_prediction"
+INTENT_ROUTER_SINGLE_OUTPUT_TOKENS = 64
+INTENT_ROUTER_MULTI_OUTPUT_TOKENS = 128
+INTENT_ROUTER_PRIMARY_REASON = "Bounded semantic match."
+INTENT_ROUTER_SECONDARY_REASON = "Bounded secondary action."
+
+_SECONDARY_ACTION_CONNECTORS = (
+    "然后",
+    "接着",
+    "同时",
+    "并且",
+    "还要",
+    "再帮我",
+    "and then",
+    "also",
+)
+_SECONDARY_ACTION_BLOCKERS = (
+    "不要",
+    "不想",
+    "停止",
+    "暂停",
+    "以后再",
+    "之后再",
+    "先放一边",
+    "不是现在",
+    "not now",
+    "later instead",
+)
 
 
 _EXECUTABLE_SECONDARY_INTENTS = {
@@ -90,7 +127,19 @@ class LlmIntentRouter:
         try:
             system_prompt = build_intent_router_system_prompt()
             user_prompt = build_intent_router_user_prompt(message)
-            if (
+            if isinstance(self.llm_client, StructuredJSONLLMClient) and (
+                self.llm_client.json_mode_enabled
+            ):
+                json_schema, max_tokens = build_intent_router_json_schema(message)
+                response = await self.llm_client.generate_structured_json_text(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    json_schema=json_schema,
+                    schema_name=INTENT_ROUTER_SCHEMA_NAME,
+                    temperature=0.0,
+                    max_tokens=max_tokens,
+                )
+            elif (
                 isinstance(self.llm_client, JSONModeLLMClient)
                 and self.llm_client.json_mode_enabled
             ):
@@ -113,8 +162,10 @@ class LlmIntentRouter:
                 risk_level=safety_result.risk_level,
             )
             result = apply_llm_intent_policy(result)
+            mark_turn_flag("routing_llm_used")
             return result.model_copy(update={"llm_usage": LLMUsage(used=True)})
         except json.JSONDecodeError:
+            mark_turn_flag("routing_fallback")
             fallback = await self.fallback_router.route(message, safety_result)
             return fallback.model_copy(
                 update={
@@ -125,6 +176,7 @@ class LlmIntentRouter:
                 }
             )
         except (ValueError, ValidationError):
+            mark_turn_flag("routing_fallback")
             fallback = await self.fallback_router.route(message, safety_result)
             return fallback.model_copy(
                 update={
@@ -135,6 +187,7 @@ class LlmIntentRouter:
                 }
             )
         except Exception as exc:
+            mark_turn_flag("routing_fallback")
             fallback = await self.fallback_router.route(message, safety_result)
             category = (
                 exc.category.value
@@ -151,13 +204,75 @@ class LlmIntentRouter:
             )
 
 
+def build_intent_router_json_schema(
+    message: str,
+) -> tuple[dict[str, object], int]:
+    """Build a compact schema and allow queued actions only on explicit evidence."""
+    intent_values = [intent.value for intent in Intent if intent is not Intent.CRISIS]
+    relation_values = [relation.value for relation in IntentRelation]
+    maximum_secondaries = 2 if _has_explicit_secondary_action(message) else 0
+    secondary_schema: dict[str, object] = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "i": {"type": "string", "enum": intent_values},
+            "c": {"type": "number", "minimum": 0, "maximum": 1},
+            "r": {"type": "string", "enum": relation_values},
+            "e": {"type": "boolean"},
+            "p": {"type": "boolean"},
+        },
+        "required": ["i", "c", "r", "e", "p"],
+    }
+    properties: dict[str, object] = {
+        "i": {"type": "string", "enum": intent_values},
+        "c": {"type": "number", "minimum": 0, "maximum": 1},
+        "e": {"type": "boolean"},
+        "p": {"type": "boolean"},
+    }
+    required = ["i", "c", "e", "p"]
+    if maximum_secondaries:
+        properties["s"] = {
+            "type": "array",
+            "items": secondary_schema,
+            "maxItems": maximum_secondaries,
+        }
+        required.append("s")
+    schema: dict[str, object] = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "required": required,
+    }
+    max_tokens = (
+        INTENT_ROUTER_MULTI_OUTPUT_TOKENS
+        if maximum_secondaries
+        else INTENT_ROUTER_SINGLE_OUTPUT_TOKENS
+    )
+    return schema, max_tokens
+
+
+def _has_explicit_secondary_action(message: str) -> bool:
+    """Require a sequencing connector and two deterministic action signals."""
+    normalized = message.casefold()
+    if not any(term in normalized for term in _SECONDARY_ACTION_CONNECTORS):
+        return False
+    if any(term in normalized for term in _SECONDARY_ACTION_BLOCKERS):
+        return False
+    matched_intents = sum(
+        any(term in normalized for term in terms)
+        for terms in RuleBasedIntentRouter.intent_terms.values()
+    )
+    return matched_intents >= 2
+
+
 def compile_llm_intent_prediction(
     payload: object,
     *,
     risk_level: RiskLevel = RiskLevel.LOW,
 ) -> IntentResult:
     """Validate an LLM proposal and compile a server-owned sequential plan."""
-    prediction = LLMIntentPrediction.model_validate(payload)
+    normalized = _normalize_intent_payload(payload)
+    prediction = LLMIntentPrediction.model_validate(normalized)
     if prediction.intent == Intent.CRISIS:
         raise ValueError("LLM router cannot emit crisis outside safety routing.")
 
@@ -185,7 +300,14 @@ def compile_llm_intent_prediction(
         if candidate.relation == IntentRelation.CONFLICTING:
             return _clarification_for_conflicting_intents(prediction, candidate)
         seen.add(candidate.intent)
-        accepted.append(SecondaryIntent.model_validate(candidate.model_dump()))
+        accepted.append(
+            SecondaryIntent(
+                intent=candidate.intent,
+                confidence=candidate.confidence,
+                relation=candidate.relation,
+                reason=INTENT_ROUTER_SECONDARY_REASON,
+            )
+        )
         steps.append(
             _execution_step(
                 intent=candidate.intent,
@@ -200,7 +322,7 @@ def compile_llm_intent_prediction(
     return IntentResult(
         intent=prediction.intent,
         confidence=prediction.confidence,
-        reason=prediction.reason,
+        reason=INTENT_ROUTER_PRIMARY_REASON,
         secondary_intents=accepted,
         execution_plan=IntentExecutionPlan(
             current_intent=prediction.intent,
@@ -208,6 +330,27 @@ def compile_llm_intent_prediction(
             steps=steps,
         ),
     )
+
+
+def _normalize_intent_payload(payload: object) -> object:
+    """Accept old verbose reason fields while emitting only the compact contract."""
+    if not isinstance(payload, dict):
+        return payload
+    normalized = dict(payload)
+    normalized.pop("reason", None)
+    secondaries = normalized.get("secondary_intents", normalized.get("s"))
+    if isinstance(secondaries, list):
+        normalized_secondaries: list[object] = []
+        for item in secondaries:
+            if isinstance(item, dict):
+                item = dict(item)
+                item.pop("reason", None)
+            normalized_secondaries.append(item)
+        if "s" in normalized:
+            normalized["s"] = normalized_secondaries
+        else:
+            normalized["secondary_intents"] = normalized_secondaries
+    return normalized
 
 
 def _execution_step(
@@ -306,6 +449,39 @@ def apply_llm_intent_policy(result: IntentResult) -> IntentResult:
             ),
         )
     return result
+
+
+def reconcile_intent_risk_policy(
+    result: IntentResult,
+    *,
+    risk_level: RiskLevel,
+) -> IntentResult:
+    """Tighten a speculative low-risk plan using authoritative input safety."""
+    plan = result.execution_plan
+    if plan is None or risk_level is RiskLevel.LOW:
+        return result
+    changed = False
+    steps: list[IntentExecutionStep] = []
+    for step in plan.steps:
+        must_wait = risk_level in {RiskLevel.HIGH, RiskLevel.CRISIS} or (
+            risk_level is RiskLevel.MEDIUM
+            and step.intent is Intent.EXPOSURE_PLANNING
+        )
+        if must_wait and step.status is not IntentStepStatus.AWAITING_CONSENT:
+            step = step.model_copy(
+                update={
+                    "status": IntentStepStatus.AWAITING_CONSENT,
+                    "undo_supported": False,
+                    "effect": None,
+                }
+            )
+            changed = True
+        steps.append(step)
+    if not changed:
+        return result
+    return result.model_copy(
+        update={"execution_plan": plan.model_copy(update={"steps": steps})}
+    )
 
 
 class RuleBasedIntentRouter:

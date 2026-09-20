@@ -16,28 +16,26 @@ GUARDRAIL_POLICY_VERSION = "output-guardrail-2026-07-31"
 SKILL_REGISTRY_VERSION = "bounded-skills-2026-07-19"
 
 PROMPT_VERSIONS: dict[str, str] = {
-    "safety_classifier": "safety-v1",
-    "intent_router": "intent-v5",
-    "support_generation": "support-v8",
-    "support_stream_generation": "support-stream-v1",
-    "memory_tool_decision": "memory-tool-v5",
+    "safety_classifier": "safety-v3",
+    "intent_router": "intent-v7",
+    "support_generation": "support-v13",
+    "support_stream_generation": "support-stream-v6",
+    "memory_tool_decision": "memory-tool-v6",
     "memory_evidence_selector": "memory-evidence-selector-v2",
     "memory_grounding_generation": "memory-grounding-v1",
     "memory_correction_resolution": "memory-correction-v2",
     "roleplay": "roleplay-v10",
     "worksheet_extraction": "worksheet-v5",
     "resource_agent_loop": "resource-loop-v2",
-    "output_guardrail": "output-guardrail-v7",
-    "output_repair": "output-repair-v5",
-    "conversation_compaction": "conversation-compaction-v1",
+    "output_guardrail": "output-guardrail-v10",
+    "output_repair": "output-repair-v7",
+    "conversation_compaction": "conversation-compaction-v3",
     "memory_extraction": "memory-extraction-v3",
 }
 
 _PROMPTS_BY_SKILL: dict[str, tuple[str, ...]] = {
     "general_support_skill": (
-        "memory_tool_decision",
         "memory_evidence_selector",
-        "memory_grounding_generation",
         "support_generation",
         "support_stream_generation",
     ),

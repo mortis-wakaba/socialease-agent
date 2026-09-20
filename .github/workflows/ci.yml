@@ -16,7 +16,7 @@ jobs:
       SOCIALEASE_TEST_DATABASE_URL: postgresql+psycopg://socialease:socialease@127.0.0.1:5432/socialease
     services:
       postgres:
-        image: postgres:16@sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54
+        image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
         env:
           POSTGRES_USER: socialease
           POSTGRES_PASSWORD: socialease
@@ -139,7 +139,7 @@ jobs:
     needs: [backend, frontend]
     services:
       postgres:
-        image: postgres:16@sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54
+        image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
         env:
           POSTGRES_USER: socialease
           POSTGRES_PASSWORD: socialease

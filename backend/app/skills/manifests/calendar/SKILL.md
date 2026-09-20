@@ -7,7 +7,8 @@ Use when the user explicitly asks to schedule a bounded SocialEase practice remi
 ## Output contract
 
 - Return a neutral `CalendarEventProposal` preview.
-- Require an explicit timezone and a finite recurrence end date.
+- Require an explicit timezone in the proposal's start time.
+- Require a finite recurrence end date only for recurring events; non-recurring events must not set one.
 - State clearly that no calendar write has occurred yet.
 
 ## Safety and permission boundaries

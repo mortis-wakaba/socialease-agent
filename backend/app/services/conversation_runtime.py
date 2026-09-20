@@ -22,7 +22,7 @@ from app.conversation.repository import ConversationRepository
 from app.conversation.reversible_actions import ReversibleCalendarExecutor
 from app.db.factory import repository_factory
 from app.llm.base import BaseLLMClient
-from app.llm.factory import create_local_llm_client
+from app.llm.factory import close_global_llm_clients, create_local_llm_client
 from app.memory.active_memory_assembler import ActiveMemoryAssembler
 from app.memory.completed_event_writer import CompletedPracticeMemoryWriter
 from app.memory.context_orchestrator import MemoryContextOrchestrator
@@ -33,6 +33,7 @@ from app.memory.token_estimator import ConservativeTokenEstimator
 from app.models_conversation import ModuleType
 from app.safety.classifier import BaseSafetyClassifier, create_safety_classifier
 from app.services.conversation_service import ConversationService
+from app.observability.turn_latency import ConversationTurnLatencySink
 from app.tracing.logger import trace_logger
 from app.workflow.default_hooks import create_default_hooks
 from app.workflow.engine import AgentHarness
@@ -56,6 +57,7 @@ def build_conversation_service(
     reversible_calendar_executor: ReversibleCalendarExecutor | None = None,
     proposal_ttl: timedelta = timedelta(minutes=15),
     command_lease_seconds: int = 90,
+    latency_sink: ConversationTurnLatencySink | None = None,
 ) -> ConversationService:
     """Compose the unified conversation application service."""
     factory = repository_factory()
@@ -82,6 +84,9 @@ def build_conversation_service(
         compactor=ConversationCompactor(
             llm_client=lightweight_llm_client,
             token_estimator=estimator,
+            model_context_tokens=int(
+                os.getenv("LOCAL_LLM_CONTEXT_SIZE", "4096")
+            ),
         ),
         token_estimator=estimator,
         provider=create_conversation_context_provider(repository),
@@ -119,6 +124,7 @@ def build_conversation_service(
         ),
         proposal_ttl=proposal_ttl,
         command_lease_seconds=command_lease_seconds,
+        latency_sink=latency_sink,
     )
 
 
@@ -149,6 +155,7 @@ async def close_conversation_service() -> None:
     """Close runtime resources only when the service was instantiated."""
     if conversation_service.cache_info().currsize:
         await conversation_service().close()
+    await close_global_llm_clients()
 
 
 async def delete_conversation_runtime_for_user(*, user_id: str) -> None:

@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.llm.base import BaseLLMClient
+from app.guardrails.local_output_classifier import (
+    LOCAL_OUTPUT_RISK_CATEGORIES,
+    LocalOutputRiskClassifier,
+    LocalOutputRiskPrediction,
+    ShadowOutputRiskClassifier,
+)
+from app.llm.base import BaseLLMClient, JSONModeLLMClient
 from app.guardrails.policy import OutputGuardrailMode
 from app.llm.factory import create_llm_client
 from app.llm.prompts import (
@@ -19,6 +26,11 @@ from app.llm.prompts import (
     build_output_repair_user_prompt,
 )
 from app.models import Intent, RiskLevel
+from app.observability.turn_latency import (
+    mark_turn_flag,
+    measure_turn_stage,
+    record_turn_counter,
+)
 from app.privacy.redaction import redact_sensitive_identifiers
 
 
@@ -90,7 +102,7 @@ class SemanticOutputViolation(BaseModel):
 
     category: OutputViolationCategory
     evidence: str = Field(min_length=1, max_length=160)
-    reason: str = Field(min_length=1, max_length=240)
+    reason: str = Field(default="", max_length=240)
 
 
 class SemanticOutputAssessment(BaseModel):
@@ -179,8 +191,16 @@ _SOFT_FACTUAL_CATEGORIES = frozenset(
 class OutputGuardrail:
     """Check every final SkillResult and let backend policy own enforcement."""
 
-    def __init__(self, llm_client: BaseLLMClient | None = None) -> None:
+    def __init__(
+        self,
+        llm_client: BaseLLMClient | None = None,
+        *,
+        local_classifier: LocalOutputRiskClassifier | None = None,
+        shadow_classifier: ShadowOutputRiskClassifier | None = None,
+    ) -> None:
         self.llm_client = llm_client
+        self.local_classifier = local_classifier or LocalOutputRiskClassifier()
+        self.shadow_classifier = shadow_classifier
 
     async def evaluate(
         self,
@@ -219,6 +239,47 @@ class OutputGuardrail:
                 response=response,
                 evaluation_mode=evaluation_mode,
             )
+        local_prediction = None
+        if evaluation_mode in {
+            OutputGuardrailMode.LOCAL_TRIAGE,
+            OutputGuardrailMode.FULL,
+        }:
+            with measure_turn_stage("guardrail.local_classifier"):
+                local_prediction = self.local_classifier.predict(
+                    user_message=user_message,
+                    response=response,
+                )
+            await self._observe_shadow_classifier(
+                user_message=user_message,
+                response=response,
+                rule_prediction=local_prediction,
+            )
+        local_escalated = (
+            evaluation_mode is OutputGuardrailMode.LOCAL_TRIAGE
+            and local_prediction is not None
+            and local_prediction.needs_semantic_review
+        )
+        if evaluation_mode is OutputGuardrailMode.LOCAL_TRIAGE:
+            assert local_prediction is not None
+            if not local_prediction.needs_semantic_review:
+                return OutputGuardrailResult(
+                    action=OutputGuardrailAction.ALLOW,
+                    response=response,
+                    evaluation_mode=evaluation_mode,
+                )
+            local_escalated = True
+            if self.llm_client is None:
+                categories = [
+                    OutputViolationCategory(category)
+                    for category in local_prediction.candidate_categories
+                ]
+                result = _replacement_result(
+                    categories=categories,
+                    sources=["local_classifier"],
+                    risk_level=risk_level,
+                    semantic_checked=False,
+                )
+                return result.model_copy(update={"evaluation_mode": evaluation_mode})
         if self.llm_client is None:
             return OutputGuardrailResult(
                 action=OutputGuardrailAction.ALLOW,
@@ -249,16 +310,28 @@ class OutputGuardrail:
             ),
             memory_evidence=safe_memory_evidence,
             historical_user_messages=safe_history,
+            local_candidate_categories=(
+                list(local_prediction.candidate_categories)
+                if local_prediction is not None
+                else []
+            ),
         )
         assessment: SemanticOutputAssessment | None = None
         semantic_retry_attempted = False
         for attempt in range(2):
             try:
-                raw = await self.llm_client.generate_text(
-                    system_prompt=build_output_guardrail_system_prompt(),
-                    user_prompt=classification_prompt,
-                    temperature=0.0,
-                )
+                with measure_turn_stage("guardrail.semantic"):
+                    kwargs = {
+                        "system_prompt": build_output_guardrail_system_prompt(),
+                        "user_prompt": classification_prompt,
+                        "temperature": 0.0,
+                    }
+                    raw = (
+                        await self.llm_client.generate_json_text(**kwargs)
+                        if isinstance(self.llm_client, JSONModeLLMClient)
+                        and self.llm_client.json_mode_enabled
+                        else await self.llm_client.generate_text(**kwargs)
+                    )
             except Exception:
                 return _semantic_failure_result(
                     response=response,
@@ -319,7 +392,7 @@ class OutputGuardrail:
                 and risk_level in {RiskLevel.LOW, RiskLevel.MEDIUM}
                 and _categories_are_repairable(semantic_categories)
             ):
-                return await self._attempt_repair(
+                repaired = await self._attempt_repair(
                     user_message=safe_message,
                     response=safe_response,
                     intent=intent,
@@ -332,20 +405,103 @@ class OutputGuardrail:
                     violations=semantic_violations,
                     semantic_retry_attempted=semantic_retry_attempted,
                 )
-            return _replacement_result(
+                if local_escalated:
+                    return repaired.model_copy(
+                        update={
+                            "sources": list(
+                                dict.fromkeys(
+                                    ["local_classifier", *repaired.sources]
+                                )
+                            ),
+                            "evaluation_mode": evaluation_mode,
+                        }
+                    )
+                return repaired
+            replacement = _replacement_result(
                 categories=semantic_categories,
-                sources=["semantic"],
+                sources=(
+                    ["local_classifier", "semantic"]
+                    if local_escalated
+                    else ["semantic"]
+                ),
                 risk_level=risk_level,
                 semantic_checked=True,
                 semantic_diagnostics=semantic_violations,
                 semantic_retry_attempted=semantic_retry_attempted,
             )
+            return replacement.model_copy(
+                update={"evaluation_mode": evaluation_mode}
+            )
         return OutputGuardrailResult(
             action=OutputGuardrailAction.ALLOW,
             response=response,
+            sources=(
+                ["local_classifier", "semantic"] if local_escalated else []
+            ),
             semantic_checked=True,
             semantic_retry_attempted=semantic_retry_attempted,
+            evaluation_mode=evaluation_mode,
         )
+
+    async def _observe_shadow_classifier(
+        self,
+        *,
+        user_message: str,
+        response: str,
+        rule_prediction: LocalOutputRiskPrediction,
+    ) -> None:
+        """Record bounded shadow-model disagreements without changing policy."""
+        if self.shadow_classifier is None:
+            return
+        mark_turn_flag("guardrail_shadow_enabled")
+        try:
+            with measure_turn_stage("guardrail.shadow_classifier"):
+                shadow_prediction = await self.shadow_classifier.predict(
+                    user_message=user_message,
+                    response=response,
+                )
+        except Exception:
+            mark_turn_flag("guardrail_shadow_error")
+            return
+
+        shadow_categories = {
+            category
+            for category in shadow_prediction.candidate_categories
+            if category in LOCAL_OUTPUT_RISK_CATEGORIES
+        }
+        if len(shadow_categories) != len(shadow_prediction.candidate_categories):
+            mark_turn_flag("guardrail_shadow_invalid_category")
+        if shadow_prediction.needs_semantic_review:
+            mark_turn_flag("guardrail_shadow_review")
+        if (
+            shadow_prediction.needs_semantic_review
+            != rule_prediction.needs_semantic_review
+        ):
+            mark_turn_flag("guardrail_shadow_decision_disagreement")
+
+        rule_categories = set(rule_prediction.candidate_categories)
+        category_disagreement = rule_categories.symmetric_difference(
+            shadow_categories
+        )
+        if category_disagreement:
+            mark_turn_flag("guardrail_shadow_category_disagreement")
+            record_turn_counter(
+                "guardrail.shadow.category_disagreement_count",
+                float(len(category_disagreement)),
+            )
+        for category in sorted(shadow_categories):
+            record_turn_counter(
+                f"guardrail.shadow.candidate.{category}",
+                1.0,
+            )
+        if (
+            shadow_prediction.maximum_score >= 0
+            and math.isfinite(shadow_prediction.maximum_score)
+        ):
+            record_turn_counter(
+                "guardrail.shadow.maximum_score",
+                shadow_prediction.maximum_score,
+            )
 
     async def _attempt_repair(
         self,
@@ -371,19 +527,28 @@ class OutputGuardrail:
                 semantic_retry_attempted=semantic_retry_attempted,
             )
         try:
-            raw = await self.llm_client.generate_text(
-                system_prompt=build_output_repair_system_prompt(),
-                user_prompt=build_output_repair_user_prompt(
-                    user_message=user_message,
-                    response=response,
-                    violations=[
-                        violation.model_dump(mode="json") for violation in violations
-                    ],
-                    memory_evidence=memory_evidence,
-                    historical_user_messages=historical_user_messages,
-                ),
-                temperature=0.0,
-            )
+            with measure_turn_stage("guardrail.repair_generation"):
+                repair_prompt = build_output_repair_user_prompt(
+                        user_message=user_message,
+                        response=response,
+                        violations=[
+                            violation.model_dump(mode="json", exclude={"reason"})
+                            for violation in violations
+                        ],
+                        memory_evidence=memory_evidence,
+                        historical_user_messages=historical_user_messages,
+                    )
+                kwargs = {
+                    "system_prompt": build_output_repair_system_prompt(),
+                    "user_prompt": repair_prompt,
+                    "temperature": 0.0,
+                }
+                raw = (
+                    await self.llm_client.generate_json_text(**kwargs)
+                    if isinstance(self.llm_client, JSONModeLLMClient)
+                    and self.llm_client.json_mode_enabled
+                    else await self.llm_client.generate_text(**kwargs)
+                )
             repaired_response = _parse_repair_proposal(raw).repaired_response.strip()
         except Exception:
             return _repair_failed_replacement(
@@ -393,19 +558,20 @@ class OutputGuardrail:
                 semantic_retry_attempted=semantic_retry_attempted,
             )
 
-        recheck = await self.evaluate(
-            user_message=user_message,
-            response=repaired_response,
-            intent=intent,
-            risk_level=risk_level,
-            selected_skill=selected_skill,
-            selected_agent="output_guardrail_repair",
-            grounding_metadata=grounding_metadata,
-            memory_evidence=memory_evidence,
-            historical_user_messages=historical_user_messages,
-            evaluation_mode=OutputGuardrailMode.FULL,
-            _allow_repair=False,
-        )
+        with measure_turn_stage("guardrail.repair_recheck"):
+            recheck = await self.evaluate(
+                user_message=user_message,
+                response=repaired_response,
+                intent=intent,
+                risk_level=risk_level,
+                selected_skill=selected_skill,
+                selected_agent="output_guardrail_repair",
+                grounding_metadata=grounding_metadata,
+                memory_evidence=memory_evidence,
+                historical_user_messages=historical_user_messages,
+                evaluation_mode=OutputGuardrailMode.FULL,
+                _allow_repair=False,
+            )
         if (
             recheck.action == OutputGuardrailAction.ALLOW
             and not recheck.semantic_check_failed

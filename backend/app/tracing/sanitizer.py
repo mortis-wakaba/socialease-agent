@@ -117,10 +117,16 @@ class TraceSanitizer:
             ]
         if isinstance(value, dict):
             return {
-                key: self._nested(
-                    value=item,
-                    field=f"{field}.{key}",
-                    policies=policies,
+                key: (
+                    item
+                    if key == "memory_id_hash"
+                    and isinstance(item, str)
+                    and re.fullmatch(r"[0-9a-f]{16}", item)
+                    else self._nested(
+                        value=item,
+                        field=f"{field}.{key}",
+                        policies=policies,
+                    )
                 )
                 for key, item in value.items()
             }

@@ -42,7 +42,7 @@ async def test_hybrid_safety_lets_llm_raise_subtle_risk() -> None:
 
 
 @pytest.mark.anyio
-async def test_hybrid_safety_never_downgrades_rule_result() -> None:
+async def test_hybrid_safety_lets_llm_own_non_crisis_risk() -> None:
     classifier = HybridSafetyClassifier(
         llm_classifier=LlmSafetyClassifier(
             FakeLLMClient('{"risk_level":"low","reason":"under-called"}')
@@ -51,7 +51,7 @@ async def test_hybrid_safety_never_downgrades_rule_result() -> None:
 
     result = await classifier.classify("我被威胁了，不知道该怎么办")
 
-    assert result.risk_level == RiskLevel.HIGH
+    assert result.risk_level == RiskLevel.LOW
     assert result.llm_usage.used is True
 
 
@@ -74,7 +74,18 @@ async def test_hybrid_safety_falls_back_when_llm_fails() -> None:
 
     result = await classifier.classify("我明天要小组讨论，有点紧张")
 
-    assert result.risk_level == RiskLevel.LOW
+    assert result.risk_level == RiskLevel.HIGH
     assert result.llm_usage.used is False
     assert result.llm_usage.fallback_used is True
     assert result.llm_usage.error_category == "TRANSIENT_PROVIDER_ERROR"
+
+
+@pytest.mark.anyio
+async def test_hybrid_safety_uses_crisis_floor_when_llm_is_intentionally_disabled() -> None:
+    result = await HybridSafetyClassifier().classify(
+        "我明天要小组讨论，有点紧张"
+    )
+
+    assert result.risk_level == RiskLevel.LOW
+    assert result.llm_usage.fallback_used is True
+    assert result.llm_usage.error_category == "LLM_DISABLED"

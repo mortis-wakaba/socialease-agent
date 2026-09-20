@@ -25,6 +25,7 @@ from app.models_conversation_context import (
     context_budgets_for_profile,
     conversation_id_hash,
 )
+from app.observability.turn_latency import measure_turn_stage
 
 
 class ConversationContextManager:
@@ -56,6 +57,25 @@ class ConversationContextManager:
         self._compact_batch_size = min(max(compact_batch_size, 16), 200)
 
     async def assemble(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        current_user_message: str,
+        current_event_id: str | None = None,
+        active_memory: ActiveMemoryPacket | None = None,
+    ) -> ConversationWorkingContext:
+        """Measure and assemble the bounded context for the active turn."""
+        with measure_turn_stage("context"):
+            return await self._assemble(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                current_user_message=current_user_message,
+                current_event_id=current_event_id,
+                active_memory=active_memory,
+            )
+
+    async def _assemble(
         self,
         *,
         conversation_id: str,

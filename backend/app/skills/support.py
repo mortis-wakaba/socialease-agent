@@ -15,6 +15,7 @@ from app.llm.factory import create_llm_client
 from app.memory.retriever import EpisodicMemoryRetriever
 from app.models import Intent, RiskLevel
 from app.models_context import SupportGenerationContext
+from app.observability.turn_latency import mark_turn_flag
 from app.services.memory_search_service import MemorySearchService
 from app.services.memory_correction_service import (
     ConservativeMemoryUpdateService,
@@ -23,6 +24,7 @@ from app.services.memory_correction_service import (
 from app.services.memory_center_service import memory_center_service
 from app.skills.base import SkillContext, SkillDescriptor, SkillResult
 from app.tools.practice_memory import memory_tool_registry
+from app.tools.runtime import ToolExecutionContext
 
 
 class SupportSkill:
@@ -57,43 +59,35 @@ class SupportSkill:
         self.support_agent = support_agent or SupportAgent()
         if generation_agent is None:
             llm_client = create_llm_client()
+            factory = repository_factory()
+            settings = factory.user_memory_settings_repository()
+            search_service = MemorySearchService(
+                EpisodicMemoryRetriever(
+                    repository=factory.long_term_memory_repository(),
+                    settings_repository=settings,
+                ),
+                evidence_selector=(
+                    MemoryEvidenceSelector(llm_client=llm_client)
+                    if memory_evidence_selector_enabled()
+                    else None
+                ),
+            )
+            tool_registry = memory_tool_registry(
+                search_service,
+                update_service=ConservativeMemoryUpdateService(
+                    correction_service=MemoryCorrectionService(
+                        memory_repository=factory.long_term_memory_repository(),
+                        settings_repository=settings,
+                    ),
+                    supersession_service=memory_center_service,
+                ),
+            )
             self.generation_agent = SupportGenerationAgent(
                 llm_client=llm_client,
                 fallback_agent=self.support_agent,
+                tool_registry=tool_registry,
             )
-            self.memory_grounding_agent = (
-                memory_grounding_agent
-                or MemoryGroundingGenerationAgent(llm_client=llm_client)
-            )
-            if memory_tool_agent is None:
-                factory = repository_factory()
-                settings = factory.user_memory_settings_repository()
-                search_service = MemorySearchService(
-                    EpisodicMemoryRetriever(
-                        repository=factory.long_term_memory_repository(),
-                        settings_repository=settings,
-                    ),
-                    evidence_selector=(
-                        MemoryEvidenceSelector(llm_client=llm_client)
-                        if memory_evidence_selector_enabled()
-                        else None
-                    ),
-                )
-                memory_tool_agent = MemoryToolAgent(
-                    llm_client=llm_client,
-                    tool_registry=memory_tool_registry(
-                        search_service,
-                        update_service=ConservativeMemoryUpdateService(
-                            correction_service=MemoryCorrectionService(
-                                memory_repository=(
-                                    factory.long_term_memory_repository()
-                                ),
-                                settings_repository=settings,
-                            ),
-                            supersession_service=memory_center_service,
-                        ),
-                    ),
-                )
+            self.memory_grounding_agent = memory_grounding_agent
         else:
             self.generation_agent = generation_agent
             self.memory_grounding_agent = memory_grounding_agent
@@ -121,6 +115,8 @@ class SupportSkill:
             else None
         )
         memory_evidence = memory_tool.prompt_evidence if memory_tool else []
+        if memory_tool is not None and memory_tool.decision_action != "skip":
+            mark_turn_flag("tool_called")
         if memory_tool is not None and memory_tool.outcome == "updated":
             response = "好的，我已经用你现在的说法替代了对应的旧记忆。"
             structured_data = {
@@ -141,6 +137,12 @@ class SupportSkill:
                 "conversation_context": context.conversation_context,
                 "memory_tool_evidence": memory_evidence,
                 "application_constraints": context.response_constraints,
+                "tool_context": ToolExecutionContext(
+                    user_id=context.user_id,
+                    current_request=context.message,
+                    skill_name=self.descriptor.name,
+                    risk_level=context.safety_result.risk_level,
+                ),
             }
             if (
                 context.response_chunk_sink is not None
@@ -159,8 +161,20 @@ class SupportSkill:
                 response, structured_data = await self.generation_agent.respond(
                     **generation_kwargs
                 )
+        integrated_memory_evidence = structured_data.pop("_memory_evidence", [])
+        if memory_tool is None and isinstance(integrated_memory_evidence, list):
+            memory_evidence = [
+                str(item)
+                for item in integrated_memory_evidence
+                if isinstance(item, str)
+            ][:3]
         if memory_tool is not None:
             structured_data["memory_tool"] = memory_tool.trace_metadata()
+        llm_usage = structured_data.get("llm_usage")
+        if isinstance(llm_usage, dict) and llm_usage.get("used") is True:
+            mark_turn_flag("generation_llm_used")
+        if structured_data.get("fallback_used") is True:
+            mark_turn_flag("generation_fallback")
         return SkillResult(
             response=response,
             structured_data=structured_data,

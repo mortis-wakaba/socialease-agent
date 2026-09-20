@@ -1,17 +1,29 @@
 """RAG-grounded LLM support generation with CBT structure and safe fallback."""
 
 import json
+import os
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import aclosing
 from typing import Any
 
 from pydantic import ValidationError
 
 from app.agents.support import SupportAgent
+from app.agents.memory_tool import memory_update_run_result
 from app.knowledge.service import KnowledgeService
-from app.guardrails.output import OutputGuardrail, OutputGuardrailAction
+from app.guardrails.output import (
+    OutputGuardrailAction,
+    create_output_guardrail,
+)
 from app.guardrails.policy import OutputGuardrailMode
-from app.llm.base import BaseLLMClient, JSONModeLLMClient, StreamingLLMClient
+from app.llm.base import (
+    BaseLLMClient,
+    JSONModeLLMClient,
+    StreamingLLMClient,
+    StreamingToolCallingLLMClient,
+    ToolCallingLLMClient,
+)
 from app.llm.prompts import (
     build_support_stream_system_prompt,
     build_support_system_prompt,
@@ -23,12 +35,27 @@ from app.models_conversation_context import ConversationPromptContext
 from app.models_context import SupportGenerationContext
 from app.models_knowledge import KnowledgeBaseType
 from app.models_llm import LLMUsage
+from app.models_memory_correction import MemoryCorrectionAutoUpdateResult
+from app.models_memory_tool import MemoryToolRunResult
 from app.models_support_generation import PresentationConstraints, SupportGeneration
+from app.observability.turn_latency import (
+    mark_turn_flag,
+    mark_turn_milestone,
+    measure_turn_stage,
+)
 from app.privacy.redaction import (
     redact_sensitive_identifiers,
     redact_validated_candidates,
 )
 from app.services.response_streaming import SentenceBuffer
+from app.tools.agent_loop import AgentToolLoop, AgentToolLoopOutcome, tool_result_content
+from app.tools.runtime import (
+    ToolCall,
+    ToolCallResult,
+    ToolCallStatus,
+    ToolExecutionContext,
+    ToolRegistry,
+)
 
 
 class SupportGenerationAgent:
@@ -41,12 +68,20 @@ class SupportGenerationAgent:
         knowledge: KnowledgeService | None = None,
         fallback_agent: SupportAgent | None = None,
         direct_wording_matcher: Callable[[str], bool] | None = None,
+        tool_registry: ToolRegistry | None = None,
+        concise_output_experiment: bool | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.knowledge = knowledge or KnowledgeService()
         self.fallback_agent = fallback_agent or SupportAgent()
         self.direct_wording_matcher = (
             direct_wording_matcher or requests_direct_wording_v2
+        )
+        self.tool_registry = tool_registry
+        self.concise_output_experiment = (
+            _concise_output_experiment_enabled()
+            if concise_output_experiment is None
+            else concise_output_experiment
         )
 
     async def respond(
@@ -59,6 +94,7 @@ class SupportGenerationAgent:
         conversation_context: ConversationPromptContext | None = None,
         memory_tool_evidence: list[str] | None = None,
         application_constraints: PresentationConstraints | None = None,
+        tool_context: ToolExecutionContext | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Return validated LLM support or a deterministic safe fallback."""
         if self.llm_client is None:
@@ -78,11 +114,29 @@ class SupportGenerationAgent:
                 application_constraints=application_constraints,
             )
 
+        concise_output_experiment_used = _use_concise_output_experiment(
+            enabled=self.concise_output_experiment,
+            message=message,
+            intent=intent,
+            risk_level=safety_result.risk_level,
+            memory_tool_evidence=memory_tool_evidence,
+            application_constraints=application_constraints,
+            direct_wording_matcher=self.direct_wording_matcher,
+        )
+        if concise_output_experiment_used:
+            application_constraints = PresentationConstraints(
+                verbosity="brief",
+                item_count=1,
+            )
+            mark_turn_flag("generation_concise_output_experiment")
+
         guidance = self.knowledge.query(message, KnowledgeBaseType.SOCIAL_SKILLS)
         json_mode_used = (
             isinstance(self.llm_client, JSONModeLLMClient)
             and self.llm_client.json_mode_enabled
         )
+        memory_tool_result = MemoryToolRunResult(outcome="skipped")
+        effective_memory_evidence = list((memory_tool_evidence or [])[:3])
         try:
             system_prompt = build_support_system_prompt()
             user_prompt = build_support_user_prompt(
@@ -105,25 +159,63 @@ class SupportGenerationAgent:
                     if conversation_context is not None
                     else {}
                 ),
-                memory_tool_evidence=(memory_tool_evidence or [])[:3],
+                memory_tool_evidence=effective_memory_evidence,
                 response_constraints=(
                     application_constraints.model_dump(mode="json")
                     if application_constraints is not None
                     else {}
                 ),
             )
-            if json_mode_used:
-                raw_output = await self.llm_client.generate_json_text(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    temperature=0.1,
+            if (
+                self.tool_registry is not None
+                and tool_context is not None
+                and isinstance(self.llm_client, ToolCallingLLMClient)
+            ):
+                with measure_turn_stage("generation"):
+                    loop_result = await AgentToolLoop(
+                        llm_client=self.llm_client,
+                        tool_registry=self.tool_registry,
+                        maximum_model_turns=2,
+                        maximum_tool_calls=1,
+                        maximum_calls_per_tool=1,
+                    ).run(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        context=tool_context,
+                        temperature=0.1,
+                    )
+                if (
+                    loop_result.outcome is not AgentToolLoopOutcome.COMPLETED
+                    or not loop_result.final_content
+                ):
+                    raise RuntimeError(
+                        f"support Tool loop failed: {loop_result.outcome.value}"
+                    )
+                raw_output = loop_result.final_content
+                memory_tool_result = _memory_result_from_tool_results(
+                    loop_result.tool_results
                 )
+                effective_memory_evidence = memory_tool_result.prompt_evidence
+                if loop_result.tool_call_count:
+                    mark_turn_flag("tool_called")
+                json_mode_used = False
+            elif json_mode_used:
+                with measure_turn_stage("generation"):
+                    raw_output = await self.llm_client.generate_json_text(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=0.1,
+                    )
             else:
-                raw_output = await self.llm_client.generate_text(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    temperature=0.1,
-                )
+                with measure_turn_stage("generation"):
+                    raw_output = await self.llm_client.generate_text(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=0.1,
+                    )
+            mark_turn_milestone("generation_complete")
             proposal = _parse_support_generation(raw_output)
             _validate_support_generation(
                 proposal,
@@ -193,7 +285,7 @@ class SupportGenerationAgent:
 
         constraints = _resolve_presentation_constraints(
             message=message,
-            proposed=proposal.presentation_constraints,
+            proposed=PresentationConstraints(),
             application=application_constraints,
         )
         composed_response = _compose_support_response(proposal, constraints=constraints)
@@ -223,17 +315,23 @@ class SupportGenerationAgent:
             "action": "bounded_support_generation",
             "response_mode": proposal.response_mode,
             "presentation_constraints": constraints.model_dump(mode="json"),
-            "pause_supported": proposal.pause_supported,
+            "pause_supported": True,
             "needs_real_support": proposal.needs_real_support,
             "suggested_next_steps": safe_steps,
             "citations": [
                 citation.model_dump(mode="json") for citation in guidance.citations
             ],
             "retrieval_unknown": guidance.unknown,
-            "memory_evidence_count": len((memory_tool_evidence or [])[:3]),
+            "memory_evidence_count": len(effective_memory_evidence),
+            "memory_tool": memory_tool_result.trace_metadata(),
+            "requires_full_output_guardrail": (
+                memory_tool_result.decision_action != "skip"
+            ),
+            "_memory_evidence": effective_memory_evidence,
             "json_mode_used": json_mode_used,
             "llm_usage": LLMUsage(used=True).model_dump(mode="json"),
             "fallback_used": False,
+            "concise_output_experiment_used": concise_output_experiment_used,
             "support_context_fields": sorted(
                 _support_context_payload(support_context)
             ),
@@ -268,6 +366,7 @@ class SupportGenerationAgent:
         conversation_context: ConversationPromptContext | None = None,
         memory_tool_evidence: list[str] | None = None,
         application_constraints: PresentationConstraints | None = None,
+        tool_context: ToolExecutionContext | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Stream complete, deterministically checked sentences for an eligible turn."""
         if (
@@ -285,9 +384,25 @@ class SupportGenerationAgent:
                 conversation_context=conversation_context,
                 memory_tool_evidence=memory_tool_evidence,
                 application_constraints=application_constraints,
+                tool_context=tool_context,
             )
 
         guidance = self.knowledge.query(message, KnowledgeBaseType.SOCIAL_SKILLS)
+        concise_output_experiment_used = _use_concise_output_experiment(
+            enabled=self.concise_output_experiment,
+            message=message,
+            intent=intent,
+            risk_level=safety_result.risk_level,
+            memory_tool_evidence=memory_tool_evidence,
+            application_constraints=application_constraints,
+            direct_wording_matcher=self.direct_wording_matcher,
+        )
+        if concise_output_experiment_used:
+            application_constraints = PresentationConstraints(
+                verbosity="brief",
+                item_count=1,
+            )
+            mark_turn_flag("generation_concise_output_experiment")
         constraints = _resolve_presentation_constraints(
             message=message,
             proposed=PresentationConstraints(),
@@ -314,9 +429,27 @@ class SupportGenerationAgent:
             response_constraints=constraints.model_dump(mode="json"),
         )
         sentence_buffer = SentenceBuffer(maximum_chars=1000)
-        output_guardrail = OutputGuardrail()
+        output_guardrail = create_output_guardrail()
         emitted: list[str] = []
         redaction_categories: set[str] = set()
+
+        if (
+            self.tool_registry is not None
+            and tool_context is not None
+            and isinstance(self.llm_client, StreamingToolCallingLLMClient)
+            and isinstance(self.llm_client, ToolCallingLLMClient)
+        ):
+            return await self._respond_stream_with_tools(
+                message=message,
+                intent=intent,
+                safety_result=safety_result,
+                chunk_sink=chunk_sink,
+                user_prompt=user_prompt,
+                constraints=constraints,
+                guidance=guidance,
+                tool_context=tool_context,
+                concise_output_experiment_used=concise_output_experiment_used,
+            )
 
         async def emit_checked(sentence: str) -> None:
             safe_sentence, categories = redact_sensitive_identifiers(sentence)
@@ -328,7 +461,7 @@ class SupportGenerationAgent:
                 risk_level=safety_result.risk_level,
                 selected_skill="general_support_skill",
                 selected_agent="support_stream_generation_agent",
-                evaluation_mode=OutputGuardrailMode.DETERMINISTIC_ONLY,
+                evaluation_mode=OutputGuardrailMode.LOCAL_TRIAGE,
             )
             if checked.action is not OutputGuardrailAction.ALLOW:
                 raise SupportGuardrailError(
@@ -341,13 +474,22 @@ class SupportGenerationAgent:
 
         error_category: str | None = None
         try:
-            async for delta in self.llm_client.stream_text(
+            stream = self.llm_client.stream_text(
                 system_prompt=build_support_stream_system_prompt(),
                 user_prompt=user_prompt,
                 temperature=0.1,
-            ):
-                for sentence in sentence_buffer.feed(delta):
-                    await emit_checked(sentence)
+            )
+            async with aclosing(stream):
+                while True:
+                    try:
+                        with measure_turn_stage("generation"):
+                            delta = await anext(stream)
+                    except StopAsyncIteration:
+                        break
+                    mark_turn_milestone("model_first_token")
+                    for sentence in sentence_buffer.feed(delta):
+                        await emit_checked(sentence)
+            mark_turn_milestone("generation_complete")
             final_sentence = sentence_buffer.flush()
             if final_sentence:
                 await emit_checked(final_sentence)
@@ -389,6 +531,7 @@ class SupportGenerationAgent:
                 error_category=(str(error_category) if error_category else None),
             ).model_dump(mode="json"),
             "fallback_used": error_category is not None,
+            "concise_output_experiment_used": concise_output_experiment_used,
             "privacy_redaction": {
                 "deterministic_categories": sorted(redaction_categories),
                 "semantic_categories": [],
@@ -397,6 +540,169 @@ class SupportGenerationAgent:
                 "non_diagnostic_self_help_only; not a substitute for counseling"
             ),
         }
+
+    async def _respond_stream_with_tools(
+        self,
+        *,
+        message: str,
+        intent: Intent,
+        safety_result: SafetyResult,
+        chunk_sink: Callable[[str], Awaitable[None]],
+        user_prompt: str,
+        constraints: PresentationConstraints,
+        guidance: Any,
+        tool_context: ToolExecutionContext,
+        concise_output_experiment_used: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        """Stream a direct answer, or execute one Tool before a buffered answer."""
+        assert self.tool_registry is not None
+        assert isinstance(self.llm_client, StreamingToolCallingLLMClient)
+        assert isinstance(self.llm_client, ToolCallingLLMClient)
+        messages: list[dict[str, object]] = [
+            {"role": "system", "content": build_support_stream_system_prompt()},
+            {"role": "user", "content": user_prompt},
+        ]
+        sentence_buffer = SentenceBuffer(maximum_chars=1000)
+        output_guardrail = create_output_guardrail()
+        emitted: list[str] = []
+        redaction_categories: set[str] = set()
+
+        async def emit_checked(sentence: str) -> None:
+            safe_sentence, categories = redact_sensitive_identifiers(sentence)
+            redaction_categories.update(categories)
+            checked = await output_guardrail.evaluate(
+                user_message=message,
+                response=safe_sentence,
+                intent=intent,
+                risk_level=safety_result.risk_level,
+                selected_skill="general_support_skill",
+                selected_agent="support_stream_generation_agent",
+                evaluation_mode=OutputGuardrailMode.LOCAL_TRIAGE,
+            )
+            if checked.action is not OutputGuardrailAction.ALLOW:
+                raise SupportGuardrailError(
+                    "Streaming support failed output guardrails.",
+                    category="PROHIBITED_STREAM_CONTENT",
+                )
+            if safe_sentence:
+                await chunk_sink(safe_sentence)
+                emitted.append(safe_sentence)
+
+        tool_calls = []
+        try:
+            stream = self.llm_client.stream_with_tools(
+                messages=messages,
+                tools=self.tool_registry.provider_tools(),
+                temperature=0.1,
+                tool_choice="auto",
+            )
+            async with aclosing(stream):
+                while True:
+                    try:
+                        with measure_turn_stage("generation"):
+                            event = await anext(stream)
+                    except StopAsyncIteration:
+                        break
+                    if event.type == "content_delta":
+                        delta = event.content_delta or ""
+                        mark_turn_milestone("model_first_token")
+                        for sentence in sentence_buffer.feed(delta):
+                            await emit_checked(sentence)
+                    else:
+                        tool_calls = event.tool_calls
+            if not tool_calls:
+                final_sentence = sentence_buffer.flush()
+                if final_sentence:
+                    await emit_checked(final_sentence)
+                if not emitted:
+                    raise ValueError("streaming provider returned an empty response")
+                mark_turn_milestone("generation_complete")
+                return "".join(emitted), _stream_metadata(
+                    guidance=guidance,
+                    constraints=constraints,
+                    redaction_categories=redaction_categories,
+                    memory_tool_result=MemoryToolRunResult(outcome="skipped"),
+                    concise_output_experiment_used=concise_output_experiment_used,
+                )
+            if emitted or sentence_buffer.flush() or len(tool_calls) != 1:
+                raise ValueError("provider mixed a response with an invalid Tool call")
+            call = tool_calls[0]
+            tool_run = self.tool_registry.new_run(
+                maximum_calls=1, maximum_calls_per_tool=1
+            )
+            with measure_turn_stage("tool_execution"):
+                tool_result = await tool_run.execute(
+                    call=ToolCall(
+                        name=call.name,
+                        arguments=call.arguments,
+                        call_id=call.call_id,
+                    ),
+                    context=tool_context,
+                )
+            mark_turn_flag("tool_called")
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [call.as_assistant_tool_call()],
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.call_id,
+                    "content": tool_result_content(tool_result),
+                }
+            )
+            continuation = await self.llm_client.complete_with_tools(
+                messages=messages,
+                tools=self.tool_registry.provider_tools(),
+                temperature=0.1,
+                tool_choice="none",
+            )
+            if continuation.tool_calls or not continuation.content:
+                raise ValueError("Tool continuation did not return final content")
+            response, categories = redact_sensitive_identifiers(continuation.content)
+            redaction_categories.update(categories)
+            memory_tool_result = _memory_result_from_tool_results((tool_result,))
+            mark_turn_milestone("generation_complete")
+            metadata = _stream_metadata(
+                guidance=guidance,
+                constraints=constraints,
+                redaction_categories=redaction_categories,
+                memory_tool_result=memory_tool_result,
+                concise_output_experiment_used=concise_output_experiment_used,
+            )
+            metadata["native_streaming_used"] = False
+            metadata["requires_full_output_guardrail"] = True
+            metadata["_memory_evidence"] = memory_tool_result.prompt_evidence
+            return response, metadata
+        except Exception as exc:
+            if emitted:
+                interruption = "这次回复暂时中断了，可以稍后重试，也可以先停在这里。"
+                await emit_checked(interruption)
+                metadata = _stream_metadata(
+                    guidance=guidance,
+                    constraints=constraints,
+                    redaction_categories=redaction_categories,
+                    memory_tool_result=MemoryToolRunResult(outcome="provider_error"),
+                    concise_output_experiment_used=concise_output_experiment_used,
+                )
+                metadata["stream_interrupted"] = True
+                return "".join(emitted), metadata
+            category = (
+                exc.category.value
+                if isinstance(exc, ProviderError)
+                else "STREAM_TOOL_GENERATION_ERROR"
+            )
+            return self._fallback(
+                message=message,
+                intent=intent,
+                safety_result=safety_result,
+                fallback_reason="STREAM_GENERATION_ERROR",
+                error_category=category,
+                application_constraints=constraints,
+            )
 
     def _fallback(
         self,
@@ -433,6 +739,102 @@ class SupportGenerationAgent:
         return response, result
 
 
+def _memory_result_from_tool_results(
+    results: tuple[ToolCallResult, ...],
+) -> MemoryToolRunResult:
+    """Project the bounded support Tool run into content-free memory metadata."""
+    if not results:
+        return MemoryToolRunResult(outcome="skipped")
+    result = results[-1]
+    if result.status is not ToolCallStatus.COMPLETED:
+        return MemoryToolRunResult(outcome="tool_error")
+    if isinstance(result.output, MemoryToolRunResult):
+        return result.output
+    if isinstance(result.output, MemoryCorrectionAutoUpdateResult):
+        return memory_update_run_result(result.output)
+    return MemoryToolRunResult(outcome="tool_error")
+
+
+def _stream_metadata(
+    *,
+    guidance: Any,
+    constraints: PresentationConstraints,
+    redaction_categories: set[str],
+    memory_tool_result: MemoryToolRunResult,
+    concise_output_experiment_used: bool,
+) -> dict[str, Any]:
+    """Build common metadata for direct and Tool-assisted support streams."""
+    return {
+        "agent": "support_stream_generation_agent",
+        "action": "bounded_streaming_support_generation",
+        "native_streaming_used": True,
+        "stream_interrupted": False,
+        "presentation_constraints": constraints.model_dump(mode="json"),
+        "citations": [
+            citation.model_dump(mode="json") for citation in guidance.citations
+        ],
+        "retrieval_unknown": guidance.unknown,
+        "memory_evidence_count": len(memory_tool_result.evidence),
+        "memory_tool": memory_tool_result.trace_metadata(),
+        "requires_full_output_guardrail": (
+            memory_tool_result.decision_action != "skip"
+        ),
+        "_memory_evidence": memory_tool_result.prompt_evidence,
+        "llm_usage": LLMUsage(used=True).model_dump(mode="json"),
+        "fallback_used": False,
+        "concise_output_experiment_used": concise_output_experiment_used,
+        "privacy_redaction": {
+            "deterministic_categories": sorted(redaction_categories),
+            "semantic_categories": [],
+        },
+        "safety_boundary": (
+            "non_diagnostic_self_help_only; not a substitute for counseling"
+        ),
+    }
+
+
+def _concise_output_experiment_enabled() -> bool:
+    """Return whether the reversible low-risk wording experiment is enabled."""
+    return os.getenv(
+        "SOCIALEASE_LOW_RISK_CONCISE_OUTPUT_EXPERIMENT",
+        "false",
+    ).strip().casefold() in {"1", "true", "yes"}
+
+
+def _use_concise_output_experiment(
+    *,
+    enabled: bool,
+    message: str,
+    intent: Intent,
+    risk_level: RiskLevel,
+    memory_tool_evidence: list[str] | None,
+    application_constraints: PresentationConstraints | None,
+    direct_wording_matcher: Callable[[str], bool],
+) -> bool:
+    """Limit the experiment to unconstrained, low-risk ordinary support turns."""
+    constraints = application_constraints or PresentationConstraints()
+    return (
+        enabled
+        and risk_level is RiskLevel.LOW
+        and intent in {Intent.EMOTIONAL_SUPPORT, Intent.PROGRESS_REVIEW}
+        and not memory_tool_evidence
+        and constraints == PresentationConstraints()
+        and not direct_wording_matcher(message)
+        and not _requests_structured_support(message)
+    )
+
+
+def _requests_structured_support(message: str) -> bool:
+    """Recognize requests that need a deliberate format or practice structure."""
+    return bool(
+        re.search(
+            r"练(?:习|一下|一练)|演练|角色扮演|拆(?:成|解)|分点|列点|步骤|建议|方法|模板|话术",
+            message,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _parse_support_generation(raw_output: str) -> SupportGeneration:
     """Parse one strict JSON support proposal."""
     normalized = re.sub(
@@ -444,6 +846,8 @@ def _parse_support_generation(raw_output: str) -> SupportGeneration:
     payload = json.loads(normalized)
     if not isinstance(payload, dict):
         raise ValueError("Support generation response must be a JSON object.")
+    payload.pop("pause_supported", None)
+    payload.pop("presentation_constraints", None)
     return SupportGeneration.model_validate(payload)
 
 
@@ -540,7 +944,7 @@ def _compose_support_response(
     constraints: PresentationConstraints | None = None,
 ) -> str:
     """Compose an application-owned response from validated model fields."""
-    resolved = constraints or proposal.presentation_constraints
+    resolved = constraints or PresentationConstraints()
     if proposal.response_mode == "direct_practice":
         return _apply_presentation_constraints(proposal.suggested_phrase or "", resolved)
     if proposal.response_mode == "clarify":
@@ -562,10 +966,11 @@ def _compose_support_response(
     practice_steps = proposal.practice_steps[
         : resolved.item_count if resolved.item_count is not None else None
     ]
-    steps = "\n".join(
-        f"{index}. {step}" for index, step in enumerate(practice_steps, start=1)
-    )
-    sections.append(f"低强度步骤：\n{steps}")
+    if practice_steps:
+        steps = "\n".join(
+            f"{index}. {step}" for index, step in enumerate(practice_steps, start=1)
+        )
+        sections.append(f"低强度步骤：\n{steps}")
     if proposal.followup_question:
         sections.append(proposal.followup_question)
     if proposal.real_support_note:
@@ -596,6 +1001,8 @@ def requests_direct_wording_v2(message: str) -> bool:
     patterns = (
         r"只(?:想|要|需要)?.{0,8}(?:准备|写|组织|得到|给).{0,8}"
         r"(?:一|1)(?:句|句话).{0,8}(?:开场|表达|回复|拒绝|提问)",
+        r"(?:我)?想.{0,4}(?:准备|写|组织).{0,6}(?:一|1)(?:句|句话).{0,8}"
+        r"(?:开场|表达|回复|拒绝|提问)",
         r"请.{0,24}(?:给|写|组织).{0,12}(?:一句|一个.{0,8})"
         r"(?:开场|表达|回复|拒绝|提问)",
         r"请.{0,24}(?:给|写|组织).{0,20}(?:不超过|控制在).{0,8}"

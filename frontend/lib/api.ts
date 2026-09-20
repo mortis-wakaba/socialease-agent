@@ -7,6 +7,8 @@ import type {
   ConversationDetailResponse,
   ConversationExportResponse,
   ConversationMessageResponse,
+  ConversationStreamCompletedResult,
+  ConversationCommandRecoveryResponse,
   ConversationPage,
   ConversationStatus,
   ModuleControlResponse,
@@ -303,6 +305,31 @@ export const api = {
       message,
       idempotencyKey,
       onChunk
+    );
+  },
+
+  getConversationCommand(
+    conversationId: string,
+    userId: string,
+    idempotencyKey: string
+  ) {
+    const params = new URLSearchParams({ user_id: userId });
+    return request<ConversationCommandRecoveryResponse>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/commands/${encodeURIComponent(idempotencyKey)}?${params.toString()}`
+    );
+  },
+
+  abandonConversationCommand(
+    conversationId: string,
+    userId: string,
+    idempotencyKey: string
+  ) {
+    return request<ConversationCommandRecoveryResponse>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/commands/${encodeURIComponent(idempotencyKey)}/abandon`,
+      {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId })
+      }
     );
   },
 
@@ -669,7 +696,7 @@ async function requestConversationMessageStream(
   idempotencyKey: string,
   onChunk: (text: string) => void,
   retryOnUnauthorized = true
-): Promise<ConversationMessageResponse> {
+): Promise<ConversationStreamCompletedResult> {
   const path = `/api/conversations/${encodeURIComponent(conversationId)}/messages/stream`;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
@@ -710,7 +737,7 @@ async function requestConversationMessageStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let completed: ConversationMessageResponse | null = null;
+  let completed: ConversationStreamCompletedResult | null = null;
   while (true) {
     const { value, done } = await reader.read();
     buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");

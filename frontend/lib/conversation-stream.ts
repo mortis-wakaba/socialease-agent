@@ -1,7 +1,7 @@
 /** Runtime validation for the conversation SSE protocol boundary. */
 
 import type {
-  ConversationMessageResponse,
+  ConversationStreamCompletedResult,
   ConversationStreamPayload
 } from "./types";
 
@@ -35,12 +35,18 @@ export function parseConversationStreamFrame(
   if (
     payload.type === "response_completed" &&
     isRecord(payload.result) &&
-    typeof payload.result.response === "string" &&
-    Array.isArray(payload.result.appended_events)
+    isRecord(payload.result.conversation) &&
+    Array.isArray(payload.result.appended_events) &&
+    Array.isArray(payload.result.active_module_stack) &&
+    (payload.result.transient_response === null ||
+      typeof payload.result.transient_response === "string") &&
+    isCrisisPersistenceStatus(payload.result.crisis_persistence_status) &&
+    (payload.result.pending_module_proposal === null ||
+      isRecord(payload.result.pending_module_proposal))
   ) {
     return {
       type: payload.type,
-      result: payload.result as ConversationMessageResponse
+      result: payload.result as ConversationStreamCompletedResult
     };
   }
   if (payload.type === "response_error" && typeof payload.detail === "string") {
@@ -50,6 +56,15 @@ export function parseConversationStreamFrame(
     return { type: payload.type };
   }
   throw new Error("Streaming response contained an invalid payload");
+}
+
+function isCrisisPersistenceStatus(value: unknown): boolean {
+  return [
+    "not_applicable",
+    "persisted",
+    "degraded_retry_required",
+    "safety_state_persisted_command_unconfirmed"
+  ].includes(String(value));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

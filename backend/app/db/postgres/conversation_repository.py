@@ -1,7 +1,11 @@
 """PostgreSQL adapter for ordered, encrypted-capable conversation timelines."""
 
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import json
+from typing import Literal, cast
 from uuid import uuid4
 
 from sqlalchemy import bindparam, text
@@ -14,7 +18,9 @@ from app.conversation.content_protector import (
     configured_content_protector,
 )
 from app.conversation.repository import (
+    CommandSafetyRecoveryStatus,
     ConversationCommandClaim,
+    ConversationCommandRecord,
     ConversationConcurrencyError,
     ConversationIdempotencyError,
     ModuleStartJob,
@@ -57,6 +63,22 @@ from app.models_intent_effect import (
 )
 
 
+@dataclass(frozen=True)
+class _BoundCommandLease:
+    """Request-local lease identity used to fence repository writes."""
+
+    conversation_id: str
+    user_id: str
+    idempotency_key: str
+    lease_owner: str
+
+
+_BOUND_COMMAND_LEASE: ContextVar[_BoundCommandLease | None] = ContextVar(
+    "conversation_command_lease",
+    default=None,
+)
+
+
 class PostgresConversationRepository:
     """PostgreSQL repository using row locks for per-conversation ordering."""
 
@@ -70,6 +92,29 @@ class PostgresConversationRepository:
         resolved_url = database_url or database_settings().database_url
         self.engine = engine or shared_postgres_async_engine(resolved_url)
         self._protector = protector or configured_content_protector()
+
+    @contextmanager
+    def command_lease_scope(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+    ):
+        """Fence conversation writes performed by the current async task."""
+        token: Token[_BoundCommandLease | None] = _BOUND_COMMAND_LEASE.set(
+            _BoundCommandLease(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                idempotency_key=idempotency_key,
+                lease_owner=lease_owner,
+            )
+        )
+        try:
+            yield
+        finally:
+            _BOUND_COMMAND_LEASE.reset(token)
 
     def module_start_transaction(self):
         """Bind one transaction across conversation and domain repositories."""
@@ -139,6 +184,7 @@ class PostgresConversationRepository:
         request_hash: str,
         lease_owner: str,
         lease_seconds: int,
+        preempt_active: bool = False,
     ) -> ConversationCommandClaim:
         """Atomically acquire one logical command or return its saved result."""
         now = datetime.now(UTC)
@@ -146,7 +192,7 @@ class PostgresConversationRepository:
         async with self.engine.begin() as connection:
             owner = (await connection.execute(
                 text(
-                    """SELECT 1 FROM conversations
+                    """SELECT * FROM conversations
                     WHERE conversation_id = :conversation_id
                       AND user_id = :user_id AND status != :deleted
                     FOR UPDATE"""
@@ -156,40 +202,10 @@ class PostgresConversationRepository:
                     "user_id": user_id,
                     "deleted": ConversationStatus.DELETED.value,
                 },
-            )).first()
+            )).mappings().first()
             if owner is None:
                 raise LookupError("conversation not found")
-            inserted = (await connection.execute(
-                text(
-                    """INSERT INTO conversation_commands
-                    (conversation_id, user_id, idempotency_key, request_hash,
-                     status, created_at, lease_owner, lease_expires_at,
-                     attempt_count)
-                    VALUES (:conversation_id, :user_id, :idempotency_key,
-                            :request_hash, 'processing', :created_at,
-                            :lease_owner,
-                            CURRENT_TIMESTAMP
-                                + CAST(:lease_seconds AS integer)
-                                * INTERVAL '1 second',
-                            1)
-                    ON CONFLICT (conversation_id, idempotency_key) DO NOTHING
-                    RETURNING attempt_count"""
-                ),
-                {
-                    "conversation_id": conversation_id,
-                    "user_id": user_id,
-                    "idempotency_key": idempotency_key,
-                    "request_hash": request_hash,
-                    "created_at": now,
-                    "lease_owner": lease_owner,
-                    "lease_seconds": lease_seconds,
-                },
-            )).first()
-            if inserted is not None:
-                return ConversationCommandClaim(
-                    acquired=True,
-                    attempt_count=int(inserted[0]),
-                )
+            owner_conversation = _conversation_from_row(owner)
             row = (await connection.execute(
                 text(
                     """SELECT * FROM conversation_commands
@@ -202,15 +218,19 @@ class PostgresConversationRepository:
                     "idempotency_key": idempotency_key,
                 },
             )).mappings().first()
-            if row is None or row["user_id"] != user_id:
+            if row is not None and row["user_id"] != user_id:
                 raise ConversationIdempotencyError(
                     "idempotency key belongs to another command"
                 )
-            if row["request_hash"] != request_hash:
+            if row is not None and row["request_hash"] != request_hash:
                 raise ConversationIdempotencyError(
                     "idempotency key was reused with different input"
                 )
-            if row["status"] != "completed":
+            if row is not None and row["status"] == "abandoned":
+                raise ConversationIdempotencyError(
+                    "idempotency key belongs to an abandoned command"
+                )
+            if row is not None and row["status"] != "completed":
                 reclaimed = (await connection.execute(
                     text(
                         """UPDATE conversation_commands
@@ -223,8 +243,11 @@ class PostgresConversationRepository:
                           AND user_id = :user_id
                           AND idempotency_key = :idempotency_key
                           AND status = 'processing'
-                          AND lease_expires_at <= CURRENT_TIMESTAMP
-                        RETURNING attempt_count"""
+                          AND (
+                            lease_expires_at <= CURRENT_TIMESTAMP
+                            OR :preempt_active
+                          )
+                        RETURNING attempt_count, safety_recovery_status"""
                     ),
                     {
                         "lease_owner": lease_owner,
@@ -232,13 +255,102 @@ class PostgresConversationRepository:
                         "conversation_id": conversation_id,
                         "user_id": user_id,
                         "idempotency_key": idempotency_key,
+                        "preempt_active": preempt_active,
                     },
                 )).first()
                 if reclaimed is None:
-                    return ConversationCommandClaim(acquired=False)
+                    return ConversationCommandClaim(
+                        acquired=False,
+                        conversation=owner_conversation,
+                        safety_recovery_status=cast(
+                            CommandSafetyRecoveryStatus,
+                            str(row["safety_recovery_status"]),
+                        ),
+                    )
                 return ConversationCommandClaim(
                     acquired=True,
                     attempt_count=int(reclaimed[0]),
+                    conversation=owner_conversation,
+                    safety_recovery_status=cast(
+                        CommandSafetyRecoveryStatus,
+                        str(reclaimed[1]),
+                    ),
+                )
+            if row is None:
+                active = (await connection.execute(
+                    text(
+                        """SELECT idempotency_key, safety_recovery_status
+                        FROM conversation_commands
+                        WHERE conversation_id = :conversation_id
+                          AND user_id = :user_id
+                          AND status = 'processing'
+                        FOR UPDATE"""
+                    ),
+                    {
+                        "conversation_id": conversation_id,
+                        "user_id": user_id,
+                    },
+                )).all()
+                if active and not preempt_active:
+                    return ConversationCommandClaim(
+                        acquired=False,
+                        conversation=owner_conversation,
+                    )
+                if active:
+                    if any(
+                        item.safety_recovery_status
+                        not in {"not_required", "completed"}
+                        for item in active
+                    ):
+                        return ConversationCommandClaim(
+                            acquired=False,
+                            conversation=owner_conversation,
+                        )
+                    await connection.execute(
+                        text(
+                            """UPDATE conversation_commands
+                            SET status = 'abandoned',
+                                lease_owner = NULL,
+                                lease_expires_at = NULL,
+                                abandoned_at = CURRENT_TIMESTAMP
+                            WHERE conversation_id = :conversation_id
+                              AND user_id = :user_id
+                              AND status = 'processing'"""
+                        ),
+                        {
+                            "conversation_id": conversation_id,
+                            "user_id": user_id,
+                        },
+                    )
+                inserted = (await connection.execute(
+                    text(
+                        """INSERT INTO conversation_commands
+                        (conversation_id, user_id, idempotency_key, request_hash,
+                         status, created_at, lease_owner, lease_expires_at,
+                         attempt_count, safety_recovery_status)
+                        VALUES (:conversation_id, :user_id, :idempotency_key,
+                                :request_hash, 'processing', :created_at,
+                                :lease_owner,
+                                CURRENT_TIMESTAMP
+                                    + CAST(:lease_seconds AS integer)
+                                    * INTERVAL '1 second',
+                                1, 'classification_pending')
+                        RETURNING attempt_count"""
+                    ),
+                    {
+                        "conversation_id": conversation_id,
+                        "user_id": user_id,
+                        "idempotency_key": idempotency_key,
+                        "request_hash": request_hash,
+                        "created_at": now,
+                        "lease_owner": lease_owner,
+                        "lease_seconds": lease_seconds,
+                    },
+                )).first()
+                return ConversationCommandClaim(
+                    acquired=True,
+                    attempt_count=int(inserted[0]),
+                    conversation=owner_conversation,
                 )
         result = self._protector.recover(
             ProtectedContent(
@@ -257,6 +369,232 @@ class PostgresConversationRepository:
             acquired=False,
             completed_result=result,
             attempt_count=int(row["attempt_count"]),
+            conversation=owner_conversation,
+            safety_recovery_status=cast(
+                CommandSafetyRecoveryStatus,
+                str(row["safety_recovery_status"]),
+            ),
+        )
+
+    async def get_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationCommandRecord | None:
+        """Return one owner-scoped command lifecycle without its request body."""
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
+                text(
+                    """SELECT * FROM conversation_commands
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND idempotency_key = :idempotency_key"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                },
+            )).mappings().first()
+        return self._command_record(row) if row is not None else None
+
+    async def abandon_command(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+    ) -> ConversationCommandRecord | None:
+        """Terminally abandon only an expired owner command so new work may start."""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """SELECT 1 FROM conversations
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                    FOR UPDATE"""
+                ),
+                {"conversation_id": conversation_id, "user_id": user_id},
+            )
+            row = (await connection.execute(
+                text(
+                    """UPDATE conversation_commands
+                    SET status = 'abandoned',
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        abandoned_at = CURRENT_TIMESTAMP
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND idempotency_key = :idempotency_key
+                      AND status = 'processing'
+                      AND lease_expires_at <= CURRENT_TIMESTAMP
+                      AND safety_recovery_status IN ('not_required', 'completed')
+                    RETURNING *"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                },
+            )).mappings().first()
+            if row is None:
+                row = (await connection.execute(
+                    text(
+                        """SELECT * FROM conversation_commands
+                        WHERE conversation_id = :conversation_id
+                          AND user_id = :user_id
+                          AND idempotency_key = :idempotency_key"""
+                    ),
+                    {
+                        "conversation_id": conversation_id,
+                        "user_id": user_id,
+                        "idempotency_key": idempotency_key,
+                    },
+                )).mappings().first()
+        return self._command_record(row) if row is not None else None
+
+    async def record_command_safety_classification(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+        crisis: bool,
+    ) -> None:
+        """Persist the classification before any turn side effect is attempted."""
+        target = "recovery_pending" if crisis else "not_required"
+        allowed = (
+            ("classification_pending", "recovery_pending", "completed")
+            if crisis
+            else ("classification_pending", "not_required", "completed")
+        )
+        async with self.engine.begin() as connection:
+            updated = await connection.execute(
+                text(
+                    """UPDATE conversation_commands
+                    SET safety_recovery_status = CASE
+                        WHEN safety_recovery_status = 'completed'
+                            THEN 'completed'
+                        ELSE :target
+                    END
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND idempotency_key = :idempotency_key
+                      AND status = 'processing'
+                      AND lease_owner = :lease_owner
+                      AND lease_expires_at > CURRENT_TIMESTAMP
+                      AND safety_recovery_status IN :allowed"""
+                ).bindparams(bindparam("allowed", expanding=True)),
+                {
+                    "target": target,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                    "lease_owner": lease_owner,
+                    "allowed": allowed,
+                },
+            )
+        if updated.rowcount != 1:
+            raise ConversationConcurrencyError(
+                "conversation command safety classification was not recorded"
+            )
+
+    async def complete_command_safety_recovery(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+    ) -> None:
+        """Mark the crisis obligation complete only after every safety write."""
+        async with self.engine.begin() as connection:
+            updated = await connection.execute(
+                text(
+                    """UPDATE conversation_commands
+                    SET safety_recovery_status = 'completed'
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND idempotency_key = :idempotency_key
+                      AND status = 'processing'
+                      AND lease_owner = :lease_owner
+                      AND lease_expires_at > CURRENT_TIMESTAMP
+                      AND safety_recovery_status IN ('recovery_pending', 'completed')"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                    "lease_owner": lease_owner,
+                },
+            )
+        if updated.rowcount != 1:
+            raise ConversationConcurrencyError(
+                "conversation command crisis recovery was not completed"
+            )
+
+    async def has_unfinished_command_safety_recovery(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> bool:
+        """Return whether ordinary work is fenced by unresolved safety state."""
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(
+                text(
+                    """SELECT 1 FROM conversation_commands
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND status = 'processing'
+                      AND safety_recovery_status IN (
+                          'classification_pending', 'recovery_pending'
+                      )
+                    LIMIT 1"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                },
+            )).first()
+        return row is not None
+
+    def _command_record(self, row: RowMapping) -> ConversationCommandRecord:
+        """Map protected storage to the public command lifecycle."""
+        status = str(row["status"])
+        if status == "processing" and row["lease_expires_at"] <= datetime.now(UTC):
+            status = "recoverable"
+        result: str | None = None
+        if status == "completed":
+            result = self._protector.recover(
+                ProtectedContent(
+                    plaintext=row["result_plaintext"],
+                    ciphertext=row["result_ciphertext"],
+                    nonce=row["result_nonce"],
+                    key_version=row["result_key_version"],
+                ),
+                associated_data=_command_associated_data(
+                    str(row["conversation_id"]),
+                    str(row["user_id"]),
+                    str(row["idempotency_key"]),
+                ),
+            )
+        if status not in {"processing", "recoverable", "completed", "abandoned"}:
+            raise ValueError("unsupported conversation command status")
+        return ConversationCommandRecord(
+            status=cast(
+                Literal["processing", "recoverable", "completed", "abandoned"],
+                status,
+            ),
+            completed_result=result,
+            attempt_count=int(row["attempt_count"]),
+            safety_recovery_status=cast(
+                CommandSafetyRecoveryStatus,
+                str(row["safety_recovery_status"]),
+            ),
         )
 
     async def renew_command_lease(
@@ -280,7 +618,8 @@ class PostgresConversationRepository:
                       AND user_id = :user_id
                       AND idempotency_key = :idempotency_key
                       AND status = 'processing'
-                      AND lease_owner = :lease_owner"""
+                      AND lease_owner = :lease_owner
+                      AND lease_expires_at > CURRENT_TIMESTAMP"""
                 ),
                 {
                     "lease_seconds": max(1, lease_seconds),
@@ -326,7 +665,8 @@ class PostgresConversationRepository:
                       AND user_id = :user_id
                       AND idempotency_key = :idempotency_key
                       AND status = 'processing'
-                      AND lease_owner = :lease_owner"""
+                      AND lease_owner = :lease_owner
+                      AND lease_expires_at > CURRENT_TIMESTAMP"""
                 ),
                 {
                     "result_plaintext": protected.plaintext,
@@ -344,6 +684,106 @@ class PostgresConversationRepository:
             raise ConversationConcurrencyError(
                 "conversation command is no longer claimable"
             )
+
+    async def assert_command_lease(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+    ) -> None:
+        """Verify a live lease without spanning the model call transaction."""
+        async with self.engine.begin() as connection:
+            await self._assert_command_lease_on_connection(
+                connection,
+                _BoundCommandLease(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    idempotency_key=idempotency_key,
+                    lease_owner=lease_owner,
+                ),
+            )
+
+    async def release_command_lease(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        idempotency_key: str,
+        lease_owner: str,
+    ) -> None:
+        """Make an incomplete command immediately reclaimable by the same key."""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """UPDATE conversation_commands
+                    SET lease_expires_at = CURRENT_TIMESTAMP
+                    WHERE conversation_id = :conversation_id
+                      AND user_id = :user_id
+                      AND idempotency_key = :idempotency_key
+                      AND status = 'processing'
+                      AND lease_owner = :lease_owner"""
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "idempotency_key": idempotency_key,
+                    "lease_owner": lease_owner,
+                },
+            )
+
+    async def _assert_bound_command_lease(
+        self,
+        connection: AsyncConnection,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> None:
+        lease = _BOUND_COMMAND_LEASE.get()
+        if lease is None:
+            return
+        if lease.conversation_id != conversation_id or lease.user_id != user_id:
+            raise ConversationConcurrencyError("command lease scope mismatch")
+        await self._assert_command_lease_on_connection(connection, lease)
+
+    async def _assert_command_lease_on_connection(
+        self,
+        connection: AsyncConnection,
+        lease: _BoundCommandLease,
+    ) -> None:
+        """Lock and validate the lease before a write in the same transaction."""
+        await connection.execute(
+            text(
+                """SELECT 1 FROM conversations
+                WHERE conversation_id = :conversation_id AND user_id = :user_id
+                FOR SHARE"""
+            ),
+            {
+                "conversation_id": lease.conversation_id,
+                "user_id": lease.user_id,
+            },
+        )
+        owned = (await connection.execute(
+            text(
+                """SELECT 1 FROM conversation_commands
+                WHERE conversation_id = :conversation_id
+                  AND user_id = :user_id
+                  AND idempotency_key = :idempotency_key
+                  AND status = 'processing'
+                  AND lease_owner = :lease_owner
+                  AND lease_expires_at > CURRENT_TIMESTAMP
+                FOR SHARE"""
+            ),
+            {
+                "conversation_id": lease.conversation_id,
+                "user_id": lease.user_id,
+                "idempotency_key": lease.idempotency_key,
+                "lease_owner": lease.lease_owner,
+            },
+        )).first()
+        if owned is None:
+            raise ConversationConcurrencyError("conversation command lease was lost")
 
     async def save_intent_plan(
         self,
@@ -366,6 +806,11 @@ class PostgresConversationRepository:
             )).first()
             if owner is None:
                 raise LookupError("conversation not found")
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=plan.conversation_id,
+                user_id=plan.user_id,
+            )
             existing_version = (await connection.execute(
                 text(
                     """SELECT version FROM conversation_intent_plans
@@ -436,6 +881,11 @@ class PostgresConversationRepository:
         """Optimistically persist a queue state transition."""
         saved = plan.model_copy(update={"version": expected_version + 1})
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=plan.conversation_id,
+                user_id=plan.user_id,
+            )
             updated = await connection.execute(
                 text(
                     """UPDATE conversation_intent_plans
@@ -463,6 +913,11 @@ class PostgresConversationRepository:
     ) -> IntentEffectLedgerRecord:
         """Insert one durable effect receipt or replay the same plan step."""
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=effect.conversation_id,
+                user_id=effect.user_id,
+            )
             await connection.execute(
                 text(
                     """INSERT INTO conversation_intent_effects
@@ -500,6 +955,11 @@ class PostgresConversationRepository:
         """Optimistically transition an effect ledger record."""
         saved = effect.model_copy(update={"version": expected_version + 1})
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=effect.conversation_id,
+                user_id=effect.user_id,
+            )
             updated = await connection.execute(
                 text(
                     """UPDATE conversation_intent_effects
@@ -636,6 +1096,11 @@ class PostgresConversationRepository:
                 assignments.append(f"{column} = :{column}")
                 params[column] = value
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             result = (await connection.execute(
                 text(
                     f"""UPDATE conversations
@@ -684,6 +1149,11 @@ class PostgresConversationRepository:
             )).mappings().first()
             if owner is None:
                 raise LookupError("active conversation not found")
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
 
             existing_row = (await connection.execute(
                 text(
@@ -957,6 +1427,11 @@ class PostgresConversationRepository:
             "deleted": ConversationStatus.DELETED.value,
         }
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=summary.conversation_id,
+                user_id=summary.user_id,
+            )
             if expected_version is None:
                 result = (await connection.execute(
                     text(
@@ -1001,6 +1476,11 @@ class PostgresConversationRepository:
     async def save_proposal(self, proposal: ModuleProposal) -> ModuleProposal:
         """Persist a proposal or return its request-hash replay."""
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=proposal.conversation_id,
+                user_id=proposal.user_id,
+            )
             row = (await connection.execute(
                 text(
                     """INSERT INTO conversation_module_proposals
@@ -1105,6 +1585,11 @@ class PostgresConversationRepository:
     ) -> ModuleProposal | None:
         """Atomically consume one proposal decision."""
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_proposals
@@ -1144,6 +1629,11 @@ class PostgresConversationRepository:
     async def create_module_run(self, run: ModuleRun) -> ModuleRun:
         """Persist a new module frame in an active owner conversation."""
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=run.conversation_id,
+                user_id=run.user_id,
+            )
             result = (await connection.execute(
                 text(
                     """INSERT INTO conversation_module_runs
@@ -1182,6 +1672,11 @@ class PostgresConversationRepository:
         )
         now = datetime.now(UTC)
         async with postgres_write_connection(self.engine) as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=proposal.conversation_id,
+                user_id=proposal.user_id,
+            )
             proposal_result = await connection.execute(
                 text(
                     """UPDATE conversation_module_proposals
@@ -1790,6 +2285,11 @@ class PostgresConversationRepository:
     ) -> ModuleRun:
         """Attach a lazily created domain session with optimistic locking."""
         async with postgres_write_connection(self.engine) as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
@@ -1842,6 +2342,11 @@ class PostgresConversationRepository:
     ) -> ModuleRun:
         """Advance the durable overlay watermark after one module action."""
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
@@ -1891,6 +2396,11 @@ class PostgresConversationRepository:
     ) -> ModuleRun | None:
         """Optimistically transition one module frame."""
         async with self.engine.begin() as connection:
+            await self._assert_bound_command_lease(
+                connection,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             row = (await connection.execute(
                 text(
                     """SELECT payload FROM conversation_module_runs
